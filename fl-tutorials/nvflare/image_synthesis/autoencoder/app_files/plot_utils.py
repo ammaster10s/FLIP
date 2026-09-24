@@ -484,7 +484,7 @@ def split_by_cadence(series: dict[str, list[float]]) -> tuple[dict[str, list[flo
     if not remainder:
         return dense, {}
     epoch_cadence = max(len(values) for values in remainder.values())
-    sparse = {n: v for n, v in remainder.items() if len(v) >= epoch_cadence * DENSE_RATIO}
+    sparse = dict(remainder)
     return dense, sparse
 
 
