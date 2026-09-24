@@ -375,7 +375,7 @@ def save_triplanar(
 
 #: Where ``make sim`` puts this tutorial's simulator workspace. Derived from the directory this file
 #: sits in rather than hard-coded, so the same module is correct in every tutorial that ships it.
-DEFAULT_WORKSPACE = Path("/tmp/nvflare/autoencoder/flip_fedavg")
+DEFAULT_WORKSPACE = Path("/tmp/nvflare") / Path(__file__).resolve().parent.parent.name / "flip_fedavg"
 
 #: Log lines arrive as ``<timestamp> - <logger> - INFO - <message>``. Splitting the message off is
 #: what stops the timestamp's own colons ("20:10:04") being read as data. A line that does *not*
