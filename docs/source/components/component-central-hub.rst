@@ -105,7 +105,7 @@ half-ready hub:
    scheduler row per net;
 4. start the API server.
 
-When FastAPI starts it extends the browser CORS allowlist from the Cognito app client's callback URLs and
+When FastAPI starts it populates the browser CORS allowlist from the Cognito app client's callback URLs and
 starts the background scheduler below.
 
 ********************

@@ -57,6 +57,18 @@ ports, bind dirs) always survive a re-run.
   ⏳ (pending on an earlier check) and exits non-zero if anything fails, so an operator gets
   concrete diagnostics instead of a cryptic compose or pydantic failure deeper in the stack.
 
+## Site upgrades
+
+- **`site_upgrade.py`** (`make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1]
+  [YES=1] [ALLOW_CHECKOUT_DRIFT=1]`, and the twin AWS/Helm targets — see `AGENTS.md` "Site release
+  upgrades") — the data-safe upgrade verb for a site (on-prem, EC2, or Kubernetes). Runs the
+  onboarding readiness checklist, resolves the tag against what the hub reports on `/api/health`
+  (`vX.Y.Z` or a `sha-<short7>` the tag guard confirms was built for every site image), and drives
+  the per-shape upgrade (`make -C trust upgrade-trust` / the EC2 twin /
+  `make -C trust/deploy/helm upgrade-trust-k8s`). Refuses a release `TAG` unless the checkout is at
+  that tag (exit 6) and refuses a tag any site image was never built at (exit 5). Runbook:
+  `docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ## Status and environment checks
 
 - **`check_local_status.py`** (run directly: `python3 scripts/check_local_status.py`) — verifies
@@ -90,12 +102,19 @@ workflow; the other two are CI-only:
   They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
-  files kept as byte-identical copies of another file have not drifted. It now holds only the
-  Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared between the two
-  evaluation apps); the Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
+  files kept as byte-identical copies of another file have not drifted. It holds two families of
+  hand-listed pairs: the Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
+  between the two evaluation apps) and the EHR risk-prediction cross-backend pair
+  (`feature_engineering.py`, `models.py`, `query.sql`, with the NVFLARE copy as the reference).
+  The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
   `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
   can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
   must be resynced by hand when its reference changes.
+- **`pr_paths_changed.py`** (CI: `pr_paths_changed.yml`, called by every gated service-test
+  workflow) — implements the PR path gate: reads a service workflow's `paths:` filter, fetches the
+  PR's changed files, and outputs `run=true` when the filter matches so the workflow's jobs
+  gate on it. A PR into `main` always runs everything. `scripts/tests/test_pr_paths_changed.py`
+  pins the gate against drift.
 - **`utils.sh`** — shared shell helpers (colour-coded `log_info` / `log_success` / etc.) sourced
   only by the two secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`); the
   drift guards above are self-contained. Not run directly.
