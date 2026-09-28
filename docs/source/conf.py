@@ -166,8 +166,8 @@ html_sidebars = {
 }
 html_scaled_image_link = False
 html_show_sourcelink = True
-html_favicon = 'assets/favicon.ico'
-html_logo = 'assets/flip-logo.png'
+html_favicon = "assets/favicon.ico"
+html_logo = "assets/flip-logo.png"
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".

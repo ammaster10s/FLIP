@@ -554,9 +554,7 @@ class DiffusionTrainer:
 
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -597,9 +595,7 @@ class DiffusionTrainer:
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -696,9 +692,7 @@ def main() -> None:
             flare.send(flare.FLModel(metrics={f"metrics_{task_name}": {"val_loss": val_loss, "val_ssim": val_ssim}}))
 
         elif task_name == VALIDATE_DM_TASK:
-            trainer.model.load_state_dict(
-                {k: v.to(trainer.device) for k, v in weights.items()}, strict=False
-            )
+            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
             test_loader = trainer.val_loader(config["BATCH_SIZE_DM"])
             val_loss = validate_dm(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

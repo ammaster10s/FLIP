@@ -271,9 +271,7 @@ class IImagingStatusResponse(BaseModel):
     # Whether the newest refresh landed, so a consumer can tell a live 100% from a stale one.
     # Defaults to OK so a trust with no refresh history reads as "nothing wrong yet" rather
     # than as an error.
-    connection_state: ImagingConnectionState = Field(
-        default=ImagingConnectionState.OK, alias="connectionState"
-    )
+    connection_state: ImagingConnectionState = Field(default=ImagingConnectionState.OK, alias="connectionState")
     # When `import_status` was last confirmed against the trust. None when no refresh has ever
     # succeeded for this project.
     last_seen_at: datetime | None = Field(default=None, alias="lastSeenAt")

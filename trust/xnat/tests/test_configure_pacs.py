@@ -188,9 +188,7 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         **(env_overrides or {}),
     }
 
-    result = subprocess.run(
-        ["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120
-    )
+    result = subprocess.run(["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120)
     body = payloads.read_text() if payloads.exists() else ""
     return result.returncode, body, result.stdout + result.stderr
 

@@ -205,9 +205,7 @@ def test_delete_one_trust_writes_audit_row_with_null_user():
 
     delete_one_trust("GSTT", session)
 
-    audit_calls = [
-        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
-    ]
+    audit_calls = [call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)]
     assert len(audit_calls) == 1
     audit_row = audit_calls[0].args[0]
     assert audit_row.action == TrustAuditAction.DELETED
@@ -228,9 +226,7 @@ def _patch_session(monkeypatch):
     session_ctx = MagicMock()
     session_ctx.__enter__.return_value = session_mock
     session_ctx.__exit__.return_value = False
-    monkeypatch.setattr(
-        "flip_api.scripts.delete_trust.Session", lambda _engine: session_ctx
-    )
+    monkeypatch.setattr("flip_api.scripts.delete_trust.Session", lambda _engine: session_ctx)
     return session_mock
 
 
@@ -255,9 +251,7 @@ def test_main_prints_not_found_status_json(monkeypatch, capsys):
     from flip_api.scripts import delete_trust as cli
 
     _patch_session(monkeypatch)
-    monkeypatch.setattr(
-        cli, "delete_one_trust", lambda name, session: {"status": "not_found", "name": name}
-    )
+    monkeypatch.setattr(cli, "delete_one_trust", lambda name, session: {"status": "not_found", "name": name})
     monkeypatch.setattr("sys.argv", ["delete_trust", "--name", "Ghost"])
 
     cli.main()

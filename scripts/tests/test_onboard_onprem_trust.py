@@ -78,8 +78,11 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
 def _check(path: Path):
     """Run check_data_dir for an OMOP dir at an absolute path (kit present)."""
     return mod.check_data_dir(
-        "OMOP data dir", "OMOP_DATA_DIR",
-        {"OMOP_DATA_DIR": str(path)}, True, SCRIPTS_DIR.parent,
+        "OMOP data dir",
+        "OMOP_DATA_DIR",
+        {"OMOP_DATA_DIR": str(path)},
+        True,
+        SCRIPTS_DIR.parent,
     )
 
 

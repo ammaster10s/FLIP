@@ -140,8 +140,7 @@ def get_project_details_endpoint(
     resolved_owner_email = owner_cognito_user.email
 
     users_with_access_cognito = [
-        get_user_by_email_or_id(user_pool_id=user_pool_id, user_id=user_id)
-        for user_id in users_with_access_info
+        get_user_by_email_or_id(user_pool_id=user_pool_id, user_id=user_id) for user_id in users_with_access_info
     ]
     users_with_access_cognito.append(owner_cognito_user)
 

@@ -79,9 +79,7 @@ def test_create_project_persists_and_grants_creator_access(session, project_payl
     assert persisted.deleted is False
     assert persisted.status == ProjectStatus.UNSTAGED
 
-    access_rows = session.exec(
-        select(ProjectUserAccess).where(ProjectUserAccess.project_id == new_project_id)
-    ).all()
+    access_rows = session.exec(select(ProjectUserAccess).where(ProjectUserAccess.project_id == new_project_id)).all()
     access_user_ids = {row.user_id for row in access_rows}
     assert creator_id in access_user_ids, "Creator must be granted access on create"
     # `users` from payload added on top of the creator
@@ -546,9 +544,7 @@ def test_reimport_sweep_skips_a_soft_deleted_project(session, project_eligible_f
 
     assert get_reimport_queries_service(max_reimport_count=5, session=session) == []
 
-    status_row = session.exec(
-        select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])
-    ).one()
+    status_row = session.exec(select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])).one()
     assert status_row.retrieve_image_status == XNATImageStatus.CREATED, (
         "Imaging status must be untouched by the delete — the project row is what gates the sweep"
     )

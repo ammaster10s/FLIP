@@ -215,6 +215,4 @@ def test_the_mocked_orthanc_install_may_still_expose_the_console() -> None:
     """
     rendered = _render("xnat.web.service.type=NodePort")
 
-    assert rendered.returncode == 0, (
-        f"the web-console guard fired on a mocked-Orthanc install:\n{rendered.stderr}"
-    )
+    assert rendered.returncode == 0, f"the web-console guard fired on a mocked-Orthanc install:\n{rendered.stderr}"

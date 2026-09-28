@@ -118,9 +118,7 @@ def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
         )
 
 
-def _submit_task_result(
-    trust: Trust, task_id: UUID, task_result: TaskResultInput, db: Session
-) -> dict[str, object]:
+def _submit_task_result(trust: Trust, task_id: UUID, task_result: TaskResultInput, db: Session) -> dict[str, object]:
     """Record the outcome of a task that this trust owns.
 
     Args:
@@ -147,8 +145,7 @@ def _submit_task_result(
             )
         if task.trust_id != trust.id:
             logger.warning(
-                f"Trust '{trust.name}' attempted to submit result for task {task_id} "
-                "which belongs to a different trust"
+                f"Trust '{trust.name}' attempted to submit result for task {task_id} which belongs to a different trust"
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -18,7 +18,7 @@ Standalone FastAPI service for Flower deployment runtime.
 
 ## Endpoints
 
-- `GET /health`
+- `GET /health` — liveness, and `version`: the baked `FLIP_RELEASE` image tag, or the pyproject version for a local build
 - `POST /register_node`
 - `GET /check_server_status`
 - `GET /check_client_status?targets=<name>&targets=<name>`
