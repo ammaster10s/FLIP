@@ -16,6 +16,7 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import TrainingOptions from "@/partials/models/TrainingOptions.vue";
+import type { IProjectTrust } from "@/services/project-service";
 
 // AiSwitch is the vee-validate field; we stub it to expose the `name` and `value`
 // it is bound to, so we can assert the trust is selected by its UUID id (not name).
@@ -26,7 +27,7 @@ const aiSwitchStub = {
 };
 
 function mountTrainingOptions(
-    approvedTrusts: { name: string; id: string; approved: boolean; code?: string | null }[],
+    approvedTrusts: IProjectTrust[],
     disabled = false,
     hasImaging: boolean | undefined = undefined
 ) {
@@ -56,24 +57,24 @@ function mountTrainingOptions(
 }
 
 describe("TrainingOptions trust selection", () => {
-    const trusts = [
+    const trusts: IProjectTrust[] = [
         {
             name: "Beta Trust",
             id: "id-beta",
             code: "BETA",
-            approved: true
+            status: "APPROVED"
         },
         {
             name: "Alpha Trust",
             id: "id-alpha",
             code: "ALPHA",
-            approved: true
+            status: "APPROVED"
         },
         {
             name: "Gamma Trust",
             id: "id-gamma",
             code: "GAMMA",
-            approved: false
+            status: "DECLINED"
         }
     ];
 
@@ -98,14 +99,14 @@ describe("TrainingOptions trust selection", () => {
         }
     });
 
-    it("labels each trust with its code, and excludes un-approved trusts", () => {
+    it("labels each trust with its code, and excludes trusts that are not approved", () => {
         const wrapper = mountTrainingOptions(trusts);
         const text = wrapper.text();
 
         // Names are admin-chosen and non-unique, so the code disambiguates them.
         expect(text).toContain("Alpha Trust (ALPHA)");
         expect(text).toContain("Beta Trust (BETA)");
-        // Gamma is not approved, so it must not be offered for training.
+        // Gamma declined, so it must not be offered for training.
         expect(text).not.toContain("Gamma Trust");
     });
 
@@ -115,12 +116,12 @@ describe("TrainingOptions trust selection", () => {
                 name: "Alpha Trust",
                 id: "id-alpha",
                 code: null,
-                approved: true
+                status: "APPROVED"
             },
             {
                 name: "Beta Trust",
                 id: "id-beta",
-                approved: true
+                status: "APPROVED"
             }
         ]);
         const text = wrapper.text();
@@ -137,13 +138,13 @@ describe("TrainingOptions trust selection", () => {
                 name: "Beta Trust",
                 id: "id-beta",
                 code: "AAA",
-                approved: true
+                status: "APPROVED"
             },
             {
                 name: "Alpha Trust",
                 id: "id-alpha",
                 code: "ZZZ",
-                approved: true
+                status: "APPROVED"
             }
         ]);
         const labels = wrapper.findAll("dt").map(dt => dt.text());
@@ -171,10 +172,10 @@ describe("TrainingOptions trust selection", () => {
 });
 
 describe("TrainingOptions disabled", () => {
-    const trust = [{
+    const trust: IProjectTrust[] = [{
         name: "Alpha Trust",
         id: "id-alpha",
-        approved: true
+        status: "APPROVED"
     }];
 
     it("locks every control once the run is under way, so the choices stay readable", () => {

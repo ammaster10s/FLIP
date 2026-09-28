@@ -73,6 +73,10 @@ const TRUST_DOT = {
     pending: {
         class: "bg-amber-500",
         label: "awaiting approval"
+    },
+    declined: {
+        class: "bg-red-500",
+        label: "declined"
     }
 } as const;
 
@@ -81,22 +85,24 @@ const TRUST_DOT = {
 // of that is pending, so on an APPROVED row a trust still awaiting sign-off stays
 // amber against an emerald spine: deliberate, so "still pending" reads against its
 // green neighbours. Drafts get no dot at all (`null` below) — their chips are merely
-// linked trusts, with no standing to report yet.
+// linked trusts, with no standing to report yet. A decline is final for that trust whatever
+// the project's status, so it shows on a staged row as well as an approved one.
 //
 // Status is allow-listed rather than tested with `!== "UNSTAGED"`: it arrives off the
 // wire, where it can be absent or a value the union doesn't know yet, and an
 // unrecognised status must not be painted as staged.
 const dotFor = (trust: IProjectTrust): typeof TRUST_DOT[keyof typeof TRUST_DOT] | null => {
-    if (props.project.status === "APPROVED") return trust.approved ? TRUST_DOT.in : TRUST_DOT.pending;
-    if (props.project.status === "STAGED") return TRUST_DOT.pending;
+    if (props.project.status !== "APPROVED" && props.project.status !== "STAGED") return null;
+    if (trust.status === "DECLINED") return TRUST_DOT.declined;
+    if (props.project.status === "APPROVED" && trust.status === "APPROVED") return TRUST_DOT.in;
 
-    return null;
+    return TRUST_DOT.pending;
 };
 
 // `approvedTrusts` is every trust linked to the project (the name predates the
-// staged/approved split) — each carries its own `approved` flag. We show them all so a
+// staged/approved split) — each carries its own decision `status`. We show them all so a
 // freshly-staged trust appears straight away; the dot's colour, not chip presence,
-// marks which trusts have approved. Sorted alphabetically so a trust keeps the same
+// marks which trusts have approved or declined. Sorted alphabetically so a trust keeps the same
 // slot across reloads.
 const sortedTrusts = computed<IProjectTrust[]>(() =>
     (props.project.approvedTrusts ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)));

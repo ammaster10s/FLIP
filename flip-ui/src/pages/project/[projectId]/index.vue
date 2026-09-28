@@ -200,7 +200,11 @@ import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
 import { projectHasImaging } from "@/partials/projects/projectType";
-import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
+import { approveProject,
+    editProject,
+    ITrustDecisions,
+    stageProject as stageProjectWithTrusts,
+    unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -226,14 +230,14 @@ const approvingProject = ref(false);
 const unstagingProject = ref(false);
 
 // Most-recent per-trust approval (sourced server-side from
-// project_trust_intersect.approved_at) doubles as the project-level
-// approval date in the lifecycle bar.
+// project_trust_intersect.decided_at) doubles as the project-level
+// approval date in the lifecycle bar. Declines are not approval dates.
 const latestTrustApprovalAt = computed<string | null>(() => {
-    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.approved && t.approvedAt);
+    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.status === "APPROVED" && t.decidedAt);
     if (!trusts.length) return null;
 
     return trusts
-        .map(t => t.approvedAt as string)
+        .map(t => t.decidedAt as string)
         .sort()
         .at(-1) ?? null;
 });
@@ -356,29 +360,39 @@ const updateProjectEvent = async (update: IEditProject) => {
     projectUpdating.value = false;
 };
 
-const approveProjectEvent = async (ids: string[]) => {
+const approveProjectEvent = async (decisions: ITrustDecisions) => {
     approvingProject.value = true;
 
     const { name } = { ...project?.value };
 
     try {
-        // If it is only one trust, add to an array
-        const arr: string[] = [];
-        const trustList = arr.concat(ids);
+        const { projectStatus } = await approveProject(`/step/project/${route.params.projectId}/approve`, decisions);
 
-        await approveProject(`/step/project/${route.params.projectId}/approve`, trustList);
-
-        Snackbar.success({
-            title: "Project Approved",
-            text: `${name} has been approved.`
-        });
+        if (projectStatus === "APPROVED") {
+            Snackbar.success({
+                title: "Project Approved",
+                text: `${name} has been approved.`
+            });
+        }
+        else if (!decisions.approved.length) {
+            Snackbar.success({
+                title: "All trusts declined",
+                text: `${name} stays staged. Unstage it to reconsider, or change a decision.`
+            });
+        }
+        else {
+            Snackbar.success({
+                title: "Trust decisions saved",
+                text: `${name} stays staged until every trust has a decision.`
+            });
+        }
 
         emit("UpdateProject");
     }
     catch {
         Snackbar.error({
-            title: "Unable to approve project",
-            text: `${name} has not been approved.`
+            title: "Unable to save trust decisions",
+            text: `The trust decisions for ${name} could not be saved. Reload the project to check its status.`
         });
 
         errorStore.setError();

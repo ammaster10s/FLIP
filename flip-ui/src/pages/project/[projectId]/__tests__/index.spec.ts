@@ -15,7 +15,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { IProject } from "@/services/project-service";
+import type { IProject, ITrustDecisions } from "@/services/project-service";
 
 import ProjectPage from "../index.vue";
 
@@ -32,7 +32,7 @@ vi.mock("vue-router", async (importOriginal) => {
 // All service helpers are mocked — we drive the state with the project store
 // and only assert on what the page renders / which mock got called.
 const stageProjectWithTrusts = vi.fn().mockResolvedValue(undefined);
-const approveProject = vi.fn().mockResolvedValue(undefined);
+const approveProject = vi.fn().mockResolvedValue({ projectStatus: "APPROVED" });
 const unstageProject = vi.fn().mockResolvedValue(undefined);
 const editProject = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/services/project-service", () => ({
@@ -50,6 +50,12 @@ vi.mock("@/utils/snackbar", () => ({
         error: (...args: unknown[]) => snackbarError(...args)
     }
 }));
+
+// What the stubbed ProjectApproval emits when its save button is clicked.
+let decisionsToSave: ITrustDecisions = {
+    approved: ["t1"],
+    declined: ["t2"]
+};
 
 // Stub the heavy children — we want to test the page's own logic, not its
 // composition with all the partials.
@@ -78,7 +84,13 @@ const stubs = {
         template: "<ol data-test=\"stub-lifecycle\"><li v-for=\"s in steps\" :key=\"s.id\" :data-test=\"`step-${s.id}`\" :data-completed=\"s.completed\" :data-date=\"s.date\">{{ s.name }}</li></ol>",
         props: ["steps"]
     },
-    ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
+    ProjectApproval: {
+        template: "<div data-test=\"stub-project-approval\"><button data-test=\"stub-save-decisions\" @click=\"save\" /></div>",
+        emits: ["approveProject"],
+        setup(_: unknown, { emit }: { emit: (event: "approveProject", decisions: ITrustDecisions) => void }) {
+            return { save: () => emit("approveProject", decisionsToSave) };
+        }
+    },
     ProjectStaging: {
         // Expose the computed stageable set so tests can assert the parent's
         // exclusion logic (errored / never-responded / empty trusts).
@@ -137,7 +149,12 @@ function mountProjectPage({
 
 beforeEach(() => {
     stageProjectWithTrusts.mockClear();
-    approveProject.mockClear();
+    approveProject.mockReset();
+    approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
+    decisionsToSave = {
+        approved: ["t1"],
+        declined: ["t2"]
+    };
     unstageProject.mockClear();
     editProject.mockClear();
     snackbarSuccess.mockClear();
@@ -263,19 +280,78 @@ describe("Project page (/project/[id]/index.vue)", () => {
             {
                 id: "t1",
                 name: "KCH",
-                approved: true,
-                approvedAt: "2026-05-01T10:00:00Z"
+                status: "APPROVED",
+                decidedAt: "2026-05-01T10:00:00Z"
             },
             {
                 id: "t2",
                 name: "UCLH",
-                approved: true,
-                approvedAt: "2026-05-15T10:00:00Z"
+                status: "APPROVED",
+                decidedAt: "2026-05-15T10:00:00Z"
+            },
+            {
+                // A later decline is not an approval date.
+                id: "t3",
+                name: "GSTT",
+                status: "DECLINED",
+                decidedAt: "2026-05-20T10:00:00Z"
             }
         ];
         const approvedWrapper = mountProjectPage({ project: approvedProject });
         const step04 = approvedWrapper.find("[data-test=step-04]");
         expect(step04.attributes("data-completed")).toBe("true");
+        expect(step04.attributes("data-date")).toBe("2026-05-15T10:00:00Z");
+    });
+
+    describe("saving trust decisions", () => {
+        const stagedProject = (): IProject => ({
+            ...baseProject(),
+            status: "STAGED"
+        });
+
+        test("posts the approved and declined trusts and announces the approval", async () => {
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(approveProject).toHaveBeenCalledWith(
+                "/step/project/p-123/approve",
+                {
+                    approved: ["t1"],
+                    declined: ["t2"]
+                }
+            );
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Project Approved" }));
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("says the project stays staged when every trust declined", async () => {
+            decisionsToSave = {
+                approved: [],
+                declined: ["t1", "t2"]
+            };
+            approveProject.mockResolvedValue({ projectStatus: "STAGED" });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "All trusts declined" }));
+            expect(snackbarSuccess.mock.calls[0][0].text).toContain("stays staged");
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("reports a failed save without claiming anything was decided", async () => {
+            approveProject.mockRejectedValue(new Error("boom"));
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
+        });
     });
 
     test("surfaces the staged date on the Staged step once the project is staged", () => {
