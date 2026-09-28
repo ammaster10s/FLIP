@@ -148,6 +148,8 @@ describe("TrustDetailDrawer", () => {
         expect(panel?.textContent).toContain("GSTT · London");
         expect(panel?.textContent).toContain("Degraded");
         expect(q("[data-test='drawer-heartbeat']")?.textContent).toMatch(/heartbeat \d+s ago/);
+        // The name is the Dialog's own title (aria-labelledby), passed into the shared card's title slot.
+        expect(q("[id^='headlessui-dialog-title']")?.textContent?.trim()).toBe("Guy's and St Thomas'");
     });
 
     it("lists all six containers in registry order with status chips", async () => {
