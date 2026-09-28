@@ -17,7 +17,7 @@ Once a user has access to FLIP, they can construct a project, add project member
 Project Approval
 ****************
 
-Once a sufficient cohort of data has been identified, the Model Developer indicates which Trusts' data they require and 'stages' the project, awaiting approval from a FLIP administrator. The administrator records a decision for every staged Trust — approved or declined — and FLIP keeps who made each decision and when. The project is approved once every Trust has a decision and at least one has approved; declined Trusts take no further part. If every Trust declines, the project stays staged and can be unstaged to be reconsidered.
+Once a sufficient cohort of data has been identified, the Model Developer indicates which Trusts' data they require and 'stages' the project, awaiting approval. Each staged Trust is approved or declined in its own time — by a FLIP administrator, or by the Trust's own Trust Admin when it has one — and FLIP keeps who made each decision and when. The project is approved as soon as one Trust approves; a Trust that approves later joins it then, and declined Trusts take no further part. If every Trust declines, the project stays staged and can be unstaged to be reconsidered.
 
 Once the project is approved, FLIP executes the cohort query at each of the approved Trusts to determine the DICOM series associated with the cohort and begins copying the images from the Trust PACS system to the local XNAT cache.
 
