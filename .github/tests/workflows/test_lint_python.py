@@ -9,12 +9,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""``lint_python.yml`` runs ``ruff check`` over every tracked Python file (FLIP#1326).
+"""``lint_python.yml`` runs ``ruff check`` and ``ruff format --check`` over every tracked Python file.
 
-The service workflows lint only their own trees, so this job is the only lint that reaches the
-Python outside them. Its coverage holds only while its shape does: a path filter, a pathspec
-exclude, a working directory or ruff's own gitignore-respecting discovery would each let tracked
-files fall through again, silently. Read as text, like the other workflow tests.
+The service workflows lint only their own trees and only a few check formatting, so this job is the
+only lint that reaches the Python outside them and the only format check covering the whole repo
+(FLIP#1326). Its coverage holds only while its shape does: a path filter, a pathspec exclude, a
+working directory or ruff's own gitignore-respecting discovery would each let tracked files fall
+through again, silently. Read as text, like the other workflow tests.
 
 Usage:
     python3 .github/tests/workflows/test_lint_python.py
@@ -29,6 +30,9 @@ from pathlib import Path
 WORKFLOW = Path(__file__).resolve().parents[2] / "workflows" / "lint_python.yml"
 
 LINT_COMMAND = "git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff check --force-exclude --no-fix --output-format=github"
+FORMAT_COMMAND = "git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff format --check --force-exclude"
+# The one step condition allowed: the format check still runs when the lint step failed.
+NOT_CANCELLED = "${{ !cancelled() }}"
 
 
 def code_text() -> str:
@@ -46,16 +50,19 @@ class LintPythonCoversEveryTrackedFile(unittest.TestCase):
             "  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main, develop]\n"
         ), f"a filtered or narrowed trigger lets files fall through:\n{triggers['body']}"
 
-    def test_it_lints_the_tracked_file_list_not_ruffs_own_discovery(self) -> None:
-        """Discovery skips gitignored paths, so a tracked file under one is never linted; the list
+    def test_it_checks_the_tracked_file_list_not_ruffs_own_discovery(self) -> None:
+        """Discovery skips gitignored paths, so a tracked file under one is never checked; the list
         comes from git instead. --force-exclude keeps each config's deliberate excludes."""
         runs = re.findall(r"^\s+run: (.*)$", code_text(), re.MULTILINE)
         assert LINT_COMMAND in runs, runs
+        assert FORMAT_COMMAND in runs, runs
 
     def test_it_runs_from_the_repo_root_and_cannot_be_skipped(self) -> None:
         text = code_text()
-        for construct in ("working-directory:", "continue-on-error:", "\n    if:", "\n        if:"):
+        for construct in ("working-directory:", "continue-on-error:", "\n    if:"):
             assert construct not in text, construct
+        step_conditions = re.findall(r"^\s{8}if: (.*)$", text, re.MULTILINE)
+        assert step_conditions == [NOT_CANCELLED], f"only the format step may carry a condition: {step_conditions}"
 
     def test_ruff_is_pinned_exactly(self) -> None:
         """Preview rules change between releases; a floating version turns a ruff upgrade into red CI."""

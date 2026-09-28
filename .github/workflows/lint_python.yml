@@ -9,14 +9,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# `ruff check` over every tracked Python file, each against its nearest ruff config. The service
-# workflows lint only their own trees, so this is the one run that reaches the files outside them
-# (deploy/providers/AWS, scripts/, trust/deploy/, .github/tests/, docs/, fl-apps/, …). The files
-# come from `git ls-files` rather than ruff's own discovery, which skips anything gitignored;
-# --force-exclude keeps a config's deliberate excludes (flip-api's generated Alembic revisions).
+# `ruff check` and `ruff format --check` over every tracked Python file, each against its nearest
+# ruff config. The service workflows lint only their own trees and only a few check formatting,
+# so this is the one run that reaches everything (deploy/providers/AWS, scripts/, trust/deploy/,
+# .github/tests/, docs/, fl-apps/, …). The files come from `git ls-files` rather
+# than ruff's own discovery, which skips anything gitignored; --force-exclude keeps a config's
+# deliberate excludes (flip-api's generated Alembic revisions).
 # No path filter: the run takes seconds, and a filtered gate is how files fell through before.
 # .github/tests/workflows/test_lint_python.py pins this shape.
-name: Python lint (ruff)
+name: Python lint and format (ruff)
 
 on:
   push:
@@ -29,7 +30,7 @@ permissions:
 
 jobs:
   ruff:
-    name: ruff check (every tracked Python file)
+    name: ruff check + format (every tracked Python file)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -45,3 +46,8 @@ jobs:
 
       - name: ruff check
         run: git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff check --force-exclude --no-fix --output-format=github
+
+      # Runs even when the lint step failed, so one push reports both.
+      - name: ruff format --check
+        if: ${{ !cancelled() }}
+        run: git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff format --check --force-exclude
