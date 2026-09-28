@@ -291,7 +291,11 @@ make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub;
 A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
 the four API images and both FL API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
 hub reports on `/api/health` — never "latest on GitHub" (a v0.6.0 site would pull an nvflare-2.9 client
-against a 2.8 server). The resolver refuses (exit 5) a tag any site image was never built at — every
+against a 2.8 server). GitHub is only consulted to say a newer release exists: for a release target the
+resolver reads GitHub's release list (5 s; unreachable is one line and changes nothing). A newer stable
+`vX.Y.Z` is printed with both dates, but offered as a `[C/l]` choice only when the hub already runs it (its
+tag or the `sha-` build of its commit); choosing it exits 4 with the `git checkout` to run. Otherwise it is a
+warning. The resolver refuses (exit 5) a tag any site image was never built at — every
 `sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
 opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
 `flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / `deploy-trust` stay the
