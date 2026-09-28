@@ -342,6 +342,23 @@ describe("Project page (/project/[id]/index.vue)", () => {
             expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
         });
 
+        test("says the decisions are saved when the project still waits on a trust", async () => {
+            // Not reachable from today's card, which saves only once every trust is decided, but the
+            // endpoint accepts a subset (#1258's per-trust approvers) and then leaves the project staged.
+            decisionsToSave = {
+                approved: ["t1"],
+                declined: []
+            };
+            approveProject.mockResolvedValue({ projectStatus: "STAGED" });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
+            expect(snackbarSuccess.mock.calls[0][0].text).toContain("until every trust has a decision");
+        });
+
         test("reports a failed save without claiming anything was decided", async () => {
             approveProject.mockRejectedValue(new Error("boom"));
             const wrapper = mountProjectPage({ project: stagedProject() });
