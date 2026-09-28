@@ -39,4 +39,4 @@ Your decision applies to your Trust only; other Trusts decide in their own time.
 Viewing a project staged at your Trust
 ======================================
 
-You can open any project staged at your Trust — its details, cohort query and results, models and imaging status — even if you are not a member of it. You cannot edit, stage or delete it, and projects staged only at other Trusts stay hidden from you.
+You can open any project staged at your Trust — its details, cohort query and results, the list of its models and imaging status — even if you are not a member of it. You cannot edit, stage or delete it or add models to it, a model's own page (metrics, logs, results) stays with the project's members, and projects staged only at other Trusts stay hidden from you.

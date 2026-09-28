@@ -72,6 +72,8 @@ interface MountOptions {
     trustAdminReader?: boolean;
 }
 
+const mockNavigate = vi.fn();
+
 function mountLatestModels({
     isViewer = false,
     projectStatus = "APPROVED",
@@ -137,8 +139,9 @@ function mountLatestModels({
                 AiAlert: { template: "<div><slot /></div>" },
                 AiLoader: { template: "<div data-test='ai-loader' />" },
                 "router-link": {
-                    template: "<a><slot :navigate='() => {}' /></a>",
-                    props: ["to"]
+                    template: "<a><slot :navigate='navigate' /></a>",
+                    props: ["to"],
+                    setup: () => ({ navigate: mockNavigate })
                 }
             }
         }
@@ -147,6 +150,7 @@ function mountLatestModels({
 
 describe("LatestModels — defensive data access", () => {
     beforeEach(() => {
+        mockNavigate.mockClear();
         setData(undefined);
     });
 
@@ -309,6 +313,42 @@ describe("LatestModels — defensive data access", () => {
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
+    });
+
+    test("lists models to a Trust Admin reader without linking to model pages (FLIP#1258)", async () => {
+        // Model pages stay with the project's members (can_access_model); a link would open on a 403.
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ trustAdminReader: true });
+        await flushPromises();
+
+        const row = wrapper.find("[data-test=latest-model-row]");
+        expect(row.text()).toContain("Alpha");
+        await row.trigger("click");
+        expect(mockNavigate).not.toHaveBeenCalled();
+        expect(wrapper.find("[data-test=latest-model-caret]").exists()).toBe(false);
+        expect(wrapper.find("[data-test=view-all-models-btn]").exists()).toBe(false);
+    });
+
+    test("links each model to its page for a project member", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        await wrapper.find("[data-test=latest-model-row]").trigger("click");
+        expect(mockNavigate).toHaveBeenCalledTimes(1);
+        expect(wrapper.find("[data-test=latest-model-caret]").exists()).toBe(true);
     });
 
     test("shows the header Create-Model button for a Researcher (CanCreateProjects only)", async () => {

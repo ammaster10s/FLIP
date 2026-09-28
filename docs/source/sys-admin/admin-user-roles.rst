@@ -27,7 +27,7 @@ User Roles
      - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the role is assigned (see :ref:`assigning-a-trust-admin`).
 
        - **Who decides a trust:** while a trust has at least one Trust Admin, only its Trust Admins approve or decline projects staged at it — an ``admin`` no longer can. A trust with no Trust Admin is decided by an ``admin``, as before.
-       - **Seeing what they decide:** a Trust Admin can view any project staged at their trust — its details, cohort query and results, models and imaging status — even one they are not a member of. They cannot edit, stage or delete it, and see nothing of projects staged only at other trusts.
+       - **Seeing what they decide:** a Trust Admin can view any project staged at their trust — its details, cohort query and results, the list of its models and imaging status — even one they are not a member of. They cannot edit, stage or delete it or add models to it; the models' own pages (metrics, logs, results) stay with the project's members; and they see nothing of projects staged only at other trusts.
        - Decisions are made from the **My Trust** page (see :ref:`trust-admin-guide`).
 
 ***********
