@@ -47,7 +47,6 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 
 
 # Color codes for terminal output
@@ -176,8 +175,14 @@ def kubectl_get_condition(resource_type: str, resource_name: str, condition: str
     """
     try:
         result = subprocess.run(
-            ["kubectl", "get", resource_type, resource_name,
-             "-o", f"jsonpath='{{.status.conditions[?(@.type==\"{condition}\")].status}}'"],
+            [
+                "kubectl",
+                "get",
+                resource_type,
+                resource_name,
+                "-o",
+                f"jsonpath='{{.status.conditions[?(@.type==\"{condition}\")].status}}'",
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -219,7 +224,11 @@ def kubectl_json(resource: str, namespace: str, timeout: int = 15) -> dict | Non
     args = ["kubectl", "get", resource, "-n", namespace, "-o", "json"]
     try:
         result = subprocess.run(
-            args, capture_output=True, text=True, check=True, timeout=timeout,
+            args,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout,
         )
         return json.loads(result.stdout)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
@@ -265,11 +274,19 @@ def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
     if not success or phase.strip().strip("'\"") == "Running":
         return False
     # Events carry the diagnosis; the pod status only says ContainerCreating.
-    success, events = run_command([
-        "kubectl", "get", "events", "-n", namespace,
-        "--field-selector", f"involvedObject.name={pod.split('/')[-1]}",
-        "-o", "jsonpath={.items[*].message}",
-    ])
+    success, events = run_command(
+        [
+            "kubectl",
+            "get",
+            "events",
+            "-n",
+            namespace,
+            "--field-selector",
+            f"involvedObject.name={pod.split('/')[-1]}",
+            "-o",
+            "jsonpath={.items[*].message}",
+        ]
+    )
     return success and "hostPath type check failed" in events
 
 
@@ -494,8 +511,12 @@ def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
         return
 
     pods = kubectl_list(
-        ["pods", "-l", f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=xnat-web",
-         "--field-selector=status.phase=Running"],
+        [
+            "pods",
+            "-l",
+            f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=xnat-web",
+            "--field-selector=status.phase=Running",
+        ],
         namespace,
     )
     if not pods:
@@ -597,7 +618,15 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
-def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, expected: int | list[int], namespace: str, timeout: int = 20) -> bool:
+def forward_then_check(
+    pod_name: str,
+    remote_port: int,
+    url: str,
+    name: str,
+    expected: int | list[int],
+    namespace: str,
+    timeout: int = 20,
+) -> bool:
     """Port-forward to a pod, check the endpoint, then clean up.
 
     This is a diagnostic convenience — not a persistent tunnel. Each check
@@ -614,7 +643,6 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
     Returns:
         True if endpoint responds as expected
     """
-    import threading
     import socket
 
     # Find a free local port
@@ -624,7 +652,8 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
 
     proc = subprocess.Popen(
         ["kubectl", "port-forward", "-n", namespace, pod_name, f"{local_port}:{remote_port}"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
     # Wait for port-forward to become ready
@@ -706,7 +735,9 @@ def main(
         try:
             result = subprocess.run(
                 ["helm", "list", "-n", namespace, "-o", "json"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             hr = result.stdout.strip()
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -717,7 +748,11 @@ def main(
                 match = [r for r in releases if r.get("name") == helm_release]
                 if match:
                     rel = match[0]
-                    print_status("PASS", f"Helm release '{helm_release}' is {rel.get('status', '?')} (revision {rel.get('revision', '?')})")
+                    print_status(
+                        "PASS",
+                        f"Helm release '{helm_release}' is {rel.get('status', '?')} "
+                        f"(revision {rel.get('revision', '?')})",
+                    )
                 else:
                     print_status("FAIL", f"Helm release '{helm_release}' not found in namespace '{namespace}'")
             except json.JSONDecodeError:
@@ -763,8 +798,9 @@ def main(
 
         ready = 0
         for pod_name in svc_pods:
-            success, status = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o",
-                                          "jsonpath={.status.containerStatuses[0].ready}"])
+            success, status = run_command(
+                ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].ready}"]
+            )
             if success and status.strip().strip("'\"").lower() == "true":
                 ready += 1
 
@@ -792,14 +828,24 @@ def main(
     print_status("INFO", "Scanning for unhealthy pods...")
     unhealthy = []
     for pod_name in all_pods:
-        success, reason = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o",
-                                      "jsonpath={.status.containerStatuses[0].state.waiting.reason}"])
+        success, reason = run_command(
+            [
+                "kubectl",
+                "get",
+                pod_name,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.status.containerStatuses[0].state.waiting.reason}",
+            ]
+        )
         if success and reason.strip().strip("'\"") in ("CrashLoopBackOff", "Error", "ImagePullBackOff", "ErrImagePull"):
             unhealthy.append((pod_name, reason.strip().strip("'\"")))
             continue
         # Also flag pods with excessive restarts (even if currently "running")
-        success, restarts = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o",
-                                        "jsonpath={.status.containerStatuses[0].restartCount}"])
+        success, restarts = run_command(
+            ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].restartCount}"]
+        )
         if success:
             try:
                 rc = int(restarts.strip().strip("'\""))
@@ -832,15 +878,16 @@ def main(
             if gpu_count and int(gpu_count) > 0:
                 print_status("PASS", f"fl-client has {gpu_count} GPU(s) allocated (NUM_AVAILABLE_GPUS={gpu_count})")
             else:
-                print_status("WARN", "fl-client has no GPUs allocated — check nvidia-device-plugin and time-slicing config")
+                print_status(
+                    "WARN", "fl-client has no GPUs allocated — check nvidia-device-plugin and time-slicing config"
+                )
         else:
             print_status("INFO", "No fl-client pods — skipping GPU check")
 
         # Node-level allocatable GPUs
-        success, gpu_alloc = run_command([
-            "kubectl", "get", "nodes", "-o",
-            "jsonpath={.items[0].status.allocatable.nvidia\\.com/gpu}"
-        ])
+        success, gpu_alloc = run_command(
+            ["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].status.allocatable.nvidia\\.com/gpu}"]
+        )
         if success and gpu_alloc.strip().strip("'\"") and int(gpu_alloc.strip().strip("'\"")) > 0:
             node_gpu_count = gpu_alloc.strip().strip("'\"")
             print_status("PASS", f"Node reports {node_gpu_count} allocatable GPU(s)")
@@ -854,14 +901,16 @@ def main(
     else:
         for pvc_name in pvcs:
             pvc_short = pvc_name.replace("persistentvolumeclaim/", "")
-            success, phase = run_command([
-                "kubectl", "get", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"
-            ])
+            success, phase = run_command(
+                ["kubectl", "get", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
+            )
             phase_str = phase.strip().strip("'\"") if success else "Unknown"
             if phase_str == "Bound":
                 print_status("PASS", f"PVC '{pvc_short}' is {phase_str}")
             elif phase_str == "Pending":
-                print_status("WARN", f"PVC '{pvc_short}' is {phase_str} — may be waiting for first consumer or provisioner")
+                print_status(
+                    "WARN", f"PVC '{pvc_short}' is {phase_str} — may be waiting for first consumer or provisioner"
+                )
             else:
                 print_status("FAIL", f"PVC '{pvc_short}' status: {phase_str}")
 
@@ -875,9 +924,9 @@ def main(
     ]
 
     for job_name, label in init_jobs:
-        success, status_json = run_command([
-            "kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"
-        ], timeout=10)
+        success, status_json = run_command(
+            ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"], timeout=10
+        )
         if not success:
             print_status("INFO", f"Init job '{job_name}' not found (may not be configured)")
             continue
@@ -889,14 +938,8 @@ def main(
             continue
 
         conditions = job.get("status", {}).get("conditions", [])
-        complete = any(
-            c.get("type") == "Complete" and c.get("status") == "True"
-            for c in conditions
-        )
-        failed = any(
-            c.get("type") == "Failed" and c.get("status") == "True"
-            for c in conditions
-        )
+        complete = any(c.get("type") == "Complete" and c.get("status") == "True" for c in conditions)
+        failed = any(c.get("type") == "Failed" and c.get("status") == "True" for c in conditions)
 
         if complete:
             print_status("PASS", f"Init job '{job_name}' ({label}) completed successfully")
@@ -952,14 +995,15 @@ def main(
 
             # Port-forward then probe MinIO
             import socket
+
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind(("127.0.0.1", 0))
                 minio_local = s.getsockname()[1]
 
             minio_proc = subprocess.Popen(
-                ["kubectl", "port-forward", f"service/minio", f"{minio_local}:9000",
-                 "-n", namespace],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                ["kubectl", "port-forward", "service/minio", f"{minio_local}:9000", "-n", namespace],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             time.sleep(2)
 
@@ -1014,7 +1058,12 @@ def main(
 
     for label_sel, svc_name in critical_containers.items():
         pods = kubectl_list(
-            ["pods", "-l", f"app.kubernetes.io/instance={helm_release},{label_sel}", "--field-selector=status.phase=Running"],
+            [
+                "pods",
+                "-l",
+                f"app.kubernetes.io/instance={helm_release},{label_sel}",
+                "--field-selector=status.phase=Running",
+            ],
             namespace,
         )
         if not pods:
@@ -1028,8 +1077,7 @@ def main(
             continue
 
         pod_name = pods[0]
-        success, logs = run_command(["kubectl", "logs", pod_name, "-n", namespace,
-                                      "--tail=50"], timeout=15)
+        success, logs = run_command(["kubectl", "logs", pod_name, "-n", namespace, "--tail=50"], timeout=15)
         if not success:
             print_status("WARN", f"Could not retrieve logs for '{svc_name}'")
             continue
@@ -1089,7 +1137,9 @@ def main(
                         used = int(fields[2])
                         mem_pct = int((used / total) * 100)
                         if mem_pct < 90:
-                            print_status("PASS", f"Memory usage is {mem_pct}% ({used // 1024} MiB / {total // 1024} MiB)")
+                            print_status(
+                                "PASS", f"Memory usage is {mem_pct}% ({used // 1024} MiB / {total // 1024} MiB)"
+                            )
                         else:
                             print_status("WARN", f"Memory usage is {mem_pct}% — high")
                     except (ValueError, ZeroDivisionError):
@@ -1116,8 +1166,7 @@ def main(
     else:
         print(f"{Colors.RED}✗ Kubernetes deployment verification failed with {counters.failed} error(s).{Colors.NC}")
         print(
-            f"{Colors.YELLOW}Please review the failed checks and ensure all "
-            f"services are properly deployed.{Colors.NC}"
+            f"{Colors.YELLOW}Please review the failed checks and ensure all services are properly deployed.{Colors.NC}"
         )
         sys.exit(1)
 

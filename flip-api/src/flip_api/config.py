@@ -188,13 +188,26 @@ class Settings(BaseSettings):
 
     @field_validator("ENFORCE_MFA", mode="before")
     @classmethod
-    def coerce_empty_mfa(cls, v: str | bool | None) -> bool:
-        """Treat empty-string or None ENFORCE_MFA as the default True."""
-        if v is None or v == "":
-            return True
+    def parse_enforce_mfa(cls, v: str | bool | int | None) -> bool:
+        """Parse ENFORCE_MFA so that only an explicit "off" disables the MFA gate.
+
+        Unset, empty or whitespace keeps the default (True) — CI environment
+        injection hands over empty strings. The usual spellings are recognised
+        after trimming, in any case: true/1/yes/on and false/0/no/off. Anything
+        else also keeps MFA on, with a warning naming the value: a typo must fail
+        closed, never be what silently switches the gate off.
+        """
         if isinstance(v, bool):
             return v
-        return v.lower() in ("true", "1")    # type: ignore[union-attr]
+        normalised = "" if v is None else str(v).strip().lower()
+        if normalised in ("", "true", "1", "yes", "on"):
+            return True
+        if normalised in ("false", "0", "no", "off"):
+            return False
+        # flip_api.utils.logger imports get_settings(), so it cannot be imported
+        # here without a cycle — use the same underlying logger.
+        logging.getLogger("uvicorn").warning(f"ENFORCE_MFA={v!r} is not a recognised boolean; keeping MFA enforced")
+        return True
 
     @field_validator("EMAIL_BACKEND", mode="before")
     @classmethod
@@ -234,7 +247,7 @@ class Settings(BaseSettings):
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        Same shape as ``coerce_empty_env``. Must stay
         in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
@@ -310,8 +323,7 @@ class Settings(BaseSettings):
                 # flip_api.utils.logger imports get_settings(), so it cannot be
                 # imported here without a cycle — use the same underlying logger.
                 logging.getLogger("uvicorn").warning(
-                    f"{info.field_name} resolved to an empty list from {v!r}; "
-                    f"falling back to the default {default}"
+                    f"{info.field_name} resolved to an empty list from {v!r}; falling back to the default {default}"
                 )
                 return default
             return normalised

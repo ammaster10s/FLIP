@@ -92,9 +92,7 @@ async def test_probe_health_endpoint_down_on_transport_error(caplog):
     assert result == {"status": "down", "version": None, "response_ms": None}
     # A red dot with no logged cause is undiagnosable: the log must name the target
     # and distinguish refused/timeout/TLS, which all collapse to the same status.
-    assert any(
-        "imaging-api:8000/health" in r.message and "connection refused" in r.message for r in caplog.records
-    )
+    assert any("imaging-api:8000/health" in r.message and "connection refused" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -429,9 +427,9 @@ async def test_collect_once_returns_exactly_the_roster_services():
 async def test_collect_once_trust_api_entry_is_static_with_own_version():
     """trust-api is not probed — if this code runs, the service is up. Its status on the
     Connection Status page is derived hub-side from heartbeat age instead."""
-    expected_version = tomllib.loads(
-        (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
-    )["project"]["version"]
+    expected_version = tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text())["project"][
+        "version"
+    ]
 
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})

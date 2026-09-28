@@ -43,8 +43,8 @@ def token_id():
 
 @pytest.fixture
 def roles_data(roles_factory):
-    """Roles data fixture."""
-    return roles_factory()
+    """Roles data fixture: platform roles only, so no trust (a Trust Admin is covered in the integration suite)."""
+    return roles_factory(trust_id=None)
 
 
 def test_successful_role_update(mock_db, user_id, token_id, roles_data):
@@ -65,6 +65,7 @@ def test_successful_role_update(mock_db, user_id, token_id, roles_data):
         patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
         patch("flip_api.user_services.set_user_roles.get_username") as mock_get_username,
         patch("flip_api.user_services.set_user_roles.get_settings") as mock_get_settings,
+        patch("flip_api.user_services.set_user_roles.apply_trust_admin_grant") as mock_apply_trust_admin_grant,
     ):
         mock_has_permissions.return_value = True
         mock_get_username.return_value = "user@example.com"
@@ -72,6 +73,9 @@ def test_successful_role_update(mock_db, user_id, token_id, roles_data):
 
         # Execute
         result = set_user_roles(user_id, roles_data, mock_db, token_id)
+
+        # No trust named: any Trust Admin grant the user held is removed, in the same transaction.
+        mock_apply_trust_admin_grant.assert_called_once_with(user_id, None, token_id, mock_db)
 
         # Assert
         assert result == roles_data

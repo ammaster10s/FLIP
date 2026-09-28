@@ -118,25 +118,18 @@ ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
-# IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
-# root, which exists to fence the GitHub OIDC apply role and is applied only in
-# the accounts whose applies run through that pipeline. Detached on the LZA modes
-# for now: ci/ has not been applied in either of those accounts yet, they are
-# still changed by laptop applies, and attaching a name that does not resolve
-# fails every one of those role updates with NoSuchEntity — which is the failure
-# this default was added for during the FLIP#749 bring-up. variables.tf documents
-# "" as the value for an account where ci/ has never been applied, and an env file
-# that sets the variable itself still wins: `?=` only supplies the default.
+# IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by the ci/
+# root. The LZA modes take the platform's AICentre-WorkloadRoleBoundary instead
+# (londonaicentre/lza#51): the accelerator deploys it to every workload account,
+# and an LZA SCP denies creating a role, or attaching or writing a policy onto
+# one, unless the role carries it. So on LZA it is not a choice — without it every
+# role change is denied, from a laptop or from CI. ci/ is not applied there: the
+# platform owns the boundary, and the CI roles with it. An env file that sets the
+# variable still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
-export TF_VAR_iam_permissions_boundary_name ?=
+export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
-
-# Re-attaching it — deleting the block above — is a follow-up, and it is *ordered*
-# after the thing it depends on: first `make -C ci apply PROD=lza-stag` /
-# `PROD=lza` in both accounts (README, "Repointing CI at the LZA accounts",
-# step 3), then drop the block and flip tests/test_iam_permissions_boundary.py to
-# assert that no mode detaches it. Re-attaching here would break every manual
-# LZA apply in the window before that step runs.
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for

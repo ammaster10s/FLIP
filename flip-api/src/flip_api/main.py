@@ -84,6 +84,7 @@ from flip_api.step_functions_services import (
 )
 from flip_api.trusts_services import (
     admin_create_trust,
+    get_trust_decisions,
     get_trusts,
     trusts_health_check,
     update_trust_status,
@@ -138,7 +139,7 @@ _docs_enabled = get_settings().ENV != "production"
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
-    version="0.1.0",
+    version=build_identity() or "unknown",
     lifespan=lifespan,
     docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
@@ -233,6 +234,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     retrieve_model_step_function.router,
     # Trust services
     admin_create_trust.router,
+    get_trust_decisions.router,
     get_trusts.router,
     trusts_health_check.router,
     update_trust_status.router,

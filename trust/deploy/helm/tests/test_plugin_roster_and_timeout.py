@@ -484,9 +484,7 @@ def test_an_undrivable_url_is_reported_rather_than_dropped(
     """The chart's own download container SystemExits on it, so no pod can start."""
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster(undrivable=("broken",)))
     monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(
-        check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar")
-    )
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar"))
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 

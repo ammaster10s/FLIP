@@ -13,23 +13,18 @@
 #  limitations under the License.
 #
 
-"""Static guard on the IAM permissions boundary (FLIP#1082, FLIP#1199).
+"""Static guard on the IAM permissions boundary (FLIP#1082, FLIP#1199, FLIP#1280).
 
-Every IAM role this root owns carries ``var.iam_permissions_boundary_name``,
-whose ``variables.tf`` default is the ``AICentre-FLIPTerraformBoundary`` policy
-declared by the ``ci/`` root, so the boundary resolves in any account the stack is
-applied to — which is why ``ci/`` is applied there first.
+Every IAM role this root owns carries ``var.iam_permissions_boundary_name``. Which
+policy that names depends on who owns the account's guardrails:
 
-The self-contained modes are the ones the pipeline applies today, so they carry
-it. The LZA modes are detached, and this is the *current* state rather than a
-preference: ``ci/`` has not been applied in either LZA account yet and those
-estates are still changed by laptop applies, where an attach whose name resolves
-to nothing fails every role update with ``NoSuchEntity`` (the failure the
-Makefile default was added for). Re-attaching is a follow-up, ordered after
-``make -C ci apply PROD=lza-stag`` / ``PROD=lza`` has run in both accounts: delete
-the ``ifneq ($(IS_LZA),)`` block in the Makefile and merge
-``test_the_lza_modes_detach_the_boundary_until_ci_lands_there`` into
-``test_the_self_contained_modes_let_the_terraform_default_apply``.
+- The self-contained modes take the ``variables.tf`` default,
+  ``AICentre-FLIPTerraformBoundary``, declared by this repo's ``ci/`` root.
+- The LZA modes take the platform's ``AICentre-WorkloadRoleBoundary``
+  (londonaicentre/lza#51), which the accelerator deploys to every workload
+  account. An LZA SCP denies creating a role, or attaching or writing a policy
+  onto one, unless the role carries it — so a blank or a different name there
+  fails every role change, from a laptop or from CI.
 
 These probes run ``make`` for real, with the env-file include pointed at nothing
 so they are independent of any local ``.env.*`` file, and read back what
@@ -97,28 +92,20 @@ def test_the_self_contained_modes_let_the_terraform_default_apply(tmp_path: Path
 
 
 @pytest.mark.parametrize("prod", ["lza-stag", "lza"])
-def test_the_lza_modes_detach_the_boundary_until_ci_lands_there(tmp_path: Path, prod: str) -> None:
-    """The LZA carve-out, still in place: ``ci/`` has not been applied there (#1199).
+def test_the_lza_modes_carry_the_platform_boundary(tmp_path: Path, prod: str) -> None:
+    """The LZA modes default to the platform's boundary, never to ``""``.
 
-    ``AICentre-FLIPTerraformBoundary`` does not exist in either LZA account yet, and
-    both estates are still changed by manual ``make plan/apply PROD=lza|lza-stag``
-    runs — where an attach whose name resolves to nothing fails every role update
-    with ``NoSuchEntity``. So the Makefile exports the variable as ``""`` for these
-    two modes and an apply there keeps working.
-
-    This test flips when the ordering has actually happened: once
-    ``make -C ci apply PROD=lza-stag`` and ``PROD=lza`` have run in both accounts,
-    delete the ``ifneq ($(IS_LZA),)`` block in the Makefile and fold this case into
-    the self-contained one above.
+    ``AICentre-FLIPTerraformBoundary`` does not exist in those accounts (``ci/`` is
+    not applied there), and the platform SCP rejects a role without
+    ``AICentre-WorkloadRoleBoundary``. Either wrong value fails every role change.
     """
-    assert _probe(tmp_path, prod) == "|exported"
+    assert _probe(tmp_path, prod) == "AICentre-WorkloadRoleBoundary|exported"
 
 
 @pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
 def test_an_env_file_boundary_name_still_wins(tmp_path: Path, prod: str) -> None:
     # `?=` supplies a default, it does not override: an operator who sets the
     # variable in the env file (which `include` exports) gets that name on every
-    # mode, LZA included — the escape hatch for an account where ci/ has not been
-    # applied is the same mechanism as re-attaching it by hand.
+    # mode, LZA included.
     probe = _probe(tmp_path, prod, {"TF_VAR_iam_permissions_boundary_name": "Custom-Boundary"})
     assert probe == "Custom-Boundary|exported"

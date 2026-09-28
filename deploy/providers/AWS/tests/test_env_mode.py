@@ -20,6 +20,7 @@ new PROD value is added in exactly one place. This pins the table itself; the
 per-Makefile probes (``test_trust_makefile_lza_modes.py``, ``test_lza_iam_boundary.py``)
 check the wiring.
 """
+
 import subprocess
 from pathlib import Path
 

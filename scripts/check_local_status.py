@@ -420,15 +420,17 @@ def discover_compose_containers(project: str) -> dict[str, ComposeContainer]:
     Returns:
         dict[str, ComposeContainer]: One entry per compose service; empty when nothing is up.
     """
-    success, output = run_command([
-        "docker",
-        "ps",
-        "-a",
-        "--filter",
-        f"label=com.docker.compose.project={project}",
-        "--format",
-        '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
-    ])
+    success, output = run_command(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+        ]
+    )
     return parse_compose_containers(output) if success else {}
 
 
@@ -581,8 +583,7 @@ def main(
     if INSTANCE_PREFIX:
         print_status(
             "INFO",
-            f"FLIP_INSTANCE set — inspecting compose project '{COMPOSE_PROJECT}' "
-            f"and networks named {INSTANCE_PREFIX}*",
+            f"FLIP_INSTANCE set — inspecting compose project '{COMPOSE_PROJECT}' and networks named {INSTANCE_PREFIX}*",
         )
 
     # Resolved once, up here rather than inside the --skip-docker branch: the later `docker exec`
@@ -637,24 +638,24 @@ def main(
                     if hub_container is None:
                         print_status("FAIL", f"Service '{service}' has no container in project '{COMPOSE_PROJECT}'")
                     elif hub_container.running:
-                        print_status(
-                            "PASS", f"Container '{hub_container.name}' is running ({hub_container.status})"
-                        )
+                        print_status("PASS", f"Container '{hub_container.name}' is running ({hub_container.status})")
                     else:
                         print_status(
                             "FAIL", f"Container '{hub_container.name}' is not running ({hub_container.status})"
                         )
 
                 # Check for any exited containers
-                success, exited = run_command([
-                    "docker",
-                    "ps",
-                    "-a",
-                    "--filter",
-                    "status=exited",
-                    "--format",
-                    "{{.Names}}",
-                ])
+                success, exited = run_command(
+                    [
+                        "docker",
+                        "ps",
+                        "-a",
+                        "--filter",
+                        "status=exited",
+                        "--format",
+                        "{{.Names}}",
+                    ]
+                )
                 if success and exited:
                     print_status("WARN", f"Exited containers found: {exited}")
         except Exception as e:
@@ -680,14 +681,16 @@ def main(
                             print_status("PASS", f"XNAT stack '{stack_name}' is deployed")
 
                             # Check services in the stack
-                            success, services = run_command([
-                                "docker",
-                                "stack",
-                                "services",
-                                stack_name,
-                                "--format",
-                                "{{.Name}}:{{.Replicas}}",
-                            ])
+                            success, services = run_command(
+                                [
+                                    "docker",
+                                    "stack",
+                                    "services",
+                                    stack_name,
+                                    "--format",
+                                    "{{.Name}}:{{.Replicas}}",
+                                ]
+                            )
                             if success:
                                 for service_line in services.split("\n"):
                                     if service_line:

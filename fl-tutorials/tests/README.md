@@ -45,8 +45,12 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
-`test_spleen_inference_config_parity.py`, `test_fl_tutorials_make_targets.py`,
-`test_sim_tutorial_stale_guard.py`, `test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
+`test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
+`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
+`test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
+`test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
+`test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
+`test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 Tutorial-app tests that cover one app file mirror its path the same way:

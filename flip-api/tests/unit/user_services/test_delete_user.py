@@ -76,9 +76,7 @@ def test_cognito_user_already_gone_still_drops_role_grants(mock_request, mock_db
     ):
         mock_has_permissions.return_value = True
         mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = user_pool_id
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="not found"
-        )
+        mock_get_username.side_effect = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
 
         result = delete_user(user_id, mock_request, mock_db, token_id)
 
