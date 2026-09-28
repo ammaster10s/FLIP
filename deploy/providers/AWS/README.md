@@ -1411,6 +1411,11 @@ boundary and the Terraform state bucket are declared by
 root never manages them — the pipeline must not set its own ceiling, and an apply
 that broke its own roles would lock CI out of the apply that fixes them.
 
+The module lives in this public repository, rather than in a platform repository,
+so that what FLIP's CI may do is public knowledge: anyone deploying FLIP can read
+exactly which AWS services, roles and data its plan and apply roles reach, and
+instantiate the same least-privilege set in their own account.
+
 - **AI Centre's LZA accounts**: the platform repository, `aicentre-lza-iac`,
   instantiates the module per account, pinned to a FLIP commit SHA, through its
   own reviewed pipeline, with the platform's own permissions boundary

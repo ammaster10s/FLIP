@@ -1,7 +1,8 @@
 # Terraform CI bootstrap (for your own AWS account)
 
 Everything FLIP's Terraform CI needs in an AWS account before its first run, for anyone deploying FLIP into an
-account they own. This root is a thin wrapper around
+account they own. The rights it grants are public on purpose: the module is kept in FLIP, not in AI Centre's platform
+repository, so that you can read exactly what FLIP's CI may do before you create it. This root is a thin wrapper around
 [`../modules/terraform_ci_bootstrap`](../modules/terraform_ci_bootstrap): it adds a provider with an account guard,
 looks up the account's GitHub OIDC provider, and keeps its own state.
 
