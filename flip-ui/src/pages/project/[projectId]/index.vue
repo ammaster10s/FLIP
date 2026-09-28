@@ -234,10 +234,9 @@ const unstagingProject = ref(false);
 // lifecycle bar. Undated until then, like the Staged step.
 const latestTrustApprovalAt = computed<string | null>(() => {
     if (project?.value?.status !== "APPROVED") return null;
-    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.status !== "PENDING" && t.decidedAt);
-    if (!trusts.length) return null;
 
-    return trusts
+    return (project?.value?.approvedTrusts ?? [])
+        .filter(t => t.status !== "PENDING" && t.decidedAt)
         .map(t => t.decidedAt as string)
         .sort()
         .at(-1) ?? null;

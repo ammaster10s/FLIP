@@ -81,11 +81,9 @@ def approve_project_endpoint(
         )
 
     # Schema validation
-    trust_ids = payload.trusts
-
     project_approval = IProjectApproval(
         project_id=project_id,
-        trust_ids=trust_ids,
+        trust_ids=payload.trusts,
         declined_trust_ids=payload.declined,
     )
 
@@ -107,18 +105,7 @@ def approve_project_endpoint(
         )
 
     try:
-        try:
-            outcome = record_trust_decisions(db, project_approval, user_id)
-        except ProjectNotStagedError:
-            # Another approver approved the project between the check above and taking the project lock.
-            logger.error(f"Project {project_id} left STAGED before its trust decisions were recorded.")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unable to approve the project as it has not been staged",
-            )
-        except InvalidTrustDecisionsError as e:
-            logger.error(f"Rejected trust decisions on project {project_id}: {e}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        outcome = record_trust_decisions(db, project_approval, user_id)
 
         # get_trusts with no ids returns every trust, so an empty list must never reach it.
         if outcome.project_status != ProjectStatus.APPROVED or not outcome.approved_trust_ids:
@@ -128,6 +115,16 @@ def approve_project_endpoint(
         logger.debug(f"Fetching endpoints for approved trusts: {outcome.approved_trust_ids} for project {project_id}")
         return get_trusts(db, ids=outcome.approved_trust_ids)
 
+    except ProjectNotStagedError:
+        # Another approver approved the project between the check above and taking the project lock.
+        logger.error(f"Project {project_id} left STAGED before its trust decisions were recorded.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to approve the project as it has not been staged",
+        )
+    except InvalidTrustDecisionsError as e:
+        logger.error(f"Rejected trust decisions on project {project_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:

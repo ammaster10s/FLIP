@@ -715,9 +715,8 @@ def record_trust_decisions(
         )
 
     decided_at = datetime.now(timezone.utc)
-    decisions = [(trust_id, TrustApprovalStatus.APPROVED) for trust_id in approve_ids] + [
-        (trust_id, TrustApprovalStatus.DECLINED) for trust_id in decline_ids
-    ]
+    decisions = [(trust_id, TrustApprovalStatus.APPROVED) for trust_id in approve_ids]
+    decisions += [(trust_id, TrustApprovalStatus.DECLINED) for trust_id in decline_ids]
     changed = []
     for trust_id, decision in decisions:
         row = by_trust[trust_id]
