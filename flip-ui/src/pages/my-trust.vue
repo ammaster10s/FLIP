@@ -15,8 +15,8 @@
     name: My Trust
 </route>
 
-<!-- A Trust Admin's page (FLIP#1258): the projects staged at their trust — awaiting their decision first, then
-     decided — and, last, the trust itself as Connection Status shows it. -->
+<!-- A Trust Admin's page (FLIP#1258): the projects staged at their trust — awaiting their decision, then decided —
+     beside the trust itself as Connection Status shows it. -->
 <template>
     <div class="flex flex-col w-full h-full">
         <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
@@ -30,7 +30,9 @@
                 </h1>
             </div>
 
-            <div class="max-w-5xl">
+            <!-- Decisions first, the page's job; the trust's own connection card to their right (below them on narrow
+                 screens). -->
+            <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_410px]">
                 <div class="space-y-6">
                     <AiCard>
                         <div class="px-6 py-5">
@@ -70,15 +72,14 @@
                             </ul>
                         </div>
                     </AiCard>
-
-                    <!-- The trust itself, as Connection Status shows it: after the decisions, the page's job. -->
-                    <AiCard>
-                        <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
-                        <div v-else class="p-6">
-                            <AiLoader />
-                        </div>
-                    </AiCard>
                 </div>
+
+                <AiCard data-test="trust-card-column">
+                    <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
+                    <div v-else class="p-6">
+                        <AiLoader />
+                    </div>
+                </AiCard>
             </div>
         </div>
 

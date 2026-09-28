@@ -168,13 +168,15 @@ beforeEach(() => {
 });
 
 describe("My Trust", () => {
-    it("ends the page with the Trust Admin's own trust card, after the decisions", async () => {
+    it("shows the Trust Admin's own trust card after the decisions (to their right on wide screens)", async () => {
         const wrapper = mountPage();
         await nextTick();
 
         expect(wrapper.find("[data-test='trust-card']").text()).toBe("Decision Trust A");
+        // Source order puts the card after the decisions, so it follows them when the grid stacks.
         const html = wrapper.html();
         expect(html.indexOf("data-test=\"trust-card\"")).toBeGreaterThan(html.indexOf("data-test=\"decided-list\""));
+        expect(wrapper.find("[data-test='trust-card-column']").exists()).toBe(true);
     });
 
     it("sends anyone who is not a Trust Admin back to Projects", async () => {
