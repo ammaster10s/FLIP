@@ -130,6 +130,14 @@ class ProjectStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class TrustApprovalStatus(StrEnum):
+    """Decision on a staged project at one trust. Every trust starts PENDING when the project is staged."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    DECLINED = "DECLINED"
+
+
 class ProjectType(StrEnum):
     """Kind of project, for the projects-list filter (FLIP#1071): imaging, or tabular-only."""
 

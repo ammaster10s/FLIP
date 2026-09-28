@@ -29,16 +29,18 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlmodel import select
 
+from flip_api.db.models.main_models import ProjectTrustIntersect
 from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
 
 
 @pytest.fixture
 def staged_project(session, user_factory, project_factory, trust_factory, project_trust_intersect_factory):
-    """A STAGED project with two un-approved intersects — the precondition for approval.
+    """A STAGED project with two pending intersects — the precondition for approval.
 
     Built here rather than imported from ``test_project_db_flow``, whose fixture is local to
     that module; duplicating six lines beats coupling two files' fixtures together.
@@ -52,14 +54,25 @@ def staged_project(session, user_factory, project_factory, trust_factory, projec
         session.add(trust)
     session.flush()
     for trust in trusts:
-        session.add(project_trust_intersect_factory.build(project_id=project.id, trust_id=trust.id, approved=False))
+        session.add(project_trust_intersect_factory.build(
+                project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.PENDING
+            ))
     session.commit()
 
     return {"project": project, "trusts": trusts}
 
 
-def _payload(trusts) -> ApproveProjectBodyPayload:
-    return ApproveProjectBodyPayload(trusts=[t.id for t in trusts])
+def _payload(trusts, declined=()) -> ApproveProjectBodyPayload:
+    return ApproveProjectBodyPayload(trusts=[t.id for t in trusts], declined=[t.id for t in declined])
+
+
+def _decisions(session, project) -> dict:
+    rows = session.exec(
+        select(ProjectTrustIntersect)
+        .where(ProjectTrustIntersect.project_id == project.id)
+        .execution_options(populate_existing=True)
+    ).all()
+    return {row.trust_id: row for row in rows}
 
 
 def _grant(user_id, role, trust_id=None):
@@ -94,20 +107,85 @@ def test_hub_admin_global_grant_cannot_approve(session, staged_project):
 
 
 def test_trust_owner_approves_at_their_own_trust(session, staged_project):
-    """A Trust Owner may approve for the trust they own — the point of the change."""
+    """A Trust Owner may approve for the trust they own — the point of the change.
+
+    The other trust is still pending, so the decision is recorded and the project stays STAGED (FLIP#1318).
+    """
     owner_id = uuid4()
-    own_trust, _other = staged_project["trusts"]
+    own_trust, other = staged_project["trusts"]
     session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=own_trust.id))
     session.commit()
+    project = staged_project["project"]
 
     result = approve_project_endpoint(
-        project_id=staged_project["project"].id,
+        project_id=project.id,
         payload=_payload([own_trust]),
         user_id=owner_id,
         db=session,
     )
 
-    assert [trust.id for trust in result] == [own_trust.id]
+    assert result == []
+    decisions = _decisions(session, project)
+    assert decisions[own_trust.id].status == TrustApprovalStatus.APPROVED
+    assert decisions[own_trust.id].decided_by == owner_id
+    assert decisions[other.id].status == TrustApprovalStatus.PENDING
+    session.refresh(project)
+    assert project.status == ProjectStatus.STAGED
+
+
+def test_each_trust_owner_decides_for_their_own_trust_and_the_last_approves_the_project(session, staged_project):
+    """Two sites, two owners, two calls: the second approves the project and gets BOTH trusts back.
+
+    The first trust comes back although the second owner holds no authority there — its own owner's recorded
+    approval is what authorised it, so the imaging fan-out must dispatch to it without re-checking the caller.
+    """
+    first, second = staged_project["trusts"]
+    first_owner, second_owner = uuid4(), uuid4()
+    session.add(_grant(first_owner, RoleRef.TRUST_OWNER, trust_id=first.id))
+    session.add(_grant(second_owner, RoleRef.TRUST_OWNER, trust_id=second.id))
+    session.commit()
+    project = staged_project["project"]
+
+    assert approve_project_endpoint(project.id, _payload([first]), first_owner, session) == []
+    result = approve_project_endpoint(project.id, _payload([second]), second_owner, session)
+
+    assert {trust.id for trust in result} == {first.id, second.id}
+    decisions = _decisions(session, project)
+    assert decisions[first.id].decided_by == first_owner
+    assert decisions[second.id].decided_by == second_owner
+    session.refresh(project)
+    assert project.status == ProjectStatus.APPROVED
+
+
+def test_trust_owner_declines_at_their_own_trust(session, staged_project):
+    """Declining is the site's decision too, taken on the same grant."""
+    owner_id = uuid4()
+    own_trust, _other = staged_project["trusts"]
+    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=own_trust.id))
+    session.commit()
+    project = staged_project["project"]
+
+    assert approve_project_endpoint(project.id, _payload([], declined=[own_trust]), owner_id, session) == []
+
+    decisions = _decisions(session, project)
+    assert decisions[own_trust.id].status == TrustApprovalStatus.DECLINED
+    assert decisions[own_trust.id].decided_by == owner_id
+
+
+def test_trust_owner_cannot_decline_at_a_trust_they_do_not_own(session, staged_project):
+    """A decline at a trust the caller does not own is refused like an approval, and nothing is recorded."""
+    owner_id = uuid4()
+    owned, not_owned = staged_project["trusts"]
+    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=owned.id))
+    session.commit()
+    project = staged_project["project"]
+
+    with pytest.raises(HTTPException) as exc_info:
+        approve_project_endpoint(project.id, _payload([owned], declined=[not_owned]), owner_id, session)
+
+    assert exc_info.value.status_code == 403
+    decisions = _decisions(session, project)
+    assert {row.status for row in decisions.values()} == {TrustApprovalStatus.PENDING}
 
 
 def test_trust_owner_cannot_approve_at_a_trust_they_do_not_own(session, staged_project):

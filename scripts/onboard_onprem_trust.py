@@ -60,7 +60,7 @@ WIDTH = 71
 
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
 # scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip_api/scripts/register_trust.py.
+# flip-api/src/flip_api/scripts/register_trust.py.
 HUB_SHARED_KEYS: tuple[str, ...] = (
     "AES_KEY_BASE64", "CENTRAL_HUB_API_URL", "TRUST_API_KEY_HEADER", "FL_BACKEND",
     "FLOWER_KIT_DATE", "FLARE_KIT_DATE", "DOCKER_TAG", "DOCKER_REGISTRY",

@@ -32,20 +32,22 @@ If a project or a project's model needs to be amended i.e., at the request of a 
 Project Approval
 ================
 
-Once the offline project approval process has been completed, the outcome of approval at each Trust can be selected.
+Once the offline project approval process has been completed, the outcome at each Trust can be recorded: every Trust the project was staged for is either approved or declined. FLIP records each decision with the admin who made it and when, and writes it to the project's audit trail.
 
-Approving a project allows the next stage of model training to commence and triggers the image retrieval process at each Trust.
+Approving a project allows the next stage of model training to commence and triggers the image retrieval process at each approved Trust.
 
 .. warning::
 
-   The model developer will not be able to initiate training at Trusts that have not approved to participate in the project and its model's training.
+   The model developer will not be able to initiate training at Trusts that have not approved the project, whether they declined or were never decided.
 
 1. Navigate to the project page
-2. Navigate to the 'Project Approval' section
-3. For each Trust selected to be a potential participant in the project, toggle the switch to indicate their approvals, or lack thereof
-4. Click the 'Save Trust Approvals' button
+2. Navigate to the 'Trust Approval' section
+3. For each Trust staged for the project, click **Approve** or **Decline**
+4. Click the 'Save Trust Decisions' button, which is enabled once every Trust has a decision and at least one decision differs from what is already saved
 
-For example, the below reflects a case where only one Trust is marked as approved:
+The project is approved as soon as the decisions are saved with at least one Trust approved. If every Trust is declined, the project stays staged: either change a decision and save again, or un-stage the project so the model developer can amend it and stage it again. The earlier decisions stay in the project's audit trail. Once a project is approved its Trust decisions can no longer be changed.
+
+For example, the below shows a project staged at one Trust being approved:
 
 .. figure:: ../assets/generated/gifs/flip/approve-project.gif
    :align: center

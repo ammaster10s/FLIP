@@ -238,3 +238,95 @@ def test_has_imaging_backfills_true_for_pre_existing_projects(empty_db_engine: E
         ).scalar_one()
     assert has_imaging is True
     assert nullable == "NO"
+
+
+def _insert_intersect_fixture(connection: Connection) -> None:
+    """One project at two trusts: approved at APP, never approved at NOT (pre-#1318 shape)."""
+    connection.execute(
+        text(
+            "INSERT INTO projects (id, name, description, owner_id, deleted, creation_timestamp, status, "
+            "dicom_to_nifti, has_imaging) VALUES ('11111111-1111-1111-1111-111111111111', 'legacy', "
+            "'predates trust decisions', gen_random_uuid(), false, now(), 'APPROVED', true, true)"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO trust (id, name, code, created_at) VALUES "
+            "('22222222-2222-2222-2222-222222222222', 'Approved Trust', 'APP', now()), "
+            "('33333333-3333-3333-3333-333333333333', 'Not Approved Trust', 'NOT', now())"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO project_trust_intersect (id, project_id, trust_id, approved, approved_at) VALUES "
+            "(gen_random_uuid(), '11111111-1111-1111-1111-111111111111', "
+            "'22222222-2222-2222-2222-222222222222', true, '2026-03-19 10:30:00'), "
+            "(gen_random_uuid(), '11111111-1111-1111-1111-111111111111', "
+            "'33333333-3333-3333-3333-333333333333', false, NULL)"
+        )
+    )
+
+
+def test_trust_decisions_map_approved_to_approved_and_never_to_declined(empty_db_engine: Engine) -> None:
+    """The FLIP#1318 revision must turn ``approved = false`` into PENDING, never DECLINED.
+
+    A pre-#1318 ``false`` meant "not approved", which covered both "never looked at" and "left out
+    when the others were approved" — there is no way to tell them apart, so none of them may be
+    recorded as a refusal. Historical approvals keep their date and have no recorded approver.
+    """
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.status, i.decided_by, i.decided_at FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].status == "APPROVED"
+    assert by_code["APP"].decided_at.isoformat() == "2026-03-19T10:30:00"
+    assert by_code["APP"].decided_by is None
+    assert by_code["NOT"].status == "PENDING"
+    assert by_code["NOT"].decided_at is None
+    assert by_code["NOT"].decided_by is None
+
+
+def test_trust_decisions_downgrade_restores_the_approved_flag(empty_db_engine: Engine) -> None:
+    """Downgrading the FLIP#1318 revision maps APPROVED back to ``approved = true`` and the rest to false."""
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+    with empty_db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE project_trust_intersect SET status = 'DECLINED', decided_at = now() "
+                "WHERE trust_id = '33333333-3333-3333-3333-333333333333'"
+            )
+        )
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.downgrade(make_alembic_config(connection), "40f7934c6419")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.approved, i.approved_at FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].approved is True
+    assert by_code["APP"].approved_at.isoformat() == "2026-03-19T10:30:00"
+    assert by_code["NOT"].approved is False
+    assert by_code["NOT"].approved_at is None

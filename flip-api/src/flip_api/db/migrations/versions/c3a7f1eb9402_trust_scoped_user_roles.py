@@ -22,7 +22,7 @@ NULLs as distinct, so ``UNIQUE (user_id, role_id, trust_id)`` would happily allo
 the same global role to be granted to the same user twice.
 
 Revision ID: c3a7f1eb9402
-Revises: 40f7934c6419
+Revises: b7e3a1c95d20
 Create Date: 2026-09-22 16:02:11.000000
 
 """
@@ -33,7 +33,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c3a7f1eb9402'
-down_revision: str | None = '40f7934c6419'
+down_revision: str | None = 'b7e3a1c95d20'  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

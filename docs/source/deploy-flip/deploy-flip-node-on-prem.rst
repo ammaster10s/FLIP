@@ -187,7 +187,7 @@ This registers the trust on the prod hub and fills the Kit credentials
 ``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``) plus as much of the Hub-shared
 block as the hub task's environment carries. The block is built from the
 environment of the one-off ``flip-api`` Fargate task
-(``flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
+(``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
 comprehension that silently skips absent keys), and that task definition
 (``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
 ``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at

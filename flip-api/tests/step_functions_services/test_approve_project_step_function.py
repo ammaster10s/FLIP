@@ -103,6 +103,7 @@ def test_approve_project_success(
     data = response.json()
 
     assert data["projectId"] == project_id
+    assert data["projectStatus"] == "APPROVED"
     assert data["successful"] is True
     assert data["trusts"]["processed"] == 2
     assert data["trusts"]["failed"] == 0
@@ -110,6 +111,37 @@ def test_approve_project_success(
 
     mock_approve_project.assert_called_once()
     assert mock_start_imaging.await_count == 2
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_approve_project_passes_the_declined_trusts_to_the_decision_step(
+    mock_approve_project,
+    project_id,
+):
+    """The step function must hand the whole body on: rebuilding it from `trusts` alone would drop every decline
+    while the UI reported them recorded."""
+    mock_approve_project.return_value = []
+
+    response = client.post(
+        f"/api/step/project/{project_id}/approve",
+        json={"trusts": [str(trust_id_1)], "declined": [str(trust_id_2)]},
+    )
+
+    assert response.status_code == 200
+    payload = mock_approve_project.call_args.kwargs["payload"]
+    assert (payload.trusts, payload.declined) == ([trust_id_1], [trust_id_2])
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_approve_project_rejects_a_trust_both_approved_and_declined(mock_approve_project, project_id):
+    response = client.post(
+        f"/api/step/project/{project_id}/approve",
+        json={"trusts": [str(trust_id_1)], "declined": [str(trust_id_1)]},
+    )
+
+    assert response.status_code == 422
+    assert "both approved and declined" in response.text
+    mock_approve_project.assert_not_called()
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
@@ -162,12 +194,13 @@ def test_approve_project_unexpected_exception_returns_generic_detail(
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
-def test_approve_project_with_empty_trusts(
+def test_approve_project_that_stays_staged_dispatches_no_imaging(
     mock_approve_project,
     project_id,
     request_body,
     mock_trusts,
 ):
+    """No trusts back from the decision step → the project is still STAGED, and no imaging is started."""
     mock_approve_project.return_value = []
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
@@ -175,7 +208,8 @@ def test_approve_project_with_empty_trusts(
     assert response.status_code == 200
     data = response.json()
 
-    assert data["message"] == "Project approved but no trusts to process"
+    assert data["message"] == "Trust decisions recorded; the project stays staged"
+    assert data["projectStatus"] == "STAGED"
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
@@ -198,6 +232,7 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     assert data["trusts"] == {"processed": 0, "succeeded": 0, "failed": 0}
     assert data["details"] == []
     assert "no imaging" in data["message"]
+    assert data["projectStatus"] == "APPROVED"
     mock_approve_project.assert_called_once()  # the project still becomes APPROVED
     assert mock_start_imaging.await_count == 0
 
