@@ -46,7 +46,9 @@ def test_validate_bundle_url_accepts_https():
     assert validate_bundle_url(url) == url
 
 
-@pytest.mark.parametrize("bad", ["http://test.local/x", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd"])
+@pytest.mark.parametrize(
+    "bad", ["http://test.local/x", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd"]
+)
 def test_validate_bundle_url_rejects_non_https(bad):
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url(bad)
@@ -95,12 +97,12 @@ def test_validate_bundle_url_accepts_explicit_443():
 @pytest.mark.parametrize(
     ("host", "resolves_to"),
     [
-        ("2130706433", "127.0.0.1"),      # packed decimal
-        ("0x7f000001", "127.0.0.1"),      # hex
-        ("017700000001", "127.0.0.1"),    # octal
-        ("127.1", "127.0.0.1"),           # short form
-        ("0", "0.0.0.0"),                 # unspecified
-        ("167772165", "10.0.0.5"),        # packed decimal, private range
+        ("2130706433", "127.0.0.1"),  # packed decimal
+        ("0x7f000001", "127.0.0.1"),  # hex
+        ("017700000001", "127.0.0.1"),  # octal
+        ("127.1", "127.0.0.1"),  # short form
+        ("0", "0.0.0.0"),  # unspecified
+        ("167772165", "10.0.0.5"),  # packed decimal, private range
     ],
 )
 def test_validate_bundle_url_rejects_numeric_encoded_private_hosts(host, resolves_to):

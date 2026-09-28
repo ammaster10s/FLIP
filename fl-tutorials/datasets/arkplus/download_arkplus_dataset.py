@@ -58,9 +58,7 @@ def download_arkplus_splits(repo_id, cache_dir, output_dir, sites, write_marker)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--cache-dir", required=True, help="directory to fetch the raw Hugging Face snapshot into."
-    )
+    parser.add_argument("--cache-dir", required=True, help="directory to fetch the raw Hugging Face snapshot into.")
     parser.add_argument(
         "--output-dir", required=True, help="parent directory for the per-site output folders (gitignored)."
     )

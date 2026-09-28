@@ -428,7 +428,7 @@ def main() -> None:
     gamma_lr = (lr_end / lr_start) ** (1 / epochs)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: max(gamma_lr ** epoch, lr_floor / lr_start),
+        lr_lambda=lambda epoch: max(gamma_lr**epoch, lr_floor / lr_start),
     )
 
     if amp_enabled:

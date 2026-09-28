@@ -44,7 +44,7 @@ The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
 that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
 match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
-`flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
+`flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
 `DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
@@ -113,7 +113,8 @@ make up                        # Start the shipped dev trust stacks (GSTT + KCH)
 make down                      # Stop all trusts
 make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
-make restart-trust KIT=GSTT    # Restart one trust stack
+make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
+make upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
 make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
 make debug                     # Trust-1 in debug mode

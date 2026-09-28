@@ -174,7 +174,10 @@ class TestOwnershipGuardFires:
         """Extract the shell the *local* branches of xnat-reset run to verify ownership."""
         result = subprocess.run(
             [
-                "make", "-n", "--no-print-directory", "xnat-reset",
+                "make",
+                "-n",
+                "--no-print-directory",
+                "xnat-reset",
                 "KIT=GSTT",
                 f"XNAT_DATA_DIR={data_dir}",
                 f"XNAT_CONTAINER_UID={expected_uid}",
@@ -254,7 +257,10 @@ class TestDevBranchProvisionsTheContainerUid:
         """The full shell the development branch of xnat-reset runs (PROD unset)."""
         result = subprocess.run(
             [
-                "make", "-n", "--no-print-directory", "xnat-reset",
+                "make",
+                "-n",
+                "--no-print-directory",
+                "xnat-reset",
                 "KIT=GSTT",
                 f"XNAT_DATA_DIR={data_dir}",
                 f"XNAT_CONTAINER_UID={expected_uid}",
@@ -274,9 +280,7 @@ class TestDevBranchProvisionsTheContainerUid:
     def _run(self, tmp_path: Path, uid: int, gid: int) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ, PATH=f"{self._sudo_shim(tmp_path)}:{os.environ['PATH']}")
         recipe = self._dev_recipe(tmp_path / "data", uid, gid)
-        return subprocess.run(
-            ["sh", "-c", recipe], capture_output=True, text=True, timeout=TIMEOUT_SECONDS, env=env
-        )
+        return subprocess.run(["sh", "-c", recipe], capture_output=True, text=True, timeout=TIMEOUT_SECONDS, env=env)
 
     def test_provisions_a_tree_the_container_uid_owns(self, tmp_path: Path) -> None:
         """The achievable case: the sequence creates the tree and its own guard then passes."""

@@ -77,10 +77,12 @@ path = "model_path"
 checkpoint = "model.pt"
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -125,10 +127,12 @@ checkpoint = "model.pt"
 accuracy = true
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -265,10 +269,12 @@ publisher = "test"
 num_server_rounds = 3
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/model.pt": b"fake model weights",
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/model.pt": b"fake model weights",
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -306,10 +312,12 @@ num_server_rounds = 3
 path = "model_path"
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/app/config.toml": app_config_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml": app_config_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -339,9 +347,11 @@ def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
     model_id = str(uuid4())
 
     # Mock only one URL, making the second fail
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": b"content",
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": b"content",
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -375,9 +385,11 @@ publisher = "test"
 num_server_rounds = 3
 """
 
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-    })
+    mock_requests_get(
+        {
+            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
+        }
+    )
 
     body = UploadAppRequest(
         project_id="project-123",

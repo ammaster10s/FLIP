@@ -25,7 +25,7 @@ import { confirmResetPassword,
 import { defineStore } from "pinia";
 
 import { IChangePassword } from "@/interfaces/auth/interfaces";
-import { getMfaStatus, getUserPermissions } from "@/services/user-service";
+import { getMfaStatus, getUserPermissions, ITrustAdminOf } from "@/services/user-service";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
@@ -53,6 +53,8 @@ type AmplifyUser = {
     userId: string;
     attributes: Attributes;
     permissions: string[];
+    // The trust the user administers, if they are a Trust Admin (FLIP#1258).
+    trustAdminOf?: ITrustAdminOf | null;
 };
 
 type UserCredentials = {
@@ -102,7 +104,8 @@ const buildUserWithPermissions = async (
     return {
         ...base,
         attributes,
-        permissions: permsRes.permissions ?? []
+        permissions: permsRes.permissions ?? [],
+        trustAdminOf: permsRes.trustAdminOf ?? null
     };
 };
 
@@ -172,6 +175,8 @@ export const useAuthStore = defineStore("auth", {
 
     getters: {
         getUser: (state) => state.user,
+        // The trust the signed-in user administers, or null (FLIP#1258).
+        trustAdminOf: (state): ITrustAdminOf | null => state.user?.trustAdminOf ?? null,
         // Sign-in challenge chain complete AND (either the backend
         // doesn't require MFA in this environment, or TOTP is active).
         // `mfaRequired === false` covers the dev bypass; stag/prod have

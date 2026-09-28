@@ -395,9 +395,7 @@ def test_get_dataframe_rejects_cohort_below_threshold(mock_get_records, mock_dec
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_below_threshold_does_not_disclose_row_count(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_below_threshold_does_not_disclose_row_count(mock_get_records, mock_decrypt, mock_get_settings):
     """The refusal must not reveal how many rows matched — 0 and 9 look identical."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"
@@ -517,9 +515,7 @@ def test_get_accession_ids_missing_column_propagates_400(mock_get_records, mock_
     ``tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400``.
     """
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The column 'accession_id' does not exist."
-    )
+    mock_get_records.side_effect = HTTPException(status_code=400, detail="The column 'accession_id' does not exist.")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -533,9 +529,7 @@ def test_get_accession_ids_propagates_http_exception(mock_get_records, mock_decr
     """``get_records`` raises HTTPException for things like undefined tables/columns;
     the wrapping ``except`` clauses must not swallow that into a 500."""
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = HTTPException(
-        status_code=400, detail="The table 'omop.bogus' does not exist."
-    )
+    mock_get_records.side_effect = HTTPException(status_code=400, detail="The table 'omop.bogus' does not exist.")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -729,10 +723,7 @@ def test_validate_query_cte_roundtrip():
 
 def test_validate_query_complex_pg_syntax_roundtrip():
     """PG-specific constructs (aggregate FILTER clauses) survive the round-trip."""
-    query = (
-        "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count "
-        "FROM omop.person GROUP BY person_id"
-    )
+    query = "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count FROM omop.person GROUP BY person_id"
     result = validate_query(query)
     assert "person_id" in result
     assert "adult_count" in result.lower()
@@ -762,9 +753,7 @@ def test_validate_query_rejects_dml_and_ddl(query: str):
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_rejects_many_rows_from_too_few_subjects(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_rejects_many_rows_from_too_few_subjects(mock_get_records, mock_decrypt, mock_get_settings):
     """Forty rows covering three people is below a floor of ten.
 
     This is the case the row count used to wave through: the floor exists to stop a response
@@ -803,9 +792,7 @@ def test_get_dataframe_refuses_a_cohort_whose_subjects_cannot_be_counted(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(
-    mock_get_records, mock_decrypt, mock_get_settings
-):
+def test_get_dataframe_counts_subjects_not_rows_at_the_boundary(mock_get_records, mock_decrypt, mock_get_settings):
     """Exactly ten distinct people is allowed however many rows they contribute."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_decrypt.return_value = "decrypted-id"

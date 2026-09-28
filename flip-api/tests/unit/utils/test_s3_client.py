@@ -114,9 +114,7 @@ def test_get_put_presigned_post_without_content_type_keeps_size_cap(s3_client_wi
     expected_cap = 4096 + _MULTIPART_OVERHEAD_BUFFER_BYTES
     assert ["content-length-range", 0, expected_cap] in kwargs["Conditions"]
     # No Content-Type lock when the caller didn't supply one.
-    assert all(
-        not (isinstance(c, dict) and "Content-Type" in c) for c in kwargs["Conditions"]
-    )
+    assert all(not (isinstance(c, dict) and "Content-Type" in c) for c in kwargs["Conditions"])
     assert "Content-Type" not in kwargs["Fields"]
 
 
@@ -208,9 +206,7 @@ def test_get_put_presigned_post_at_ceiling_passes_through(s3_client_with_mock_bo
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_post.return_value = {"url": "https://example/", "fields": {}}
 
-    s3.get_put_presigned_post(
-        "s3://test-bucket/key", max_bytes=1024, expiration=MAX_PRESIGNED_URL_TTL_SECONDS
-    )
+    s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024, expiration=MAX_PRESIGNED_URL_TTL_SECONDS)
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
@@ -267,11 +263,11 @@ def test_get_presigned_url_passes_response_content_disposition(s3_client_with_mo
     s3.get_presigned_url(
         "s3://example/models/123/weights.bin",
         expiration=600,
-        response_content_disposition="attachment; filename=\"weights.bin\"",
+        response_content_disposition='attachment; filename="weights.bin"',
     )
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
-    assert kwargs["Params"]["ResponseContentDisposition"] == "attachment; filename=\"weights.bin\""
+    assert kwargs["Params"]["ResponseContentDisposition"] == 'attachment; filename="weights.bin"'
     assert kwargs["Params"]["Bucket"] == "example"
     assert kwargs["Params"]["Key"] == "models/123/weights.bin"
     assert kwargs["ExpiresIn"] == 600
@@ -428,9 +424,7 @@ def test_copy_object_if_match_raises_precondition_error(s3_client_with_mock_boto
 
 def test_copy_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
     s3, boto_instance = s3_client_with_mock_boto
-    boto_instance.copy.side_effect = ClientError(
-        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CopyObject"
-    )
+    boto_instance.copy.side_effect = ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CopyObject")
     with pytest.raises(Exception, match="Unable to copy object"):
         s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')
 
@@ -441,9 +435,7 @@ def test_delete_object_if_match_sends_the_precondition(s3_client_with_mock_boto)
     on the previous object's scan verdict."""
     s3, boto_instance = s3_client_with_mock_boto
     s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
-    boto_instance.delete_object.assert_called_once_with(
-        Bucket="bucket", Key="uploaded/k", IfMatch='"etag"'
-    )
+    boto_instance.delete_object.assert_called_once_with(Bucket="bucket", Key="uploaded/k", IfMatch='"etag"')
 
 
 def test_delete_object_if_match_raises_precondition_error(s3_client_with_mock_boto):

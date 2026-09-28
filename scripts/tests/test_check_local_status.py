@@ -89,9 +89,7 @@ def test_discovers_code_kits() -> None:
         IMAGING_API_PORT=8001,
         DATA_ACCESS_API_PORT=8010,
     )
-    _write_kit(
-        trust, "GSTT", "development", TRUST_NAME="GSTT", FL_KIT_SLOT_NUMBER=2, XNAT_PORT=8104, PACS_UI_PORT=8042
-    )
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", FL_KIT_SLOT_NUMBER=2, XNAT_PORT=8104, PACS_UI_PORT=8042)
     kits = discover_trust_kits(trust, "development")
     _assert(len(kits) == 2, "discovers both CODE kits", f"got {len(kits)}")
     by_code = {k.code: k for k in kits}
@@ -220,11 +218,13 @@ def test_parse_compose_containers() -> None:
     the container name it maps to is not, which is the whole point of resolving instead of
     spelling one out.
     """
-    rows = "\n".join((
-        "flip-api\tb-deploy-flip-api-1\tUp 3 hours (healthy)",
-        "fl-api-net-1\tb-deploy-fl-api-net-1-1\tUp 3 hours",
-        "fl-server-net-2\tb-deploy-fl-server-net-2-1\tExited (1) 2 minutes ago",
-    ))
+    rows = "\n".join(
+        (
+            "flip-api\tb-deploy-flip-api-1\tUp 3 hours (healthy)",
+            "fl-api-net-1\tb-deploy-fl-api-net-1-1\tUp 3 hours",
+            "fl-server-net-2\tb-deploy-fl-server-net-2-1\tExited (1) 2 minutes ago",
+        )
+    )
     parsed = parse_compose_containers(rows)
     _assert(sorted(parsed) == ["fl-api-net-1", "fl-server-net-2", "flip-api"], "keyed by service name")
     _assert(

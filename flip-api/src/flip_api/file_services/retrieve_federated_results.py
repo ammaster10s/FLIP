@@ -87,10 +87,7 @@ def retrieve_federated_results(
             # Drop ``exc_info``: the formatter would otherwise emit ``str(e)``
             # via the traceback. A future boto error shape that embeds a URL
             # fragment in its message would leak through that channel.
-            logger.error(
-                f"An error occurred when finding the result data in {s3_path} "
-                f"error_type={type(e).__name__}"
-            )
+            logger.error(f"An error occurred when finding the result data in {s3_path} error_type={type(e).__name__}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred when finding the result data",
@@ -107,10 +104,7 @@ def retrieve_federated_results(
         try:
             result = [s3.get_presigned_url(f) for f in list_objects]
         except Exception as e:
-            logger.error(
-                f"Error generating pre-signed URLs for model {model_id} "
-                f"error_type={type(e).__name__}"
-            )
+            logger.error(f"Error generating pre-signed URLs for model {model_id} error_type={type(e).__name__}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred when attempting to retrieve the files",
@@ -126,8 +120,7 @@ def retrieve_federated_results(
         raise
     except Exception as e:
         logger.error(
-            f"Unhandled error in retrieve_federated_results for model {model_id} "
-            f"error_type={type(e).__name__}"
+            f"Unhandled error in retrieve_federated_results for model {model_id} error_type={type(e).__name__}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
