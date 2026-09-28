@@ -478,9 +478,7 @@ def test_trust_admin_revision_downgrades_cleanly(empty_db_engine: Engine) -> Non
         columns = {
             row.column_name
             for row in connection.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'project_trust_intersect'"
-                )
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'project_trust_intersect'")
             )
         }
         decision_type = connection.execute(text("SELECT 1 FROM pg_type WHERE typname = 'decisionmaker'")).first()

@@ -368,7 +368,11 @@ def no_cognito(monkeypatch):
 
 async def _start_imaging(session, project, trust, user_id):
     return await start_project_imaging_creation(
-        request=MagicMock(), project_id=project.id, trust=ITrust(id=trust.id, name=trust.name), db=session, user_id=user_id
+        request=MagicMock(),
+        project_id=project.id,
+        trust=ITrust(id=trust.id, name=trust.name),
+        db=session,
+        user_id=user_id,
     )
 
 
