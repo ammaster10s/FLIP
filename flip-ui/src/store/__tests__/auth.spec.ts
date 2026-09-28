@@ -71,7 +71,8 @@ const STORE_USER = {
         sub: "id",
         email: "e@f.com"
     },
-    permissions: [] as string[]
+    permissions: [] as string[],
+    trustAdminOf: null
 };
 
 describe("authStore", () => {
@@ -180,11 +181,33 @@ describe("authStore", () => {
             expect(store.mfaEnabled).toBe(true);
             expect(store.user).toEqual({
                 ...STORE_USER,
-                permissions: ["CanManageUsers"]
+                permissions: ["CanManageUsers"],
+                trustAdminOf: null
             });
             // Permissions are keyed on the provider subject, whatever backend issued it.
             expect(getUserPermissions).toHaveBeenCalledWith("id");
             expect(getMfaStatus).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the trust a Trust Admin administers (FLIP#1258)", async () => {
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
+            const trust = {
+                id: "dta",
+                code: "DTA",
+                name: "Decision Trust A"
+            };
+            vi.mocked(getUserPermissions).mockResolvedValue({
+                permissions: ["CanCreateProjects"],
+                trustAdminOf: trust
+            });
+
+            await store.hydrate();
+
+            expect(store.user?.trustAdminOf).toEqual(trust);
+            expect(store.trustAdminOf).toEqual(trust);
         });
 
         it("defaults permissions to empty array when backend omits them", async () => {

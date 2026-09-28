@@ -188,9 +188,7 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         **(env_overrides or {}),
     }
 
-    result = subprocess.run(
-        ["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120
-    )
+    result = subprocess.run(["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120)
     body = payloads.read_text() if payloads.exists() else ""
     return result.returncode, body, result.stdout + result.stderr
 
@@ -666,7 +664,7 @@ def credentials_used(tmp_path, method: str, endpoint: str) -> list[str]:
     log = tmp_path / "creds.txt"
     used = []
     for line in log.read_text().splitlines() if log.exists() else []:
-        made, url, creds = (line.split(" ", 2) + ["", ""])[:3]
+        made, url, creds = line.split(" ", 2)
         if made == method and url.endswith(endpoint):
             used.append(creds)
     return used

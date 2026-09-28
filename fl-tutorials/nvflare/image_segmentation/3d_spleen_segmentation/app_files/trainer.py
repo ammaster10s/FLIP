@@ -111,9 +111,7 @@ def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list
                 logger.info("⚠️ Skipping non-3D image %s", img.name)
                 continue
             if img_header.shape != seg_header.shape:
-                logger.info(
-                    "⚠️ Shape mismatch for %s: image=%s label=%s", img.name, img_header.shape, seg_header.shape
-                )
+                logger.info("⚠️ Shape mismatch for %s: image=%s label=%s", img.name, img_header.shape, seg_header.shape)
                 continue
 
             datalist.append({"image": str(img), "label": seg})
@@ -215,9 +213,7 @@ def main() -> None:
     logger.info("Device: %s", device)
 
     model = get_model().to(device)
-    loss_fn = DiceCELoss(
-        to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8
-    )
+    loss_fn = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8)
     # The optimizer is created once and persists across the whole flare.is_running() loop (never
     # reset per global round), matching the legacy executor's optimizer lifecycle.
     optimizer = torch.optim.Adam(model.parameters(), lr=config["LEARNING_RATE"])

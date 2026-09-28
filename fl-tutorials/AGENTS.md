@@ -16,7 +16,9 @@ built on the templates in `fl-apps/`; the images they run on are built from
 | `tests/` | CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering `fl-apps/flower` |
 
 ```bash
-make -C fl-tutorials test   # ruff over fl-tutorials/ + the CPU-only suite (no GPU/dataset/FL image)
+make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app + per-dataset;
+                            # no GPU, no dataset download, no FL image — a first-run uv sync
+                            # per project still resolves wheels)
 ```
 
 ## Running the tutorials

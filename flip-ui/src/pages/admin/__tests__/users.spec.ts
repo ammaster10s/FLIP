@@ -42,12 +42,20 @@ interface IRolesPage {
 
 const userPage = ref<IUserPage | undefined>(undefined);
 const rolesPage = ref<IRolesPage | undefined>(undefined);
+const trustsPage = ref<{ id: string; name: string; code: string | null }[] | undefined>(undefined);
 const mutateUsers = vi.fn();
 
 vi.mock("swrv", () => ({
     default: (keyFn: () => string) => {
         const key = typeof keyFn === "function" ? keyFn() : keyFn;
-        // First call requests /users…, second /roles. Route by key prefix.
+        // The page requests /users…, /roles and /trust. Route by key.
+        if (key === "/trust") {
+            return {
+                data: trustsPage,
+                mutate: vi.fn(),
+                error: ref(null)
+            };
+        }
         if (key.startsWith("/users")) {
             return {
                 data: userPage,
@@ -130,7 +138,10 @@ const stubs = {
         emits: ["close-modal", "on-success"],
         template: "<div data-test='register-user-modal' :data-dialog='dialog' />"
     },
-    RoleBadge: { template: "<span data-test='role-badge'><slot /></span>" },
+    RoleBadge: {
+        props: ["roleName", "suffix", "dense"],
+        template: "<span data-test='role-badge'>{{ roleName }}{{ suffix ? ' · ' + suffix : '' }}</span>"
+    },
     UserAvatar: { template: "<div data-test='user-avatar' />" }
 };
 
@@ -205,6 +216,18 @@ beforeEach(() => {
     authProvider.current = cognitoLike;
     userPage.value = undefined;
     rolesPage.value = undefined;
+    trustsPage.value = [
+        {
+            id: "trust-a",
+            name: "Decision Trust A",
+            code: "DTA"
+        },
+        {
+            id: "trust-b",
+            name: "Decision Trust B",
+            code: "DTB"
+        }
+    ];
     mutateUsers.mockReset();
     mockUpdateUserProfile.mockReset();
     mockUpdateUserRoles.mockReset();
@@ -358,12 +381,12 @@ describe("admin/users", () => {
         await wrapper.findAll("[data-test='user']")[0].trigger("click");
 
         // Alice starts as Admin — pick the Data Scientist card.
-        const dataRoleCard = wrapper.find("[data-test='select-data scientist-role'] input[type='radio']");
+        const dataRoleCard = wrapper.find("[data-test='select-data-scientist-role'] input[type='radio']");
         await dataRoleCard.setValue(true);
         await wrapper.find("[data-test='save-user-btn']").trigger("click");
         await flushPromises();
 
-        expect(mockUpdateUserRoles).toHaveBeenCalledWith("u1", ["r-data"]);
+        expect(mockUpdateUserRoles).toHaveBeenCalledWith("u1", ["r-data"], null);
         expect(mockUpdateUserProfile).not.toHaveBeenCalled();
     });
 
@@ -702,5 +725,89 @@ describe("de-carded shell", () => {
         for (const cls of ["shadow", "ring-1"]) {
             expect(shell.classes()).not.toContain(cls);
         }
+    });
+
+    describe("Trust Admin", () => {
+        const TRUST_ADMIN_ROLE = {
+            id: "r-trust-admin",
+            rolename: "Trust Admin",
+            roledescription: "Researcher access, plus approving or declining projects for one trust."
+        };
+        const ROLES_WITH_TRUST_ADMIN = [...ROLES, TRUST_ADMIN_ROLE];
+        const TRUST_ADMIN_USER: IUser = {
+            id: "u3",
+            email: "carol@example.com",
+            name: "Carol",
+            organisation: "Trust B",
+            roles: [TRUST_ADMIN_ROLE],
+            trustAdminOf: {
+                id: "trust-b",
+                code: "DTB",
+                name: "Decision Trust B"
+            },
+            isDisabled: false
+        };
+
+        const openFirstUser = async (users: IUser[] = USERS) => {
+            mockUpdateUserRoles.mockResolvedValue([]);
+            const wrapper = mountPage({
+                users,
+                roles: ROLES_WITH_TRUST_ADMIN
+            });
+            await nextTick();
+            await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+            return wrapper;
+        };
+
+        it("reveals a trust dropdown only once Trust Admin is picked", async () => {
+            const wrapper = await openFirstUser();
+            expect(wrapper.find("[data-test='trust-admin-trust-select']").exists()).toBe(false);
+
+            await wrapper.find("[data-test='select-trust-admin-role'] input[type='radio']").setValue(true);
+
+            const options = wrapper.findAll("[data-test='trust-admin-trust-select'] option:not([disabled])");
+            expect(options.map(o => o.text())).toEqual(["Decision Trust A (DTA)", "Decision Trust B (DTB)"]);
+        });
+
+        it("keeps Save disabled until a trust is chosen, then saves the role with that trust", async () => {
+            const wrapper = await openFirstUser();
+            await wrapper.find("[data-test='select-trust-admin-role'] input[type='radio']").setValue(true);
+            expect(wrapper.find("[data-test='save-user-btn']").attributes("disabled")).toBeDefined();
+
+            await wrapper.find("[data-test='trust-admin-trust-select']").setValue("trust-a");
+            expect(wrapper.find("[data-test='save-user-btn']").attributes("disabled")).toBeUndefined();
+            await wrapper.find("[data-test='save-user-btn']").trigger("click");
+            await flushPromises();
+
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("u1", ["r-trust-admin"], "trust-a");
+        });
+
+        it("opens an existing Trust Admin with their trust already chosen", async () => {
+            const wrapper = await openFirstUser([TRUST_ADMIN_USER]);
+
+            const select = wrapper.find("[data-test='trust-admin-trust-select']").element as HTMLSelectElement;
+            expect(select.value).toBe("trust-b");
+        });
+
+        it("saves a Trust Admin moved to another role with no trust", async () => {
+            const wrapper = await openFirstUser([TRUST_ADMIN_USER]);
+
+            await wrapper.find("[data-test='select-data-scientist-role'] input[type='radio']").setValue(true);
+            await wrapper.find("[data-test='save-user-btn']").trigger("click");
+            await flushPromises();
+
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("u3", ["r-data"], null);
+        });
+
+        it("badges a Trust Admin in the list with their trust's code", async () => {
+            const wrapper = mountPage({
+                users: [TRUST_ADMIN_USER],
+                roles: ROLES_WITH_TRUST_ADMIN
+            });
+            await nextTick();
+
+            expect(wrapper.find("[data-test='user'] [data-test='role-badge']").text()).toBe("Trust Admin · DTB");
+        });
     });
 });

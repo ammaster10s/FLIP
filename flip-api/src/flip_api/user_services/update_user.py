@@ -161,10 +161,7 @@ def update_user_endpoint(
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    f"{action} succeeded, but audit log "
-                    "write failed — please verify and contact ops."
-                ),
+                detail=(f"{action} succeeded, but audit log write failed — please verify and contact ops."),
             ) from audit_err
 
         response = UpdateUserResponse(

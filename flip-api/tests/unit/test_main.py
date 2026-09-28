@@ -100,6 +100,17 @@ class TestHealth:
         body = TestClient(app).get("/api/health").json()
         assert body["version"] == importlib.import_module("flip_api.utils.version").service_version()
 
+    def test_openapi_names_the_same_build(self, monkeypatch):
+        """FastAPI reads the version at app construction, so reload main under the release."""
+        monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+        try:
+            importlib.reload(main)
+            assert main.app.version == "v9.9.9"
+        finally:
+            # Other tests in the suite hold references to the unreloaded app — restore it.
+            monkeypatch.undo()
+            importlib.reload(main)
+
 
 class TestDocsGating:
     """Swagger UI / OpenAPI / ReDoc must be disabled in production environments."""

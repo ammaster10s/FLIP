@@ -205,3 +205,29 @@ def test_audit_commit_failure_still_500s_when_provider_rollback_fails(
         fake_idp.delete_user.assert_called_once_with(user_data.email)
         # Both the audit-write failure and the rollback failure are logged with stack traces.
         assert mock_logger.exception.call_count >= 2
+
+
+def test_trust_admin_without_a_trust_is_refused_before_the_provider(fake_idp, mock_request, mock_db, token_id):
+    """A malformed Trust Admin request (FLIP#1258) is a 400 before any identity-provider user exists.
+
+    Refusing it after ``idp.create_user`` would leave an invited user to roll back — the failure the
+    #1266 review found on the registration path.
+    """
+    from flip_api.db.models.user_models import RoleRef
+
+    data = IRegisterUser(
+        email="admin-of-a-trust@example.com",
+        name="Trust Admin",
+        organisation="Example Trust",
+        roles=[RoleRef.TRUST_ADMIN.value],
+    )
+
+    with (
+        patch("flip_api.user_services.register_user.has_permissions", return_value=True),
+        patch("flip_api.user_services.register_user.get_all_roles", return_value=[RoleRef.TRUST_ADMIN.value]),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        register_user(data, mock_request, mock_db, token_id, idp=fake_idp)
+
+    assert exc_info.value.status_code == 400
+    fake_idp.create_user.assert_not_called()

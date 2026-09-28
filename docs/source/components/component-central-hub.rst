@@ -105,7 +105,7 @@ half-ready hub:
    scheduler row per net;
 4. start the API server.
 
-When FastAPI starts it extends the browser CORS allowlist from the origins the identity provider registers
+When FastAPI starts it populates the browser CORS allowlist from the origins the identity provider registers
 (the Cognito app client's callback URLs; the Keycloak client's redirect URIs in development) and starts the
 background scheduler below.
 

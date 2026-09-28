@@ -21,7 +21,7 @@ import { AuthCapabilities,
     SignInStep,
     TotpSetupDetails } from "@/auth/provider";
 import { IChangePassword } from "@/interfaces/auth/interfaces";
-import { getMfaStatus, getUserPermissions } from "@/services/user-service";
+import { getMfaStatus, getUserPermissions, ITrustAdminOf } from "@/services/user-service";
 import { leaveToLogin, stashPostSignOutNotice } from "@/utils/session-teardown";
 import { Snackbar } from "@/utils/snackbar";
 
@@ -57,6 +57,8 @@ export type AuthenticatedUser = {
     userId: string;
     attributes: Attributes;
     permissions: string[];
+    // The trust the user administers, if they are a Trust Admin (FLIP#1258).
+    trustAdminOf?: ITrustAdminOf | null;
 };
 
 type UserCredentials = {
@@ -79,14 +81,19 @@ type AuthState = {
     mfaRequired: boolean | null;
 };
 
-const toStoreUser = (identity: AuthUser, permissions: string[]): AuthenticatedUser => ({
+const toStoreUser = (
+    identity: AuthUser,
+    permissions: string[],
+    trustAdminOf: ITrustAdminOf | null = null
+): AuthenticatedUser => ({
     username: identity.username,
     userId: identity.sub,
     attributes: {
         sub: identity.sub,
         email: identity.email
     },
-    permissions
+    permissions,
+    trustAdminOf
 });
 
 export const useAuthStore = defineStore("auth", {
@@ -100,6 +107,8 @@ export const useAuthStore = defineStore("auth", {
 
     getters: {
         getUser: (state) => state.user,
+        // The trust the signed-in user administers, or null (FLIP#1258).
+        trustAdminOf: (state): ITrustAdminOf | null => state.user?.trustAdminOf ?? null,
         // Sign-in challenge chain complete AND (either the backend
         // doesn't require MFA in this environment, or TOTP is active).
         // `mfaRequired === false` covers the dev bypass; stag/prod have
@@ -144,7 +153,7 @@ export const useAuthStore = defineStore("auth", {
             // endpoint would 403 under the app-layer gate.
             if (mfaState.enabled || !mfaState.required) {
                 const permsRes = await getUserPermissions(identity.sub);
-                this.user = toStoreUser(identity, permsRes.permissions ?? []);
+                this.user = toStoreUser(identity, permsRes.permissions ?? [], permsRes.trustAdminOf ?? null);
             } else {
                 this.user = toStoreUser(identity, []);
             }

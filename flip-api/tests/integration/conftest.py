@@ -247,11 +247,7 @@ def _truncate_tables(integration_engine):
     the schema for every test.
     """
     yield
-    table_names = [
-        f'"{t.name}"'
-        for t in SQLModel.metadata.sorted_tables
-        if t.name not in _PRESERVED_TABLES
-    ]
+    table_names = [f'"{t.name}"' for t in SQLModel.metadata.sorted_tables if t.name not in _PRESERVED_TABLES]
     if not table_names:
         return
     with integration_engine.begin() as conn:

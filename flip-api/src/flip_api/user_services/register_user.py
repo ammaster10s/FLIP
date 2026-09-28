@@ -21,6 +21,7 @@ from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
+from flip_api.user_services.trust_admin_grants import resolve_role_grants
 from flip_api.utils.logger import logger
 from flip_api.utils.user_roles import get_all_roles, validate_roles
 
@@ -55,14 +56,12 @@ def _rollback_cognito_on_audit_failure(idp: IdentityProvider, email: str, origin
         idp.delete_user(email)
     except Exception:
         logger.exception(
-            f"Failed to roll back identity-provider user {email} after audit-write failure; "
-            f"manual cleanup required."
+            f"Failed to roll back identity-provider user {email} after audit-write failure; manual cleanup required."
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                "Failed to register user; rollback also failed. "
-                "Manual cleanup of the identity-provider user required."
+                "Failed to register user; rollback also failed. Manual cleanup of the identity-provider user required."
             ),
         ) from original_err
 
@@ -106,9 +105,11 @@ def register_user(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to register a user"
             )
 
-        # Validate roles
+        # Validate roles — before the identity-provider user exists, so a malformed Trust Admin request
+        # (FLIP#1258) is a 400 here rather than a created-then-rolled-back user.
         available_roles = get_all_roles(db)
         validate_roles(user_data.roles, available_roles)
+        resolve_role_grants(user_data.roles, user_data.trust_id, db)
 
         # Create the user in the identity provider (it sends the invitation)
         user_id = idp.create_user(user_data.email)
@@ -144,6 +145,7 @@ def register_user(
             name=user_data.name,
             organisation=user_data.organisation,
             roles=user_data.roles,
+            trust_id=user_data.trust_id,
             user_id=user_id,
         )  # type: ignore[call-arg]
 
@@ -151,6 +153,4 @@ def register_user(
         raise
     except Exception as e:
         logger.exception("Error registering user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

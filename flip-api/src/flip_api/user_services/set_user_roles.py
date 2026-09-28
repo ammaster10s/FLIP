@@ -21,6 +21,7 @@ from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, Role, UserRole, UsersAudit
 from flip_api.domain.interfaces.user import IRoles
+from flip_api.user_services.trust_admin_grants import apply_trust_admin_grant, resolve_role_grants
 from flip_api.utils.logger import logger
 from flip_api.utils.user_roles import validate_roles
 
@@ -52,7 +53,8 @@ def set_user_roles(
 
     Raises:
         HTTPException: 403 if the caller lacks permission, 404 if the target user is not in
-            Cognito, 400 if any role is invalid, or 503 if the Cognito existence check itself
+            Cognito or a Trust Admin's trust does not exist, 400 if any role is invalid or the Trust
+            Admin role is given without exactly one trust, or 503 if the Cognito existence check itself
             failed (transient — caller may retry).
     """
     try:
@@ -88,21 +90,27 @@ def set_user_roles(
                 ) from exc
             raise
 
-        user_roles_ids = roles_data.roles
+        # A Trust Admin (FLIP#1258) is a global Researcher row plus a Trust Admin row at one trust.
+        grants = resolve_role_grants(roles_data.roles, roles_data.trust_id, db)
 
         # Validate the requested role IDs against the Role table.
         role_ids_from_db = db.exec(select(Role.id)).all()
         role_ids: list[UUID] = [r for r in role_ids_from_db if r is not None]
-        validate_roles(user_roles_ids, role_ids)
+        validate_roles(roles_data.roles, role_ids)
 
-        logger.info(f"Setting roles for user {user_id}: {user_roles_ids}")
+        logger.info(
+            f"Setting roles for user {user_id}: {roles_data.roles} (trust admin of {grants.trust_admin_trust_id})"
+        )
 
-        # Single transaction: drop old grants, insert the new ones, write
-        # audit. A failure between the delete and the insert previously
-        # left the user with no roles silently; consolidating into one
-        # commit means either everything lands or nothing does.
-        db.execute(delete(UserRole).where(col(UserRole.user_id) == user_id))
-        db.add_all([UserRole(user_id=user_id, role_id=role_id) for role_id in user_roles_ids])
+        # Single transaction: drop old global grants, insert the new ones, move the Trust Admin grant, write
+        # audit. A failure between the delete and the insert previously left the user with no roles silently;
+        # consolidating into one commit means either everything lands or nothing does.
+        #
+        # Only global grants (trust_id IS NULL) are deleted wholesale. The Trust Admin row is moved by
+        # apply_trust_admin_grant, so each trust's audit trail records who gained or lost it.
+        db.execute(delete(UserRole).where(col(UserRole.user_id) == user_id).where(col(UserRole.trust_id).is_(None)))
+        db.add_all([UserRole(user_id=user_id, role_id=role_id) for role_id in grants.global_role_ids])
+        apply_trust_admin_grant(user_id, grants.trust_admin_trust_id, token_id, db)
         db.add(
             UsersAudit(
                 action="Updated user roles",
@@ -124,6 +132,4 @@ def set_user_roles(
         # services.
         db.rollback()
         logger.exception("Error setting user roles")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

@@ -212,6 +212,19 @@ def test_dev_ses_addresses_tolerate_empty_strings():
     assert blanked.AWS_SES_SENDER_EMAIL_ADDRESS == "flip-no-reply@example.com"
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("true", True), ("TRUE", True), ("1", True), ("false", False), ("0", False)]
+)
+def test_enforce_mfa_parses_env_strings(raw, expected):
+    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is expected
+
+
+@pytest.mark.parametrize("blank", ["", None], ids=["empty", "none"])
+def test_enforce_mfa_blank_keeps_the_secure_default(blank):
+    """CI env injection can hand over an empty string; that must not switch MFA off."""
+    assert Settings(ENFORCE_MFA=blank).ENFORCE_MFA is True
+
+
 @pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])
 def test_suffix_list_separator_only_values_fall_back_to_default(blank):
     """A value that normalises to nothing must not yield an empty list.

@@ -290,7 +290,7 @@ services:
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
       - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
       # Hub-shared kit values — must be readable inside the container by
-      # flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
+      # flip-api/src/flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
       # `make register-trusts` populates the per-trust kit file's managed
       # block instead of leaving `<run-make-sync-trust-kit>` placeholders.
       # Keep this list in lockstep with HUB_SHARED_ENV_KEYS in that script.
