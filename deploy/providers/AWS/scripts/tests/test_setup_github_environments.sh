@@ -94,10 +94,14 @@ case "$1 $2" in
             *) echo "unexpected get-role query" >&2; exit 98 ;;
         esac ;;
     "iam get-policy")
+        # The account holds the boundaries named in STUB_BOUNDARIES: by default both
+        # FLIP's own and the LZA platform's, so each mode finds the one it expects.
         [[ -z "${STUB_BOUNDARY_MISSING:-}" ]] || no_such_entity GetPolicy
-        [[ "$(arg --policy-arn "$@")" == "arn:aws:iam::${STUB_ACCOUNT}:policy/AICentre-FLIPTerraformBoundary" ]] ||
-            no_such_entity GetPolicy
-        echo "AICentre-FLIPTerraformBoundary" ;;
+        policy_arn="$(arg --policy-arn "$@")"
+        for name in ${STUB_BOUNDARIES:-AICentre-FLIPTerraformBoundary AICentre-WorkloadRoleBoundary}; do
+            [[ "${policy_arn}" == "arn:aws:iam::${STUB_ACCOUNT}:policy/${name}" ]] && { echo "${name}"; exit 0; }
+        done
+        no_such_entity GetPolicy ;;
     *) echo "unexpected aws call: $*" >&2; exit 98 ;;
 esac
 STUB
@@ -322,6 +326,17 @@ expect_refused_before_gh "refused" "repo:someone-else/flip:environment:aws-stag"
 run_case "a missing permissions boundary is refused" STUB_BOUNDARY_MISSING=1 -- \
     --mode stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "AICentre-FLIPTerraformBoundary does not exist" "naming the boundary"
+
+# The boundary is the mode's: the LZA platform's on LZA (londonaicentre/lza#51),
+# the bootstrap module's own elsewhere. Each account holding only the other one is
+# refused, naming the one it lacks.
+run_case "an LZA mode needs the platform's boundary" STUB_BOUNDARIES="AICentre-FLIPTerraformBoundary" -- \
+    --mode lza-stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "AICentre-WorkloadRoleBoundary does not exist" "naming the platform's boundary"
+
+run_case "a self-contained mode needs FLIP's own boundary" STUB_BOUNDARIES="AICentre-WorkloadRoleBoundary" -- \
+    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "AICentre-FLIPTerraformBoundary does not exist" "naming FLIP's boundary"
 
 # 9. And the other side of "before": a run that passes every check does write, and
 #    only after the last AWS call — otherwise the empty-log assertions above could

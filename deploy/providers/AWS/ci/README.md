@@ -6,18 +6,17 @@ account they own. This root is a thin wrapper around
 looks up the account's GitHub OIDC provider, and keeps its own state.
 
 > [!NOTE]
-> **AI Centre's accounts are not bootstrapped from here.** The platform repositories — `aicentre-iac` for the
-> self-contained accounts and `aicentre-lza-iac` for the LZA ones — instantiate the same module, pinned to a FLIP
-> commit, through their own reviewed pipelines. Do not run this root in those accounts: `make plan` refuses when it
-> finds the roles already there.
+> **AI Centre's LZA accounts are not bootstrapped from here.** The platform repository, `aicentre-lza-iac`,
+> instantiates the same module in each of them, pinned to a FLIP commit, through its own reviewed pipeline. Do not run
+> this root in those accounts: `make plan` refuses when it finds the roles already there.
 
 ## What it creates
 
 | Object | Purpose |
 | --- | --- |
-| `AICentre-FLIPTerraformPlanRole` | Assumed by PR plans (staging only) and the nightly drift run. `ReadOnlyAccess`, plus an explicit Deny on every write to the state bucket, plus a read grant on the one secret a plan refreshes |
-| `AICentre-FLIPTerraformApplyRole` | Assumed only by `terraform_apply.yml` pushed to the environment's branch. `PowerUserAccess`, plus IAM write bounded by the boundary below, a managed-policy allowlist, `PassRole` scoped to the FLIP root's own roles, and Denies on the CI roles and the boundary itself |
-| `AICentre-FLIPTerraformBoundary` | The permissions boundary every role the FLIP root creates carries (`iam_permissions_boundary_name` in `../variables.tf`) |
+| `AICentre-FLIPTerraformPlanRole` | Assumed by PR plans (staging only) and the nightly drift run. `ReadOnlyAccess` for configuration, explicit Denies on reading the account's data (S3 objects outside the state bucket, other parameters' values, log contents, messages, items) and on every write to the state bucket, plus a read grant on the one secret a plan refreshes |
+| `AICentre-FLIPTerraformApplyRole` | Assumed only by `terraform_apply.yml` pushed to the environment's branch. The AWS services the FLIP root uses and no others (`apply_service_prefixes`), in this region and `us-east-1`; IAM write only on the FLIP root's own named roles and instance profiles, under the boundary below and a managed-policy allowlist; Denies on the CI roles and the boundary itself |
+| `AICentre-FLIPTerraformBoundary` | The permissions boundary every role the FLIP root creates carries (`iam_permissions_boundary_name` in `../variables.tf`). Set `create_permissions_boundary = false` to use one your platform already deploys instead |
 | The state bucket | Versioned, public access blocked, SSE-S3 by default (`state_bucket_sse_algorithm = "aws:kms"` for the AWS-managed key), a TLS-only bucket policy, bounded version history, `prevent_destroy` |
 
 The names are inputs; the defaults are the ones the FLIP workflows and scripts expect. The module
@@ -157,34 +156,34 @@ key in clear. The role still cannot write anything.
 
 ## What bounds the apply role
 
-`PowerUserAccess` is everything except IAM, and the FLIP root owns IAM roles
-(`iam_ecs.tf`, `rds_proxy.tf`, `security.tf`, and the two EC2 roles in `main.tf`),
-so the apply role needs IAM write. Four separate limits keep that from being
-`AdministratorAccess` under another name:
+The apply role holds no managed policy. Its rights are three inline documents, each
+explained in [`iam_apply.tf`](../modules/terraform_ci_bootstrap/iam_apply.tf):
 
-1. **A permissions boundary.** `iam:CreateRole` and `iam:PutRolePolicy` are
-   granted only under an `iam:PermissionsBoundary` condition naming
-   `AICentre-FLIPTerraformBoundary`, so a role the pipeline mints is capped at
-   what the pipeline itself holds and can never be given IAM write.
-2. **A managed-policy allowlist.** `iam:AttachRolePolicy` additionally carries an
-   `iam:PolicyARN` condition naming the three AWS-managed policies the FLIP root
-   actually attaches, so `AttachRolePolicy AdministratorAccess` is denied.
-3. **Scoped escalation primitives.** `iam:PassRole` and
-   `iam:UpdateAssumeRolePolicy` — the two verbs that make a role usable by
-   something else — are restricted to the eight roles the FLIP root owns, all of
-   which have literal names (`var.managed_role_names`).
-4. **Two Denies.** One on both CI roles, so an apply cannot re-trust or re-permit
-   itself; one on the boundary policy, so it cannot raise its own ceiling.
+1. **A service allowlist** (`apply_services`). `<service>:*` for each AWS service
+   the FLIP root declares resources in — EC2, ECS, RDS, S3, CloudFront and so on,
+   `apply_service_prefixes` — limited by `aws:RequestedRegion` to this region and
+   `us-east-1`. A test derives the list from the FLIP root's resource types and
+   fails when the two differ in either direction.
+2. **IAM write on FLIP's own roles only** (`apply_iam`). Every role-writing verb —
+   create, put or attach a policy, tag, delete, pass, re-trust — is scoped to the
+   roles the FLIP root owns, by literal name (`managed_role_names`), and the
+   instance-profile verbs to its two profiles. Creating a role or granting it a
+   policy also requires the permissions boundary, and `iam:AttachRolePolicy` is
+   limited to the three AWS-managed policies the FLIP root attaches. Two Denies
+   stop an apply re-trusting or re-permitting either CI role, or rewriting the
+   boundary.
+3. **State access** (`apply_state`): the state object and its lock.
 
 **What this still does not prevent, stated plainly rather than claimed away:** an
-apply can create a role that trusts an external principal and give it everything
-under the boundary — roughly PowerUser. It cannot exceed itself, but it can lend
-itself out. The control for that is the same one that authorises the apply at
-all: review on the environment's branch, plus the trust policy pinning
-`job_workflow_ref` to `terraform_apply.yml` at that branch. Adding a role to the
-FLIP root means adding its name to `managed_role_names` and applying the bootstrap
-*first* — deliberate coupling, so a human is in the loop on every new principal
-the pipeline can hand to a service.
+apply can change the trust policy of one of FLIP's named roles, and so hand what
+that role holds to another principal. The control for that is the one that
+authorises the apply at all: review on the environment's branch, plus the trust
+policy pinning `job_workflow_ref` to `terraform_apply.yml` at that branch.
+
+**Adding to the FLIP root** means updating the module first: a new role's name in
+`managed_role_names`, a resource from a new AWS service in `apply_service_prefixes`.
+Apply the bootstrap, *then* merge the change that needs it — deliberate coupling,
+so a human is in the loop on every new principal or service the pipeline can use.
 
 ## Debugging an AssumeRole denial
 

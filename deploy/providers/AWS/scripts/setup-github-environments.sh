@@ -52,7 +52,8 @@
 #
 # Overrides: AWS_PROFILE_FOR_ENV (the profile for this mode), TF_PLAN_ROLE_NAME /
 # TF_APPLY_ROLE_NAME / TF_BOUNDARY_NAME (default: the AICentre-FLIPTerraform* names
-# the bootstrap module creates).
+# the bootstrap module creates, and on LZA the platform's
+# AICentre-WorkloadRoleBoundary).
 
 set -euo pipefail
 
@@ -142,7 +143,14 @@ done <"${ENV_FILE}"
 
 TF_PLAN_ROLE_NAME="${TF_PLAN_ROLE_NAME:-AICentre-FLIPTerraformPlanRole}"
 TF_APPLY_ROLE_NAME="${TF_APPLY_ROLE_NAME:-AICentre-FLIPTerraformApplyRole}"
-TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-FLIPTerraformBoundary}"
+# The boundary the FLIP root's roles carry in this mode — the Makefile's
+# TF_VAR_iam_permissions_boundary_name default: the platform's on LZA
+# (londonaicentre/lza#51), the bootstrap module's own everywhere else.
+if [[ "${IS_LZA}" == 1 ]]; then
+    TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-WorkloadRoleBoundary}"
+else
+    TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-FLIPTerraformBoundary}"
+fi
 case "${ENV}" in
     stag) APPLY_BRANCH=develop ;;
     prod) APPLY_BRANCH=main ;;

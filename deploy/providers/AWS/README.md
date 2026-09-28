@@ -1411,13 +1411,14 @@ boundary and the Terraform state bucket are declared by
 root never manages them — the pipeline must not set its own ceiling, and an apply
 that broke its own roles would lock CI out of the apply that fixes them.
 
-- **AI Centre's accounts**: the platform repositories instantiate the module per
-  account, pinned to a FLIP commit SHA, through their own reviewed pipelines —
-  `aicentre-iac` for the self-contained accounts, `aicentre-lza-iac` for the LZA
-  ones. They also own each account's GitHub OIDC provider. A FLIP change to the
-  module therefore reaches AWS only when those repositories bump the pinned SHA;
-  a change the FLIP root depends on (a new entry in `managed_role_names`, say)
-  has to land there first.
+- **AI Centre's LZA accounts**: the platform repository, `aicentre-lza-iac`,
+  instantiates the module per account, pinned to a FLIP commit SHA, through its
+  own reviewed pipeline, with the platform's own permissions boundary
+  (`create_permissions_boundary = false`, `AICentre-WorkloadRoleBoundary`). It
+  also owns each account's GitHub OIDC provider. A FLIP change to the module
+  therefore reaches AWS only when that repository bumps the pinned SHA; a change
+  the FLIP root depends on (a new entry in `managed_role_names` or
+  `apply_service_prefixes`, say) has to land there first.
 - **Your own account**: [`ci/`](ci/README.md) wraps the same module for a laptop
   apply, with local state first and then `make migrate-state` into the bucket it
   created.
@@ -1680,10 +1681,11 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
-# 2. The OIDC provider, the CI roles, the boundary and the state bucket: applied
-#    by the platform repository for the account (aicentre-iac / aicentre-lza-iac),
-#    from modules/terraform_ci_bootstrap. Nothing to run here. In an account of
-#    your own, apply ci/ instead (see ci/README.md).
+# 2. The CI roles, the boundary and the state bucket come from
+#    modules/terraform_ci_bootstrap; the OIDC provider from the account's own
+#    baseline IaC. In an account of your own, apply ci/
+#    (see ci/README.md); in AI Centre's LZA accounts the platform repository,
+#    aicentre-lza-iac, applies it and there is nothing to run here.
 
 # 3. Create and populate the two GitHub environments. Run --dry-run first.
 #    Reads the secret-vs-variable split out of terraform_plan.yml, so it cannot

@@ -165,7 +165,7 @@ Things worth knowing before touching any of it:
   `tests/test_terraform_ci_bootstrap.py` pins them. Adding a role to this root means
   adding its literal name to `managed_role_names` in the module; adding a resource
   from an AWS service this root does not use yet means adding the service to
-  `apply_service_actions`. Either way, merge that, have the platform repository bump
+  `apply_service_prefixes`. Either way, merge that, have the platform repository bump
   its pinned SHA and apply **before** the FLIP change that needs it, or the apply is
   denied.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
