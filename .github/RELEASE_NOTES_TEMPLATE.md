@@ -52,6 +52,7 @@
 - Per-trust decisions on the approve endpoint: `declined` alongside `trusts`, each decision stored with its decider, date and `decided_as` (`HUB` / `SITE`) (#1321, #1266). The existing request body still works.
 - `Release checks` in this file and in the pre-release checklist: the tutorial suite on both backends, then `make e2e_smoke` (#1306).
 - A DICOM service of its own on Helm trusts, a network policy for the PACS hop, and a fixed node port option (#1234).
+- Both FL APIs (`flare-fl-api`, `flower-fl-api`) name their build: `/health` returns `version` — the release tag the image was built at, or `sha-<short7>` for a branch build — and their OpenAPI version matches, as the four service APIs already do. flip-api's OpenAPI version now matches its `/api/health` too (#1325).
 
 ## :bug: Bug Fixes
 
