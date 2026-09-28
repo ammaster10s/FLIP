@@ -13,21 +13,21 @@ The My Trust page
 
 Open **My Trust** from the top navigation. Its badge counts the projects awaiting your decision.
 
-- **Awaiting your decision** — projects staged at your Trust that you have not decided yet.
-- **Decided** — projects you (or the hub, before your Trust had a Trust Admin) approved or declined, with who decided and when.
-- **Your Trust** — to the right, your Trust as the Connection Status page shows it: whether it is online, and the health and version of each of its services.
+- **Awaiting your decision** — a card for each project staged at your Trust that you have not decided yet, with the count beside the heading.
+- **Decided** — a table of the projects you (or the hub, before your Trust had a Trust Admin) approved or declined, each row marked green or red with who decided and when. Click a row for its description and a link to its query.
+- **Trust detail** — to the right, your Trust as the Connection Status page shows it: whether it is online, and the health and version of each of its services.
 
 Deciding on a project
 =====================
 
-1. Under 'Awaiting your decision', click a project to expand it. It shows:
+1. Each card under 'Awaiting your decision' shows:
 
    - the project's owner and description, and when it was staged
    - the size of its cohort at your Trust — or that your Trust did not report one, withheld a count below its disclosure threshold, or could not run the query
-   - whether it uses imaging
+   - whether it uses imaging; for an imaging project, a note that approving starts the imaging pull from PACS to XNAT
    - **View query**, which opens the project's cohort query page
 
-2. Click **Approve** or **Decline**, then confirm. The confirmation names your Trust and what follows: approving an imaging project starts the imaging pull at your Trust.
+2. Click **Approve** or **Decline**, then confirm. The confirmation names your Trust and what follows.
 
 Your decision applies to your Trust only; other Trusts decide in their own time. The project is approved as soon as one Trust approves it, and if yours approves later, it joins the project then, including its existing models. Once the project is approved your decision is final.
 

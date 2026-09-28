@@ -27,6 +27,14 @@ const mutateDecisions = vi.fn();
 vi.mock("swrv", () => ({
     default: (keyFn: () => string | null) => {
         const key = typeof keyFn === "function" ? keyFn() : keyFn;
+        // A null key fetches nothing, as in swrv itself.
+        if (key === null) {
+            return {
+                data: ref(undefined),
+                mutate: vi.fn(),
+                error: ref(null)
+            };
+        }
         if (typeof key === "string" && key.includes("/decisions")) {
             return {
                 data: decisionsRef,
@@ -172,15 +180,24 @@ beforeEach(() => {
 });
 
 describe("My Trust", () => {
-    it("shows the Trust Admin's own trust card after the decisions (to their right on wide screens)", async () => {
+    it("heads the page with the Trust Admin eyebrow, title and description", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        expect(wrapper.find("[data-test='my-trust-eyebrow']").text()).toBe("Trust admin · DTA");
+        expect(wrapper.find("h1").text()).toBe("My Trust");
+        expect(wrapper.find("[data-test='my-trust-description']").text()).toBe(
+            "Review project requests to use data held at Decision Trust A, and monitor the health of the local FLIP node."
+        );
+    });
+
+    it("shows the Trust Admin's own trust card beside the decisions", async () => {
         const wrapper = mountPage();
         await nextTick();
 
         expect(wrapper.find("[data-test='trust-card']").text()).toBe("Decision Trust A");
-        // Source order puts the card after the decisions, so it follows them when the grid stacks.
         const html = wrapper.html();
         expect(html.indexOf("data-test=\"trust-card\"")).toBeGreaterThan(html.indexOf("data-test=\"decided-list\""));
-        expect(wrapper.find("[data-test='trust-card-column']").exists()).toBe(true);
     });
 
     it("sends anyone who is not a Trust Admin back to Projects", async () => {
@@ -190,59 +207,91 @@ describe("My Trust", () => {
         expect(mockViewProjects).toHaveBeenCalled();
     });
 
-    it("lists pending projects apart from decided ones", async () => {
+    it("counts each section beside its heading", async () => {
         const wrapper = mountPage();
         await nextTick();
 
-        expect(wrapper.find("[data-test='pending-heading']").text()).toContain("Awaiting your decision (1)");
-        const pendingRows = wrapper.findAll("[data-test='pending-list'] [data-test='decision-row']");
-        expect(pendingRows).toHaveLength(1);
-        expect(pendingRows[0].text()).toContain("Spleen segmentation v2");
-        const decidedRows = wrapper.findAll("[data-test='decided-list'] [data-test='decision-row']");
-        expect(decidedRows[0].text()).toContain("Approved by Ada Admin");
+        expect(wrapper.find("[data-test='pending-heading']").text()).toContain("Awaiting your decision");
+        expect(wrapper.find("[data-test='pending-count']").text()).toBe("1");
+        expect(wrapper.find("[data-test='decided-count']").text()).toBe("1");
     });
 
-    it("expands a pending project to show what the decision needs", async () => {
+    it("shows a pending request as a card with its facts, a query link and the decision buttons", async () => {
         const wrapper = mountPage();
         await nextTick();
 
-        await wrapper.find("[data-test='pending-list'] [data-test='decision-row-toggle']").trigger("click");
-
-        expect(wrapper.find("[data-test='decision-cohort']").text()).toBe("142 records");
+        const card = wrapper.find("[data-test='pending-list'] [data-test='request-card']");
+        expect(card.text()).toContain("Spleen segmentation v2");
+        expect(card.text()).toContain("Demo Researcher · staged");
+        expect(card.text()).toContain("Awaiting decision");
+        expect(card.find("[data-test='request-cohort']").text()).toBe("142");
+        expect(card.find("[data-test='request-imaging']").text()).toBe("Yes");
+        expect(card.find("[data-test='imaging-notice']").text()).toContain(
+            "Approving starts the imaging pull from PACS to XNAT."
+        );
         // The query is a link to the project's cohort-query page, not inline SQL.
-        expect(wrapper.find("[data-test='decision-query']").exists()).toBe(false);
-        expect(wrapper.find("[data-test='view-query-btn']").attributes("data-to")).toBe("/project/p1/cohort-query");
-        expect(wrapper.find("[data-test='approve-btn']").exists()).toBe(true);
-        expect(wrapper.find("[data-test='decline-btn']").exists()).toBe(true);
+        expect(card.find("pre").exists()).toBe(false);
+        expect(card.find("[data-test='view-query-btn']").attributes("data-to")).toBe("/project/p1/cohort-query");
+        expect(card.find("[data-test='approve-btn']").exists()).toBe(true);
+        expect(card.find("[data-test='decline-btn']").exists()).toBe(true);
+    });
+
+    it("has no imaging notice for a tabular project", async () => {
+        decisionsRef.value = [pending({ hasImaging: false })];
+        const wrapper = mountPage();
+        await nextTick();
+
+        expect(wrapper.find("[data-test='request-imaging']").text()).toBe("No");
+        expect(wrapper.find("[data-test='imaging-notice']").exists()).toBe(false);
     });
 
     it.each([
-        [null, "Not reported"],
+        [null, "—", "not reported"],
         [{
             recordCount: 0,
             suppressed: true,
             error: null
-        }, "Below the trust's disclosure threshold"],
+        }, "—", "below the disclosure threshold"],
         [{
             recordCount: null,
             suppressed: false,
             error: "boom"
-        }, "Query failed"]
-    ])("reports a cohort of %j as %s", async (cohort, text) => {
+        }, "—", "query failed"]
+    ])("reports a cohort of %j as %s %s", async (cohort, value, note) => {
         decisionsRef.value = [pending({ cohort })];
+        const wrapper = mountPage();
+        await nextTick();
+
+        expect(wrapper.find("[data-test='request-cohort']").text()).toBe(value);
+        expect(wrapper.find("[data-test='request-cohort-note']").text()).toBe(note);
+    });
+
+    it("lists decided projects as table rows toned by their decision", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const row = wrapper.find("[data-test='decided-list'] [data-test='decision-row']");
+        expect(row.text()).toContain("EHR risk prediction");
+        expect(row.find("[data-test='decision-pill']").text()).toBe("Approved");
+        expect(row.find("[data-test='decision-rail']").classes()).toContain("bg-emerald-500");
+        expect(row.text()).toContain("Ada Admin");
+    });
+
+    it("expands a decided row to its description and a link to the query", async () => {
         const wrapper = mountPage();
         await nextTick();
 
         await wrapper.find("[data-test='decision-row-toggle']").trigger("click");
 
-        expect(wrapper.find("[data-test='decision-cohort']").text()).toBe(text);
+        const details = wrapper.find("[data-test='decision-details']");
+        expect(details.text()).toContain("Federated spleen segmentation");
+        expect(details.find("[data-test='view-query-btn']").attributes("data-to")).toBe("/project/p2/cohort-query");
     });
 
     it("approves only for this trust after confirming, then refreshes the list", async () => {
         mockApproveProject.mockResolvedValue({ projectStatus: "APPROVED" });
         const wrapper = mountPage();
         await nextTick();
-        await wrapper.find("[data-test='decision-row-toggle']").trigger("click");
 
         await wrapper.find("[data-test='approve-btn']").trigger("click");
         expect(wrapper.find("[data-test='confirm-text']").text()).toContain(
@@ -263,7 +312,6 @@ describe("My Trust", () => {
         mockApproveProject.mockResolvedValue({ projectStatus: "STAGED" });
         const wrapper = mountPage();
         await nextTick();
-        await wrapper.find("[data-test='decision-row-toggle']").trigger("click");
 
         await wrapper.find("[data-test='decline-btn']").trigger("click");
         await wrapper.find("[data-test='confirm-modal-btn']").trigger("click");
@@ -275,7 +323,7 @@ describe("My Trust", () => {
         });
     });
 
-    it("shows an empty-state card when nothing awaits a decision", async () => {
+    it("shows the empty-state card when nothing awaits a decision", async () => {
         decisionsRef.value = [];
         const wrapper = mountPage();
         await nextTick();
@@ -284,15 +332,6 @@ describe("My Trust", () => {
         expect(empty.text()).toContain("There are no requests awaiting your decision");
         expect(empty.text()).toContain("New project requests for this Trust will appear here.");
         expect(wrapper.find("[data-test='pending-list']").exists()).toBe(false);
-    });
-
-    it("titles each section above its card", async () => {
-        const wrapper = mountPage();
-        await nextTick();
-
-        // The heading is the section's label, outside the card that lists its projects.
-        const heading = wrapper.find("[data-test='pending-heading']");
-        expect(heading.element.closest("[data-test='pending-card']")).toBeNull();
-        expect(heading.element.parentElement?.querySelector("[data-test='pending-card']")).not.toBeNull();
+        expect(wrapper.find("[data-test='pending-count']").text()).toBe("0");
     });
 });

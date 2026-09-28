@@ -15,90 +15,89 @@
     name: My Trust
 </route>
 
-<!-- A Trust Admin's page (FLIP#1258): the projects staged at their trust — awaiting their decision, then decided —
-     beside the trust itself as Connection Status shows it. -->
+<!-- A Trust Admin's page (FLIP#1258, design_handoff_my_trust): the projects staged at their trust — awaiting their
+     decision, then decided — beside the trust itself as Connection Status shows it. -->
 <template>
     <div class="flex flex-col w-full h-full">
-        <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
-            <div class="mb-4">
-                <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                    Trust Admin · {{ trustAdminOf?.code ?? trustAdminOf?.name }}
-                </p>
-                <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
-                    <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">My</span>
-                    <span class="ml-2">trust</span>
-                </h1>
-            </div>
+        <div class="w-full overflow-y-auto">
+            <div class="max-w-[1440px] mx-auto px-8 pt-8 pb-12">
+                <!-- Header — the Models page's spine: mono eyebrow, underlined title, description. -->
+                <header class="mb-6">
+                    <p
+                        data-test="my-trust-eyebrow"
+                        class="text-[11px] font-mono uppercase tracking-[0.16em] text-gray-500 dark:text-gray-300"
+                    >
+                        Trust admin · {{ trustAdminOf?.code ?? trustAdminOf?.name }}
+                    </p>
+                    <h1 class="mt-1.5 text-[28px] font-semibold font-heading">
+                        <span class="text-primary-500 underline decoration-4 decoration-primary-400/60 underline-offset-8 dark:text-white">My Trust</span>
+                    </h1>
+                    <p data-test="my-trust-description" class="mt-3.5 max-w-[620px] text-sm text-gray-500 dark:text-gray-300">
+                        Review project requests to use data held at {{ trustName }}, and monitor the health of the local
+                        FLIP node.
+                    </p>
+                </header>
 
-            <!-- Decisions first, the page's job; the trust's own connection card to their right (below them on narrow
-                 screens). -->
-            <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_410px]">
-                <div class="space-y-8">
-                    <!-- Each section is titled above its card. -->
-                    <section>
-                        <h2
-                            data-test="pending-heading"
-                            class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100"
-                        >
-                            Awaiting your decision ({{ pending.length }})
-                        </h2>
-                        <AiCard data-test="pending-card">
+                <!-- Decisions first, the page's job; the trust's own card to their right, wrapping below them on
+                     narrow screens. -->
+                <div class="flex flex-wrap items-start gap-6">
+                    <div class="flex-[1_1_560px] min-w-0 space-y-8">
+                        <section>
+                            <h2
+                                data-test="pending-heading"
+                                class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100"
+                            >
+                                Awaiting your decision
+                                <span data-test="pending-count" class="font-medium text-gray-400 dark:text-gray-300">{{ pending.length }}</span>
+                            </h2>
                             <div
                                 v-if="!pending.length"
                                 data-test="nothing-pending"
-                                class="flex flex-col items-center justify-center px-6 py-12 text-center"
+                                class="flex flex-col items-center justify-center gap-2.5 px-6 py-10 text-center bg-white border border-dashed border-gray-300 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
                             >
-                                <icon-ph-check-circle-duotone class="w-12 h-12 text-primary-500 dark:text-primary-400" />
-                                <p class="mt-3 font-semibold text-gray-900 dark:text-gray-100">
+                                <icon-ph-archive-duotone class="w-9 h-9 text-primary-400" aria-hidden="true" />
+                                <p class="text-sm font-semibold text-gray-700 dark:text-gray-100">
                                     There are no requests awaiting your decision
                                 </p>
-                                <p class="mt-1 text-sm text-gray-500 dark:text-gray-300">
+                                <p class="text-[13px] text-gray-500 dark:text-gray-300">
                                     New project requests for this Trust will appear here.
                                 </p>
                             </div>
-                            <ul v-else data-test="pending-list" class="px-6 divide-y divide-gray-200 dark:divide-dark-border">
-                                <TrustDecisionRow
+                            <div v-else data-test="pending-list" class="space-y-3">
+                                <TrustRequestCard
                                     v-for="decision in pending"
                                     :key="decision.projectId"
                                     :decision="decision"
-                                    :trust-name="trustName"
+                                    :busy="submitting"
                                     @decide="askToDecide(decision, $event)"
                                 />
-                            </ul>
-                        </AiCard>
-                    </section>
+                            </div>
+                        </section>
 
-                    <section>
-                        <h2 class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
-                            Decided
-                        </h2>
-                        <AiCard>
-                            <p v-if="!decided.length" class="px-6 py-5 text-sm text-gray-500 dark:text-gray-300">
+                        <section>
+                            <h2 class="flex items-baseline gap-2.5 mb-3 text-lg font-bold text-gray-900 font-heading dark:text-gray-100">
+                                Decided
+                                <span data-test="decided-count" class="font-medium text-gray-400 dark:text-gray-300">{{ decided.length }}</span>
+                            </h2>
+                            <p
+                                v-if="!decided.length"
+                                class="px-6 py-5 text-sm text-gray-500 bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border dark:text-gray-300"
+                            >
                                 No decisions yet.
                             </p>
-                            <ul v-else data-test="decided-list" class="px-6 divide-y divide-gray-200 dark:divide-dark-border">
-                                <TrustDecisionRow
-                                    v-for="decision in decided"
-                                    :key="decision.projectId"
-                                    :decision="decision"
-                                    :trust-name="trustName"
-                                />
-                            </ul>
-                        </AiCard>
-                    </section>
-                </div>
+                            <TrustDecisionsTable v-else :decisions="decided" />
+                        </section>
+                    </div>
 
-                <section>
-                    <h2 class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
-                        Connection status
-                    </h2>
-                    <AiCard data-test="trust-card-column">
-                        <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
-                        <div v-else class="p-6">
-                            <AiLoader />
-                        </div>
-                    </AiCard>
-                </section>
+                    <div class="flex-[1_1_340px] max-w-[420px] min-w-0">
+                        <AiCard data-test="trust-card-column">
+                            <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
+                            <div v-else class="p-6">
+                                <AiLoader />
+                            </div>
+                        </AiCard>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -122,7 +121,8 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import TrustDetailCard from "@/partials/connection/TrustDetailCard.vue";
-import TrustDecisionRow from "@/partials/trusts/TrustDecisionRow.vue";
+import TrustDecisionsTable from "@/partials/trusts/TrustDecisionsTable.vue";
+import TrustRequestCard from "@/partials/trusts/TrustRequestCard.vue";
 import { routeChange } from "@/router";
 import { approveProject } from "@/services/project-service";
 import { getHubHealth,

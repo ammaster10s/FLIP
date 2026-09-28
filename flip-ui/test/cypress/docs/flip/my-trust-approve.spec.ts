@@ -83,10 +83,11 @@ describe("docs: approve a project for your trust", () => {
         cy.wait("@getDecisions");
         cy.demoPause();
 
-        cy.getBySel("pending-list").find("[data-test=decision-row-toggle]").first().demoClick();
+        // Each pending request is a card with its facts; open the decided history first, then approve.
+        cy.getBySel("decided-list").find("[data-test=decision-row-toggle]").first().demoClick();
         cy.demoPause();
 
-        cy.getBySel("approve-btn").demoClick();
+        cy.getBySel("pending-list").find("[data-test=approve-btn]").first().demoClick();
         cy.demoPause();
         cy.getBySel("confirm-modal-btn").demoClick();
 
