@@ -23,6 +23,7 @@ from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TaskType
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.trusts_services.start_project_imaging_creation import (
+    queue_cohort_snapshot,
     queue_imaging_creation,
     start_project_imaging_creation,
 )
@@ -376,3 +377,48 @@ async def test_imaging_follows_the_trusts_approval(
 
     assert excinfo.value.status_code == 409
     mock_get_session.add.assert_not_called()
+
+
+def test_queue_cohort_snapshot_freezes_a_project_without_imaging(mock_get_session, mock_get_project):
+    """FLIP#1071 x FLIP#857: no imaging stage, but training reads the frozen cohort — so the trust freezes it."""
+    mock_get_project.return_value.has_imaging = False
+
+    response = queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert response["success"] == "Cohort snapshot task queued successfully"
+    (persist_task,) = [call.args[0] for call in mock_get_session.add.call_args_list]
+    assert (persist_task.task_type, persist_task.trust_id) == (TaskType.PERSIST_COHORT, trust_id)
+    payload = json.loads(persist_task.payload)
+    assert payload["encrypted_project_id"]
+    assert payload["query"] == "SELECT * FROM table"
+    mock_get_session.commit.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("project_status", "approved_trusts"),
+    [(ProjectStatus.STAGED, [trust_example]), (ProjectStatus.APPROVED, [])],
+    ids=["project not approved", "trust not approved"],
+)
+def test_queue_cohort_snapshot_follows_the_trusts_approval(
+    mock_get_session, mock_get_project, mock_get_approved_trusts, project_status, approved_trusts
+):
+    """As for imaging (FLIP#1258): a trust that has not approved never runs the cohort query."""
+    mock_get_project.return_value.status = project_status
+    mock_get_approved_trusts.return_value = approved_trusts
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()
+
+
+def test_queue_cohort_snapshot_rolls_back_a_db_error(mock_get_session, mock_get_project):
+    mock_get_session.add.side_effect = Exception("DB write failed")
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.detail == "Internal server error"
+    mock_get_session.rollback.assert_called_once()

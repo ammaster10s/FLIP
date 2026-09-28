@@ -254,14 +254,25 @@ def test_a_call_that_starts_no_trust_dispatches_no_imaging_and_reports_the_real_
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.queue_cohort_snapshot")
 @patch(
     "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
-    mock_start_imaging, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
+    mock_start_imaging,
+    mock_freeze_cohort,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+    mock_project_row,
 ):
-    """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071)."""
+    """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071).
+
+    Each trust still freezes the approved cohort (FLIP#857): training reads it through /cohort/dataframe, which
+    serves only the snapshot, so a tabular project without one could never train.
+    """
     mock_approve_project.return_value = mock_trusts
     mock_project_row.return_value = SimpleNamespace(has_imaging=False)
 
@@ -270,12 +281,32 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     assert response.status_code == 200
     data = response.json()
     assert data["successful"] is True
-    assert data["trusts"] == {"processed": 0, "succeeded": 0, "failed": 0}
-    assert data["details"] == []
+    assert data["trusts"] == {"processed": 2, "succeeded": 2, "failed": 0}
+    assert [detail["trust"] for detail in data["details"]] == ["Trust 1", "Trust 2"]
     assert "no imaging" in data["message"]
     assert data["projectStatus"] == "APPROVED"
     mock_approve_project.assert_called_once()  # the project still becomes APPROVED
     assert mock_start_imaging.await_count == 0
+    assert [call.kwargs["trust"] for call in mock_freeze_cohort.call_args_list] == mock_trusts
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.queue_cohort_snapshot")
+def test_a_trust_whose_cohort_cannot_be_frozen_is_reported_as_failed(
+    mock_freeze_cohort, mock_approve_project, project_id, request_body, mock_trusts, mock_project_row
+):
+    """A tabular-only project's snapshot dispatch reports per trust, as imaging does, so a failure is not silent."""
+    mock_approve_project.return_value = mock_trusts
+    mock_project_row.return_value = SimpleNamespace(has_imaging=False)
+    mock_freeze_cohort.side_effect = [None, HTTPException(status_code=500, detail="Internal server error")]
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["successful"] is False
+    assert data["trusts"] == {"processed": 2, "succeeded": 1, "failed": 1}
+    assert [detail["success"] for detail in data["details"]] == [True, False]
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")

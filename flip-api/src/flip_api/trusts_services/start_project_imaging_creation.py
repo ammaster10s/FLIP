@@ -20,6 +20,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.auth.trust_authority import decision_maker_for
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import TrustTask
+from flip_api.domain.interfaces.project import IProjectResponse
 from flip_api.domain.interfaces.trust import (
     ICreateImagingProject,
     IPersistCohort,
@@ -92,6 +93,9 @@ async def queue_imaging_creation(request: Request, project_id: UUID, trust: ITru
     user completing the approval need hold no authority at those. Each trust's own recorded approval is what
     authorised its imaging, so it is refused (409) unless the project is approved and so is this trust.
 
+    The trust's cohort snapshot (FLIP#857) is queued ahead of its imaging here, so every path that starts imaging at
+    a trust — the approving call, a late trust's approval, the route above — has that trust freeze the cohort first.
+
     Args:
         request (Request): FastAPI request object.
         project_id (UUID): ID of the project.
@@ -120,8 +124,7 @@ async def queue_imaging_creation(request: Request, project_id: UUID, trust: ITru
 
         # FLIP#1258: imaging pulls a trust's patients' studies, so it follows that trust's own approval — never a
         # project still awaiting decisions, nor a trust that declined or has not decided.
-        approved_trust_ids = {t.id for t in get_approved_trusts_for_project(project_id, db)}
-        if project.status != ProjectStatus.APPROVED or trust.id not in approved_trust_ids:
+        if not _trust_has_approved(project_id, project, trust, db):
             raise HTTPException(
                 status_code=409,
                 detail=f"Trust {trust.name} has not approved project {project_id}; imaging cannot start there.",
@@ -138,35 +141,11 @@ async def queue_imaging_creation(request: Request, project_id: UUID, trust: ITru
         # Get Cognito users
         cognito_users = get_cognito_users(params={"UserPoolId": user_pool_id})
 
-        # Freeze the approved cohort BEFORE imaging creation (FLIP#857): the trust
-        # materialises the cohort once and the row-level routes serve only that artefact,
-        # so the frozen accession set must exist by the time imaging retrieval asks for
-        # it. Queued and committed first: pending-task dispatch orders by created_at and
-        # the trust poller processes sequentially, so the separate commit gives the
-        # snapshot task a strictly earlier timestamp than the imaging task below.
-        if project.query is not None:
-            persist_payload = IPersistCohort(
-                project_id=project_id,
-                trust_id=trust.id,
-                encrypted_project_id=encrypt(str(project_id), context=PROJECT_ID_CONTEXT),
-                query=project.query.query,
-                query_id=project.query.id,
-            )
-            persist_task = TrustTask(
-                trust_id=trust.id,
-                task_type=TaskType.PERSIST_COHORT,
-                # query_id on the task row records which Queries row was frozen (indexed).
-                query_id=project.query.id,
-                payload=json.dumps(persist_payload.model_dump(mode="json"), default=str),
-            )
-            db.add(persist_task)
-            db.commit()
-            logger.info(f"Queued cohort snapshot task for trust {trust.name}, project {project_id}")
-        else:
-            logger.warning(
-                f"Project {project_id} has no cohort query — skipping the cohort snapshot task; "
-                "row-level routes will refuse this project at every trust"
-            )
+        # Freeze the approved cohort BEFORE imaging creation (FLIP#857): the frozen accession set must exist by the
+        # time imaging retrieval asks for it. Queued and committed first: pending-task dispatch orders by created_at
+        # and the trust poller processes sequentially, so the separate commit gives the snapshot task a strictly
+        # earlier timestamp than the imaging task below.
+        _queue_persist_cohort(project_id, project, trust, db)
 
         # Create request data for trust
         request_data = ICreateImagingProject(
@@ -196,3 +175,90 @@ async def queue_imaging_creation(request: Request, project_id: UUID, trust: ITru
         db.rollback()
         logger.error(f"An error occurred while queuing project imaging creation: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def queue_cohort_snapshot(project_id: UUID, trust: ITrust, db: Session) -> dict[str, str]:
+    """
+    Queues the approval-time cohort freeze (FLIP#857) at one trust, with no authority check of its own.
+
+    The approval fan-out calls this in place of ``queue_imaging_creation`` for a project created without imaging
+    (FLIP#1071). Such a project has no imaging stage, but its FL training still reads the cohort through
+    data-access-api's ``/cohort/dataframe``, which serves only the snapshot frozen at approval and refuses a project
+    without one — so each approved trust freezes the cohort all the same. Like imaging, it is refused (409) unless
+    the project is approved and so is this trust.
+
+    Args:
+        project_id (UUID): ID of the project.
+        trust (ITrust): Trust information.
+        db (Session): Database session.
+
+    Returns:
+        dict[str, str]: Success message indicating the task has been queued.
+    """
+    try:
+        project = get_project(project_id, db)
+        if not project:
+            error_message = f"Central Hub project with {project_id=} not found. Unable to freeze its cohort"
+            logger.error(error_message)
+            raise HTTPException(status_code=404, detail=error_message)
+
+        if not _trust_has_approved(project_id, project, trust, db):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Trust {trust.name} has not approved project {project_id}; its cohort cannot be frozen there.",
+            )
+
+        _queue_persist_cohort(project_id, project, trust, db)
+        return {"success": "Cohort snapshot task queued successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"An error occurred while queuing the cohort snapshot: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _trust_has_approved(project_id: UUID, project: IProjectResponse, trust: ITrust, db: Session) -> bool:
+    """Whether the project is approved and so is this trust — what starts anything at a trust (FLIP#1258)."""
+    approved_trust_ids = {t.id for t in get_approved_trusts_for_project(project_id, db)}
+    return project.status == ProjectStatus.APPROVED and trust.id in approved_trust_ids
+
+
+def _queue_persist_cohort(project_id: UUID, project: IProjectResponse, trust: ITrust, db: Session) -> None:
+    """
+    Queues and commits the trust's PERSIST_COHORT task (FLIP#857).
+
+    The trust materialises the approved cohort once and its row-level routes serve only that artefact, so every
+    path that starts a trust on a project — its imaging, or a project without imaging — queues this first.
+
+    Args:
+        project_id (UUID): ID of the project.
+        project (IProjectResponse): The project, carrying its query of record.
+        trust (ITrust): Trust information.
+        db (Session): Database session.
+    """
+    if project.query is None:
+        logger.warning(
+            f"Project {project_id} has no cohort query — skipping the cohort snapshot task; "
+            "row-level routes will refuse this project at every trust"
+        )
+        return
+
+    persist_payload = IPersistCohort(
+        project_id=project_id,
+        trust_id=trust.id,
+        encrypted_project_id=encrypt(str(project_id), context=PROJECT_ID_CONTEXT),
+        query=project.query.query,
+        query_id=project.query.id,
+    )
+    persist_task = TrustTask(
+        trust_id=trust.id,
+        task_type=TaskType.PERSIST_COHORT,
+        # query_id on the task row records which Queries row was frozen (indexed).
+        query_id=project.query.id,
+        payload=json.dumps(persist_payload.model_dump(mode="json"), default=str),
+    )
+    db.add(persist_task)
+    db.commit()
+    logger.info(f"Queued cohort snapshot task for trust {trust.name}, project {project_id}")

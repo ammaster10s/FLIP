@@ -186,7 +186,8 @@ none (IAM DB auth). Run it through the root target so `PROD` selects the env fil
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
+returns `200 []`. Each approved trust still gets its PERSIST_COHORT task (FLIP#857, `queue_cohort_snapshot`):
+training reads the cohort through `/cohort/dataframe`, which serves only the snapshot frozen at approval. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
 (root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
 with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
 `--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
