@@ -37,9 +37,8 @@ def _settings(**overrides: str) -> Settings:
 def test_url_names_the_psycopg2_driver():
     """A bare ``postgresql://`` lets SQLAlchemy choose the driver, and 2.1 chooses psycopg3.
 
-    This project depends on psycopg2-binary, so that choice has to be spelled out or the
-    loaders fail with ``ModuleNotFoundError: No module named 'psycopg'`` — which is how the
-    Helm seed hook broke, with no commit behind it: the tools are installed un-locked.
+    This project ships psycopg2 only, so with the bare scheme the loaders fail with
+    ``ModuleNotFoundError: No module named 'psycopg'``.
     """
     url = _settings().OMOP_DATABASE_URL.get_secret_value()
 

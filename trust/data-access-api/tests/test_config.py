@@ -71,10 +71,8 @@ def test_cohort_query_threshold_rejects_non_positive(value):
 def test_omop_database_url_names_the_psycopg2_driver():
     """A bare ``postgresql://`` lets SQLAlchemy choose the driver, and 2.1 chooses psycopg3.
 
-    This service depends on psycopg2-binary, so the choice is spelled out rather than inferred:
-    with the bare scheme the engine fails on ``ModuleNotFoundError: No module named 'psycopg'``.
-    The lock still pins SQLAlchemy 2.0.x, so nothing fails today — naming the driver is what
-    keeps the next lock bump from turning into a service that cannot reach the database.
+    This service ships psycopg2 only, so with the bare scheme the engine fails on
+    ``ModuleNotFoundError: No module named 'psycopg'``.
     """
     url = Settings().OMOP_DATABASE_URL.get_secret_value()
 

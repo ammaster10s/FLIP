@@ -756,6 +756,28 @@ kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
 kubectl rollout restart deployment/trust-release-flip-trust-data-access-api -n flip-trust
 ```
 
+### Trust-seed Job Fails with `No module named 'psycopg'`
+
+**Symptom:** The `trust-seed` hook Job fails in its OMOP half, failing the release
+install or upgrade; the Job log ends in
+`ModuleNotFoundError: No module named 'psycopg'`.
+
+**Root Cause:** The hook installs the loaders (`trust/omop-db`'s `omop_db_tools`) from
+`trustData.seed.sourceRef` at run time, resolving their dependencies without a lock.
+SQLAlchemy 2.1 picks psycopg (v3) for a bare `postgresql://` URL, while the loaders ship
+psycopg2. A ref whose loaders name `postgresql+psycopg2` (FLIP#1309, merged to `develop`
+in `e51d5bd28`) is immune; an older one fails.
+
+**Fix:** Point the hook at a ref that carries the fix, until it reaches the release your
+images come from:
+
+```bash
+helm upgrade trust-release ./trust/deploy/helm -n flip-trust --reuse-values \
+  --set trustData.seed.sourceRef=develop   # or a sha at/after e51d5bd28
+```
+
+Set `sourceRef` back to the release ref once that release contains the fix.
+
 ### Rebuilding OMOP Data
 
 The mock OMOP rows (and, with `trustData.seed.orthanc: true`, the DICOM studies) are

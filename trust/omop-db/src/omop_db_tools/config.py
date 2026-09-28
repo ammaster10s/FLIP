@@ -33,12 +33,8 @@ class Settings(BaseSettings):
 
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:
-        # The driver is named, not left to SQLAlchemy: a bare ``postgresql://`` means "pick a
-        # driver", and SQLAlchemy 2.1 made psycopg (v3) that pick while this project ships
-        # psycopg2-binary — every loader then dies on ModuleNotFoundError: No module named
-        # 'psycopg'. The seed tooling installs these dependencies un-locked at run time
-        # (seed_trust.sh fetches the source archive and lets uv resolve), so the driver must
-        # not depend on which SQLAlchemy that resolves to.
+        # The driver is named because a bare ``postgresql://`` lets SQLAlchemy pick one, and
+        # this project ships psycopg2 only; the seed hook installs these tools un-locked.
         # URL.create escapes special characters (@, /, :) in the credentials.
         return SecretStr(
             URL.create(

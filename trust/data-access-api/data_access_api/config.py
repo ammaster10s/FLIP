@@ -106,12 +106,8 @@ class Settings(BaseSettings):
             SecretStr: A ``postgresql+psycopg2://`` URL wrapped as a SecretStr to avoid leaking
             the password in logs or error messages.
         """
-        # The driver is named rather than left to SQLAlchemy: a bare ``postgresql://`` means
-        # "pick a driver", and SQLAlchemy 2.1 made psycopg (v3) that pick while this service
-        # depends on psycopg2-binary — the engine then fails on ModuleNotFoundError: No module
-        # named 'psycopg'. The lock pins 2.0.x today, so naming the driver keeps the next bump
-        # from exposing it. URL.create also escapes characters that would break the URL
-        # (@, /, :) which the f-string this replaces interpolated raw.
+        # The driver is named because a bare ``postgresql://`` lets SQLAlchemy pick one, and
+        # this service ships psycopg2 only. URL.create escapes @, / and : in the credentials.
         return SecretStr(
             URL.create(
                 "postgresql+psycopg2",
