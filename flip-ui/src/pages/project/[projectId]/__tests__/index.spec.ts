@@ -110,6 +110,7 @@ interface MountOptions {
     project?: IProject | null;
     permissions?: string[];
     userId?: string;
+    trustAdminOf?: { id: string; code: string; name: string } | null;
 }
 
 const baseProject = (): IProject => ({
@@ -127,7 +128,8 @@ const baseProject = (): IProject => ({
 function mountProjectPage({
     project = baseProject(),
     permissions = ["CanCreateProjects", "CanUnstageProjects"],
-    userId = "owner-1"
+    userId = "owner-1",
+    trustAdminOf = null
 }: MountOptions = {}) {
     return mount(ProjectPage, {
         global: {
@@ -139,7 +141,8 @@ function mountProjectPage({
                     auth: {
                         user: {
                             userId,
-                            permissions
+                            permissions,
+                            trustAdminOf
                         }
                     }
                 }
@@ -324,7 +327,19 @@ describe("Project page (/project/[id]/index.vue)", () => {
     describe("saving trust decisions", () => {
         const stagedProject = (): IProject => ({
             ...baseProject(),
-            status: "STAGED"
+            status: "STAGED",
+            approvedTrusts: [
+                {
+                    id: "t1",
+                    name: "KCH",
+                    status: "PENDING"
+                },
+                {
+                    id: "t2",
+                    name: "UCLH",
+                    status: "PENDING"
+                }
+            ]
         });
 
         test("posts the approved and declined trusts and announces the approval", async () => {
@@ -360,12 +375,11 @@ describe("Project page (/project/[id]/index.vue)", () => {
             expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
         });
 
-        test("says the decisions are saved when the project still waits on a trust", async () => {
-            // Not reachable from today's card, which saves only once every trust is decided, but the
-            // endpoint accepts a subset (#1258's per-trust approvers) and then leaves the project staged.
+        test("says the decisions are saved when a decline leaves another trust still to decide", async () => {
+            // Trusts decide one at a time (FLIP#1258): a decline with a trust still pending is not "all declined".
             decisionsToSave = {
-                approved: ["t1"],
-                declined: []
+                approved: [],
+                declined: ["t1"]
             };
             approveProject.mockResolvedValue({ projectStatus: "STAGED" });
             const wrapper = mountProjectPage({ project: stagedProject() });
@@ -374,7 +388,49 @@ describe("Project page (/project/[id]/index.vue)", () => {
             await flushPromises();
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
-            expect(snackbarSuccess.mock.calls[0][0].text).toContain("until every trust has a decision");
+            expect(snackbarSuccess.mock.calls[0][0].text).toContain("until a trust approves it");
+        });
+
+        test("says a late decision on an approved project was saved, not that the project was approved", async () => {
+            decisionsToSave = {
+                approved: [],
+                declined: ["t2"]
+            };
+            approveProject.mockResolvedValue({ projectStatus: "APPROVED" });
+            const wrapper = mountProjectPage({
+                project: {
+                    ...stagedProject(),
+                    status: "APPROVED"
+                }
+            });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
+        });
+
+        test("announces a trust that approved an already-approved project as joining it", async () => {
+            decisionsToSave = {
+                approved: ["t2"],
+                declined: []
+            };
+            approveProject.mockResolvedValue({
+                projectStatus: "APPROVED",
+                successful: true,
+                details: []
+            });
+            const wrapper = mountProjectPage({
+                project: {
+                    ...stagedProject(),
+                    status: "APPROVED"
+                }
+            });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust approved" }));
         });
 
         test("warns, naming the trust, when the approval could not start imaging there", async () => {
@@ -527,6 +583,23 @@ describe("Project page (/project/[id]/index.vue)", () => {
             expect(actions?.className).toContain("items-center");
             expect(actions?.className).toContain("shrink-0");
             expect(actions?.className).not.toContain("flex-col");
+        });
+
+        test("offers no Edit Project to a Trust Admin reading a project they are not on (FLIP#1258)", () => {
+            const staged = baseProject();
+            staged.status = "STAGED";
+            const wrapper = mountProjectPage({
+                project: staged,
+                permissions: ["CanCreateProjects"],
+                userId: "trust-admin-1",
+                trustAdminOf: {
+                    id: "t1",
+                    code: "KCH",
+                    name: "KCH"
+                }
+            });
+
+            expect(wrapper.find("[data-test=edit-project-btn]").exists()).toBe(false);
         });
 
         test("hides the Edit Project label below lg and keeps an aria-label", () => {

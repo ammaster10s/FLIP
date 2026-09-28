@@ -81,7 +81,12 @@
                                 />
                             </template>
                         </AiGuard>
-                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
+                        <!-- A Trust Admin reading a project staged at their trust (FLIP#1258) cannot edit it. -->
+                        <AiGuard
+                            v-if="!readsOnlyAsTrustAdmin(project)"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess() || isViewer"
+                        >
                             <AiButton
                                 light
                                 data-test="edit-project-btn"
@@ -139,7 +144,7 @@
                                     :has-query="!!project.query"
                                     :project-approved="projectApproved"
                                     :approving="approvingProject"
-                                    :can-approve="isProjectStaged()"
+                                    :can-approve="isProjectStaged() || projectApproved"
                                     @approve-project="approveProjectEvent"
                                 />
                             </div>
@@ -280,7 +285,7 @@ const { project } = storeToRefs(projectStore);
 // Admin-only and bypasses the per-project check on the server.
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const { isViewer, canCreateProjects } = usePermissions();
+const { isViewer, canCreateProjects, readsOnlyAsTrustAdmin } = usePermissions();
 
 // Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
 const hasImaging = computed(() => projectHasImaging(project.value));
@@ -374,18 +379,37 @@ const approveProjectEvent = async (decisions: ITrustDecisions) => {
     approvingProject.value = true;
 
     const { name } = { ...project?.value };
+    // Trusts decide one at a time (FLIP#1258): whether this save approved the project, joined a trust to an
+    // approved one, or left every trust declined depends on what was recorded before it.
+    const wasApproved = projectApproved.value;
+    const declinedNow = new Set(decisions.declined);
+    const staged = project?.value?.approvedTrusts ?? [];
+    const everyTrustDeclined = staged.length > 0
+        && staged.every(t => t.status === "DECLINED" || declinedNow.has(t.id));
 
     try {
         const response = await approveProject(`/step/project/${route.params.projectId}/approve`, decisions);
 
-        if (response.projectStatus === "APPROVED") {
+        if (response.projectStatus === "APPROVED" && !decisions.approved.length) {
+            Snackbar.success({
+                title: "Trust decisions saved",
+                text: `The decision on ${name} has been recorded.`
+            });
+        }
+        else if (response.projectStatus === "APPROVED") {
             // The approval is committed even when imaging could not be started at a trust, so this is a
             // warning, not an error — but it must name the trust, as nothing else will.
             const failed = (response.details ?? []).filter(d => !d.success).map(d => d.trust);
             if (response.successful === false && failed.length) {
                 Snackbar.warning({
-                    title: "Project approved, imaging not started everywhere",
+                    title: wasApproved ? "Trust approved, imaging not started" : "Project approved, imaging not started everywhere",
                     text: `${name} has been approved, but imaging could not be started at ${failed.join(", ")}.`
+                });
+            }
+            else if (wasApproved) {
+                Snackbar.success({
+                    title: "Trust approved",
+                    text: `The newly approved trust joins ${name}.`
                 });
             }
             else {
@@ -395,7 +419,7 @@ const approveProjectEvent = async (decisions: ITrustDecisions) => {
                 });
             }
         }
-        else if (response.projectStatus === "STAGED" && !decisions.approved.length) {
+        else if (response.projectStatus === "STAGED" && everyTrustDeclined) {
             Snackbar.success({
                 title: "All trusts declined",
                 text: `${name} stays staged. Unstage it to reconsider, or change a decision.`
@@ -404,7 +428,7 @@ const approveProjectEvent = async (decisions: ITrustDecisions) => {
         else if (response.projectStatus === "STAGED") {
             Snackbar.success({
                 title: "Trust decisions saved",
-                text: `${name} stays staged until every trust has a decision.`
+                text: `${name} stays staged until a trust approves it.`
             });
         }
         else {

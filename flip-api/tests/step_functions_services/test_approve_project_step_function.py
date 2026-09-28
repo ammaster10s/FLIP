@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.main import app
 from flip_api.step_functions_services.approve_project_step_function import (
     get_session,
@@ -84,7 +85,7 @@ def mock_project_row(mock_project):
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_success(
@@ -146,7 +147,7 @@ def test_approve_project_rejects_a_trust_both_approved_and_declined(mock_approve
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_with_failure_in_trust(
@@ -193,28 +194,32 @@ def test_approve_project_unexpected_exception_returns_generic_detail(
     assert "db-host" not in response.json()["detail"]
 
 
+@pytest.mark.parametrize("status_after", [ProjectStatus.STAGED, ProjectStatus.APPROVED])
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
-def test_approve_project_that_stays_staged_dispatches_no_imaging(
+def test_a_call_that_starts_no_trust_dispatches_no_imaging_and_reports_the_real_status(
     mock_approve_project,
     project_id,
     request_body,
-    mock_trusts,
+    mock_project_row,
+    status_after,
 ):
-    """No trusts back from the decision step → the project is still STAGED, and no imaging is started."""
+    """No trusts back from the decision step → nothing to start. The project may still be STAGED (nothing approved
+    yet), or already APPROVED (a late decline, or a re-sent approval), so the status is read back, not assumed."""
     mock_approve_project.return_value = []
+    mock_project_row.return_value.status = status_after
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
     assert response.status_code == 200
     data = response.json()
 
-    assert data["message"] == "Trust decisions recorded; the project stays staged"
-    assert data["projectStatus"] == "STAGED"
+    assert data["message"] == "Trust decisions recorded; nothing to start"
+    assert data["projectStatus"] == status_after
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
@@ -239,7 +244,7 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
@@ -263,7 +268,7 @@ def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_reports_the_permission_refusal_whether_or_not_the_project_exists(

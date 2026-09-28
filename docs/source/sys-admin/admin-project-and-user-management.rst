@@ -32,20 +32,22 @@ If a project or a project's model needs to be amended i.e., at the request of a 
 Project Approval
 ================
 
-Once the offline project approval process has been completed, the outcome at each Trust can be recorded: every Trust the project was staged for is either approved or declined. FLIP records each decision with the admin who made it and when, and writes it to the project's audit trail.
+Once the offline project approval process has been completed, the outcome at each Trust can be recorded: every Trust the project was staged for is approved or declined, each in its own time. FLIP records each decision with who made it, when, and whether it was made by the hub or by the Trust itself, and writes it to the project's audit trail.
+
+**Who decides a Trust.** A Trust with no Trust Admin is decided by a FLIP Admin, from the project page. A Trust with at least one Trust Admin decides for itself: only its Trust Admins approve or decline for it, from their **My Trust** page (see :ref:`trust-admin-guide`), and on the project page a FLIP Admin sees that Trust's row read-only. Appointing a Trust's first Trust Admin (see :ref:`assigning-a-trust-admin`) hands its decisions to the Trust; removing its last hands them back to the hub.
 
 Approving a project allows the next stage of model training to commence and triggers the image retrieval process at each approved Trust.
 
 .. warning::
 
-   The model developer will not be able to initiate training at Trusts that have not approved the project, whether they declined or were never decided.
+   The model developer will not be able to initiate training at Trusts that have not approved the project, whether they declined or have not decided yet.
 
 1. Navigate to the project page
 2. Navigate to the 'Trust Approval' section
-3. For each Trust staged for the project, click **Approve** or **Decline**
-4. Click the 'Save Trust Decisions' button, which is enabled once every Trust has a decision and at least one decision differs from what is already saved
+3. For a Trust you decide, click **Approve** or **Decline**
+4. Click the 'Save Trust Decisions' button, which is enabled once at least one decision differs from what is already saved. Only the Trusts you changed are saved.
 
-The project is approved as soon as the decisions are saved with at least one Trust approved. If every Trust is declined, the project stays staged: either change a decision and save again, or un-stage the project so the model developer can amend it and stage it again. The earlier decisions stay in the project's audit trail. Once a project is approved its Trust decisions can no longer be changed.
+**Trusts decide at their own pace.** The project is approved as soon as one Trust approves it; the others can still approve or decline later. A Trust that approves after the project is approved gets its image retrieval then, and joins the project's existing models, taking part from their next training run. Once the project is approved, a Trust that has approved or declined cannot change its decision. If every Trust is declined, the project stays staged: either change a decision and save again, or un-stage the project so the model developer can amend it and stage it again. The earlier decisions stay in the project's audit trail.
 
 For example, the below shows a project staged at one Trust being approved:
 
@@ -125,13 +127,32 @@ Manage Role
    A user's role may be re-assigned at any time. The radio list assigns a single role, replacing the one currently held.
 
 1. Select the user from the user list
-2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
+2. Choose the new role from the radio list (``admin``, ``researcher``, ``viewer`` or ``trust admin``)
 3. Click the 'Save User' button
 
 .. figure:: ../assets/generated/gifs/admin/role-assignment.gif
    :align: center
 
    Re-assigning a user's role.
+
+.. _assigning-a-trust-admin:
+
+Assigning a Trust Admin
+^^^^^^^^^^^^^^^^^^^^^^^
+
+A Trust Admin approves or declines projects for **one** Trust, on that Trust's behalf, and otherwise works as a ``researcher`` (see :ref:`rbac-roles`). Appoint one when a Trust wants to decide on its own projects rather than relay its decisions to the hub.
+
+1. Select the user from the user list (or register them first)
+2. Choose ``trust admin`` from the radio list
+3. In the 'Administers' dropdown inside the card, choose the Trust
+4. Click the 'Save User' button, which stays disabled until a Trust is chosen
+
+From then on, only that Trust's Trust Admins decide its projects — including any it has not decided yet — and the hub no longer can. To hand a Trust's decisions back to the hub, move its last Trust Admin to another role. Each change is written to the Trust's audit log. A user can administer one Trust; a Trust can have several Trust Admins.
+
+.. figure:: ../assets/generated/gifs/admin/assign-trust-admin.gif
+   :align: center
+
+   Making a user the Trust Admin of one Trust.
 
 Reset Password
 ^^^^^^^^^^^^^^

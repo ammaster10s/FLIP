@@ -138,6 +138,13 @@ class TrustApprovalStatus(StrEnum):
     DECLINED = "DECLINED"
 
 
+class DecisionMaker(StrEnum):
+    """Who recorded a trust's decision on a project: the hub admin, or the trust's own Trust Admin (FLIP#1258)."""
+
+    HUB = "HUB"
+    SITE = "SITE"
+
+
 class ProjectType(StrEnum):
     """Kind of project, for the projects-list filter (FLIP#1071): imaging, or tabular-only."""
 

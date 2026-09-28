@@ -43,7 +43,14 @@ class TrustAuditAction(StrEnum):
     `register_trust` writes REGISTERED, `delete_trust` writes DELETED. The
     audit row is stored in `trusts_audit` with no FK to `trust.id`, so it
     persists past a hard delete.
+
+    ADMIN_ADDED / ADMIN_REMOVED record a user becoming, or ceasing to be, the trust's
+    Trust Admin (FLIP#1258); the row's ``subject_user_id`` names that user. They live in
+    this registry rather than the user audit because the question an operator asks later —
+    "who could decide for this trust, and since when" — is a question about the trust.
     """
 
     REGISTERED = "REGISTERED"
     DELETED = "DELETED"
+    ADMIN_ADDED = "ADMIN_ADDED"
+    ADMIN_REMOVED = "ADMIN_REMOVED"

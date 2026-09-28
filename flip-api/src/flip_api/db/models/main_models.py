@@ -22,6 +22,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
+    DecisionMaker,
     JobStatus,
     ModelStatus,
     NetStatus,
@@ -186,6 +187,9 @@ class ProjectTrustIntersect(SQLModel, table=True):
     # approvals made before decisions were attributed (FLIP#1318): the approver was never recorded.
     decided_by: UUID | None = Field(default=None)
     decided_at: datetime | None = Field(default=None)
+    # HUB when the hub admin decided (the trust had no Trust Admin), SITE when the trust's own Trust Admin did
+    # (FLIP#1258). NULL while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None)
 
 
 class Projects(SQLModel, table=True):
@@ -332,6 +336,9 @@ class TrustsAudit(SQLModel, table=True):
     trust_name: str = Field()
     action: TrustAuditAction = Field()
     modified_by_user_id: UUID | None = Field(default=None)
+    # The user an ADMIN_ADDED / ADMIN_REMOVED row is about (the new or former Trust Admin); NULL on registry
+    # events. modified_by_user_id stays the admin who made the change.
+    subject_user_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 

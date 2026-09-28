@@ -132,7 +132,7 @@ def register_user_step_function_endpoint(
         )
 
         user_id = register_response.user_id
-        roles = IRoles(roles=register_response.roles)
+        roles = IRoles(roles=register_response.roles, trust_id=register_response.trust_id)  # type: ignore[call-arg]
 
         logger.info(f"Setting roles for user {user_id}: {roles}")
 
@@ -172,6 +172,7 @@ def register_user_step_function_endpoint(
             name=register_response.name,
             organisation=register_response.organisation,
             roles=register_response.roles,
+            trust_id=register_response.trust_id,
         )
 
     except HTTPException:

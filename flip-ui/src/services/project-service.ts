@@ -32,6 +32,10 @@ export interface IProjectTrust {
     decidedBy?: string | null;
     decidedByName?: string | null;
     decidedAt?: string | null;
+    // HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258).
+    decidedAs?: "HUB" | "SITE" | null;
+    // True when the trust has a Trust Admin, so only they decide it.
+    hasTrustAdmin?: boolean;
 }
 
 export interface IProjectQuery {

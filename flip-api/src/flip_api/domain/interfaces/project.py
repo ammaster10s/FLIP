@@ -16,7 +16,13 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
-from flip_api.domain.schemas.status import ImagingConnectionState, ModelStatus, ProjectStatus, TrustApprovalStatus
+from flip_api.domain.schemas.status import (
+    DecisionMaker,
+    ImagingConnectionState,
+    ModelStatus,
+    ProjectStatus,
+    TrustApprovalStatus,
+)
 from flip_api.domain.schemas.users import CognitoUser
 
 # Blocks the three characters most likely to enable structural XML injection
@@ -111,6 +117,10 @@ class IApprovedTrust(BaseModel):
     decided_by: UUID | None = Field(default=None, alias="decidedBy")
     decided_by_name: str | None = Field(default=None, alias="decidedByName")
     decided_at: str | None = Field(default=None, alias="decidedAt")
+    # HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258); null while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None, alias="decidedAs")
+    # True when the trust has a Trust Admin, so only they decide it.
+    has_trust_admin: bool = Field(default=False, alias="hasTrustAdmin")
 
     model_config = ConfigDict(
         populate_by_name=True,
