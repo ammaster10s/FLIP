@@ -75,6 +75,13 @@ describe("TrainingOptions trust selection", () => {
             id: "id-gamma",
             code: "GAMMA",
             status: "DECLINED"
+        },
+        {
+            // Left out of an approval made before FLIP#1318, so migrated to PENDING, not DECLINED.
+            name: "Delta Trust",
+            id: "id-delta",
+            code: "DELTA",
+            status: "PENDING"
         }
     ];
 
@@ -106,8 +113,9 @@ describe("TrainingOptions trust selection", () => {
         // Names are admin-chosen and non-unique, so the code disambiguates them.
         expect(text).toContain("Alpha Trust (ALPHA)");
         expect(text).toContain("Beta Trust (BETA)");
-        // Gamma declined, so it must not be offered for training.
+        // Gamma declined and Delta was never decided, so neither may be offered for training.
         expect(text).not.toContain("Gamma Trust");
+        expect(text).not.toContain("Delta Trust");
     });
 
     it("falls back to the bare name when a trust carries no code", () => {
