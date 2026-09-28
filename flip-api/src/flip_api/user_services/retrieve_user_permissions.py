@@ -19,6 +19,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import Permission, RolePermission, UserRole
 from flip_api.domain.schemas.users import UserPermissionsResponse
+from flip_api.user_services.trust_admin_grants import get_trust_admin_of
 from flip_api.utils.formatters import to_pascal_case
 from flip_api.utils.logger import logger
 
@@ -29,8 +30,8 @@ def has_role(user_id: UUID, db: Session) -> bool:
     """
     Check if a user has at least one GLOBAL role assigned.
 
-    Trust-scoped grants (FLIP#1260) do not count: this gates platform onboarding, and a
-    Trust Admin with no platform role still needs one to use the platform itself.
+    Trust-scoped grants (FLIP#1260) do not count: this gates platform onboarding. A Trust Admin
+    passes through their global Researcher row (FLIP#1258).
 
     Args:
         user_id (UUID): The unique identifier of the user.
@@ -137,7 +138,10 @@ def retrieve_user_permissions(
         permissions_list = get_user_permissions(user_id, db)
         logger.info(f"Successfully retrieved permissions for user {user_id}")
 
-        return UserPermissionsResponse(permissions=[to_pascal_case(p.permission_name) for p in permissions_list])
+        return UserPermissionsResponse(
+            permissions=[to_pascal_case(p.permission_name) for p in permissions_list],
+            trust_admin_of=get_trust_admin_of(user_id, db),
+        )  # type: ignore[call-arg]
 
     except HTTPException as http_exc:
         # Re-raise known HTTP exceptions
