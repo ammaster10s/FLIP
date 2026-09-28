@@ -17,7 +17,8 @@ built on the templates in `fl-apps/`; the images they run on are built from
 
 ```bash
 make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app + per-dataset;
-                            # no GPU, no dataset download, no FL image, no network)
+                            # no GPU, no dataset download, no FL image — a first-run uv sync
+                            # per project still resolves wheels)
 ```
 
 ## Running the tutorials

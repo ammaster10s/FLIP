@@ -102,8 +102,9 @@ on the `LOCAL_DEV` environment variable.
 Most of `flip.flower` is server-side only: the `metrics`, `progress`, `selection` and `strategy` modules forward
 per-client metrics and crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.aggregate_train` /
 `aggregate_evaluate` — to the Central Hub, and fl-client containers must never import those and must never hold the
-`INTERNAL_SERVICE_KEY` credential. Two modules are legitimately client-side and imported by every fl-client Flower
-app: `flip.flower.identity` (partition-id / `SUPERNODE_NAME` site-identity resolver) and `flip.flower.privacy`
+`INTERNAL_SERVICE_KEY` credential. Two modules are legitimately client-side and imported by fl-client Flower apps
+(not every app — some pull only one, and the `fl-apps/flower/` templates pull neither):
+`flip.flower.identity` (partition-id / `SUPERNODE_NAME` site-identity resolver) and `flip.flower.privacy`
 (`flip_local_dp_mod`, the local-DP mod attached to each client). For the NVFLARE equivalents of the hub-side
 helpers, see `flip.nvflare.metrics`.
 
