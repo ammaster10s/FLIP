@@ -34,6 +34,24 @@ describe("docs: assign a Trust Admin", () => {
         cy.getBySel("trust-admin-trust-select").select("UCLH");
         cy.demoPause();
 
+        // The page reloads the list after saving; answer it with the user now a Trust Admin of UCLH, so the
+        // recording ends on the saved state rather than the fixture's original role.
+        cy.fixture("user/getUsers").then((page) => {
+            const saved = structuredClone(page);
+            const user = saved.data.find((u: { name: string }) => u.name === "Researcher User");
+            user.roles = [{
+                id: "8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053",
+                rolename: "Trust Admin",
+                roledescription: "Researcher access, plus approving or declining projects for one trust."
+            }];
+            user.trustAdminOf = {
+                id: "53ca8126-5551-41a8-bd0a-587956c859d5",
+                code: "UCLH",
+                name: "UCLH"
+            };
+            cy.intercept("GET", "/users?pageNumber=1&pageSize=20", saved);
+        });
+
         cy.getBySel("save-user-btn").demoClick();
         cy.wait("@postRoles").its("request.body.trustId").should("eq", "53ca8126-5551-41a8-bd0a-587956c859d5");
         cy.contains("The user has been updated").should("be.visible");

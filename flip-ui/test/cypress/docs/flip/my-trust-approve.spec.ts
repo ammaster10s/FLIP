@@ -18,7 +18,7 @@
 
 describe("docs: approve a project for your trust", () => {
     it("approves a project from the My Trust page", () => {
-        cy.login();
+        cy.login({ permissionsFixture: "user/getPermissionsTrustAdmin" });
         cy.intercept("GET", "/users/**/permissions", { fixture: "user/getPermissionsTrustAdmin" });
 
         type ServiceProbe = { status: string; version: string | null; response_ms: number | null };
