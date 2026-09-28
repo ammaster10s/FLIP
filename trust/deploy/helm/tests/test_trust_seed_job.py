@@ -97,6 +97,18 @@ def test_the_shared_script_installs_the_repository_loaders_without_git():
     assert "git+" not in script
 
 
+def test_the_shared_script_applies_the_repository_dependency_cooldown():
+    """seed_trust.sh installs with no lock, so it must apply the pyprojects' exclude-newer itself.
+
+    Otherwise a dependency release reaches every seeding trust the day it ships (FLIP#1313).
+    """
+    repo = CHART_DIR.parents[2]
+    script = (repo / "trust" / "seed_trust.sh").read_text()
+    cooldown = re.search(r'^exclude-newer = "(.+)"$', (repo / "trust" / "omop-db" / "pyproject.toml").read_text(), re.M)
+    assert cooldown, "trust/omop-db/pyproject.toml lost its [tool.uv] exclude-newer"
+    assert f'export UV_EXCLUDE_NEWER="${{UV_EXCLUDE_NEWER:-{cooldown.group(1)}}}"' in script
+
+
 def test_seed_values_defaults():
     """Defaults: OMOP on, Orthanc off (2 GB of DICOM), the two dev projects, partition = trustNumber."""
     seed = VALUES["trustData"]["seed"]

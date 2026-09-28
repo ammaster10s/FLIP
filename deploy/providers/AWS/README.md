@@ -858,7 +858,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
-| `TF_VAR_iam_permissions_boundary_name` | The `AICentre-FLIPTerraformBoundary` default — the policy is declared by the `ci/` root, which exists to fence the GitHub OIDC apply role. **Blanked on the two LZA modes** (`PROD=lza` / `PROD=lza-stag`): that root has not been applied in those accounts yet and both estates are still changed by laptop applies, where an attach whose name resolves to nothing fails every role update with `NoSuchEntity`. An env file that sets the variable itself wins on any mode — `?=` only supplies the default, so re-attaching one account by hand is a one-line change. Re-attaching both in code is a follow-up, ordered after `make -C ci apply` has run there: see "Repointing CI at the LZA accounts" ([FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)) |
+| `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary` on the two LZA modes** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. The self-contained modes keep the `AICentre-FLIPTerraformBoundary` default declared by the `ci/` root. An env file that sets the variable itself wins on any mode — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
@@ -1744,17 +1744,11 @@ make create-backend PROD=lza-stag
 #    to the old account, plans a keypair replacement that ripples into the
 #    bastion, and the parameter would then publish the wrong key.
 
-# 3. The CI roles and the permissions-boundary policy. This root declares both the
-#    OIDC trust policies the three workflows assume and `AICentre-FLIPTerraformBoundary`
-#    — the boundary every role in the main root is created under — so it comes
-#    *before* any main-root apply in a new account, not after.
-make -C ci init PROD=lza-stag && make -C ci plan PROD=lza-stag && make -C ci apply PROD=lza-stag
-#    Once this has run in BOTH LZA accounts, the main root can start attaching the
-#    boundary there: delete the `ifneq ($(IS_LZA),)` block in the Makefile and flip
-#    tests/test_iam_permissions_boundary.py (its docstring names the two tests). Left
-#    in place deliberately until then — `make plan/apply PROD=lza|lza-stag` from a
-#    laptop, which is still how both estates change, would otherwise fail every role
-#    update with NoSuchEntity.
+# 3. The CI roles. NOT this repo's ci/ root on LZA: the platform owns the boundary
+#    (AICentre-WorkloadRoleBoundary, londonaicentre/lza#51, already the LZA default in
+#    the Makefile) and creates the plan and apply roles from its own repo, and an LZA
+#    SCP denies the roles ci/ would create by hand. Confirm both roles and the GitHub
+#    OIDC provider exist in this account before step 4.
 
 # 4. The GitHub environment: creates it if absent, sets TF_PROD, reads the two role
 #    ARNs out of ci/ state (and refuses if ci/ is initialised for another account),

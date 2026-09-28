@@ -59,6 +59,21 @@
 
 - No user-facing bug fixes in this release.
 
+## :white_check_mark: Release checks
+
+<!-- The gates that cannot run in CI: no GitHub-hosted runner has a GPU, and both the suite and the smoke test need real hardware and a full stack. Tick these on the release branch before the tag is cut — this section is the record that the published examples and the platform path were run, and it is shared by both release trains. See *Pre-release checklist* in CONTRIBUTING.md. -->
+
+Tutorial suite, on a GPU host:
+
+- [ ] NVFLARE — `make -C fl-tutorials run-all-tutorials`
+- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
+- [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
+
+Full-platform smoke test, against a running deployment:
+
+- [ ] NVFLARE — `make e2e_smoke`
+- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+
 ## :file_folder: PRs merged in this release
 
 <!-- auto-populated by the release workflow -->
