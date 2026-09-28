@@ -73,7 +73,10 @@ jobs:
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
+          # RELEASE is baked into the FL API image as FLIP_RELEASE so its /health names the build.
+          RELEASE="sha-${SHORT_SHA}"
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            RELEASE="${GITHUB_REF_NAME}"
             BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${GITHUB_REF_NAME}"
             SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
             CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
@@ -96,6 +99,7 @@ jobs:
           echo "server_tags=${SERVER_TAGS}" >> $GITHUB_OUTPUT
           echo "client_tags=${CLIENT_TAGS}" >> $GITHUB_OUTPUT
           echo "api_tags=${API_TAGS}" >> $GITHUB_OUTPUT
+          echo "release=${RELEASE}" >> $GITHUB_OUTPUT
           echo "Generated tags:"
           echo "Base:   ${BASE_TAGS}"
           echo "Server: ${SERVER_TAGS}"
@@ -233,8 +237,12 @@ jobs:
       # 4️⃣ Build and Push FL API
       ###########################################
       - name: Build FL API Image
+        env:
+          # Baked into the image as FLIP_RELEASE so /health names the build.
+          FLIP_RELEASE: ${{ steps.tags.outputs.release }}
         run: |
           docker build ${BUILD_ARGS} \
+            --build-arg FLIP_RELEASE="$FLIP_RELEASE" \
             -f fl-services/nvflare/fl-api-base/Dockerfile \
             -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
             -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-api-base
