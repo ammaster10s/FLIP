@@ -62,7 +62,7 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `OMOP_DB_SERVICE_NAME` | Docker service name or hostname of the OMOP database |
 | `OMOP_DB_PORT` | Port of the OMOP database |
 | `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
-| `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
+| `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access. Give it raw, never percent-encoded: the service URL-escapes it when it builds the connection URL |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |

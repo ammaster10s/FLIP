@@ -11,7 +11,7 @@
 #
 
 from fastapi import HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.user_models import RoleRef, UserProfile, UserRole
@@ -99,8 +99,9 @@ def ensure_user_and_role(
     # would re-grant the hardcoded seed role and silently undo any admin-UI
     # role change for these well-known emails (the dev flip-db has no volume,
     # so a `make down && make up` wipes the DB and re-runs this seed).
+    # Global rows only: a Trust Admin grant (FLIP#1258) is not a platform role.
     has_any_role = session.exec(
-        select(UserRole).where(UserRole.user_id == user_id)
+        select(UserRole).where(UserRole.user_id == user_id).where(col(UserRole.trust_id).is_(None))
     ).first()
 
     if not has_any_role:

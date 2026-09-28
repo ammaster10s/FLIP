@@ -1330,8 +1330,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
-            f"already stopped — nothing to abort."
+            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
         )
         return
 

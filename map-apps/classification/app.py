@@ -84,9 +84,7 @@ class FlipXrayClassificationApp(Application):
         self.add_flow(classifier_op, sr_writer_op, {("result_text", "text")})
         # The SR writer copies Study and Patient attributes from the source series, so it needs the
         # selection as well as the text.
-        self.add_flow(
-            series_selector_op, sr_writer_op, {("study_selected_series_list", "study_selected_series_list")}
-        )
+        self.add_flow(series_selector_op, sr_writer_op, {("study_selected_series_list", "study_selected_series_list")})
 
 
 # Select radiograph series. This matches both Computed Radiography (CR) and Digital Radiography

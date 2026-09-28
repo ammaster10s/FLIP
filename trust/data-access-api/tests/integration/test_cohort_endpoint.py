@@ -64,9 +64,7 @@ def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
     """All 24 image_occurrence rows clear the threshold and come back with the full aggregate set."""
     response = http_client.post(
         "/cohort",
-        json=_cohort_payload(
-            "SELECT person_id, modality_concept_id, accession_id FROM omop.image_occurrence"
-        ),
+        json=_cohort_payload("SELECT person_id, modality_concept_id, accession_id FROM omop.image_occurrence"),
     )
     assert response.status_code == 200, response.text
 
@@ -103,9 +101,7 @@ def test_cohort_endpoint_genuine_zero_is_suppressed(http_client):
     genuine zero apart from a small count (#519, security review)."""
     response = http_client.post(
         "/cohort",
-        json=_cohort_payload(
-            "SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"
-        ),
+        json=_cohort_payload("SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -119,9 +115,7 @@ def test_cohort_endpoint_rejects_unsafe_sql(http_client):
     multi-statement payload before the second statement (``DROP``) can reach Postgres."""
     response = http_client.post(
         "/cohort",
-        json=_cohort_payload(
-            "SELECT * FROM omop.image_occurrence; DROP TABLE omop.person"
-        ),
+        json=_cohort_payload("SELECT * FROM omop.image_occurrence; DROP TABLE omop.person"),
     )
     assert response.status_code == 400
     # validate_query enforces "exactly one statement per request" as its first rule, so
@@ -132,9 +126,7 @@ def test_cohort_endpoint_rejects_unsafe_sql(http_client):
 def test_cohort_endpoint_requires_auth_header(data_access_api_url):
     """The ``/cohort`` router is gated by the trust-internal service key."""
     with httpx.Client(base_url=data_access_api_url, timeout=30.0) as client:
-        response = client.post(
-            "/cohort", json=_cohort_payload("SELECT * FROM omop.image_occurrence")
-        )
+        response = client.post("/cohort", json=_cohort_payload("SELECT * FROM omop.image_occurrence"))
     assert response.status_code == 401
 
 

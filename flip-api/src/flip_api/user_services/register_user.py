@@ -20,6 +20,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
+from flip_api.user_services.trust_admin_grants import resolve_role_grants
 from flip_api.utils.cognito_helpers import (
     create_cognito_user,
     delete_cognito_user,
@@ -59,15 +60,11 @@ def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_e
         delete_cognito_user(email, user_pool_id)
     except Exception:
         logger.exception(
-            f"Failed to roll back Cognito user {email} after audit-write failure; "
-            f"manual cleanup required."
+            f"Failed to roll back Cognito user {email} after audit-write failure; manual cleanup required."
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                "Failed to register user; rollback also failed. "
-                "Manual cleanup of the Cognito user required."
-            ),
+            detail=("Failed to register user; rollback also failed. Manual cleanup of the Cognito user required."),
         ) from original_err
 
 
@@ -109,9 +106,11 @@ def register_user(
                 status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {token_id} was unable to register a user"
             )
 
-        # Validate roles
+        # Validate roles — before the Cognito user exists, so a malformed Trust Admin request (FLIP#1258) is a
+        # 400 here rather than a created-then-rolled-back user.
         available_roles = get_all_roles(db)
         validate_roles(user_data.roles, available_roles)
+        resolve_role_grants(user_data.roles, user_data.trust_id, db)
 
         # Get user pool ID
         user_pool_id = get_user_pool_id(request)
@@ -150,6 +149,7 @@ def register_user(
             name=user_data.name,
             organisation=user_data.organisation,
             roles=user_data.roles,
+            trust_id=user_data.trust_id,
             user_id=user_id,
         )  # type: ignore[call-arg]
 
@@ -157,6 +157,4 @@ def register_user(
         raise
     except Exception as e:
         logger.exception("Error registering user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

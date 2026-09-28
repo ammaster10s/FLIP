@@ -51,21 +51,25 @@ def _clear_query_cache():
 @pytest.fixture
 def mock_df():
     # This DataFrame mimics what you expect from the real query
-    return pd.DataFrame({
-        "modality": ["CT"] * 21,
-        "manufacturer": ["GE", "Siemens"] * 10 + ["GE"],
-        "accession_id": [f"id_{i}" for i in range(21)],
-    })
+    return pd.DataFrame(
+        {
+            "modality": ["CT"] * 21,
+            "manufacturer": ["GE", "Siemens"] * 10 + ["GE"],
+            "accession_id": [f"id_{i}" for i in range(21)],
+        }
+    )
 
 
 @pytest.fixture
 def mock_df_below_threshold():
     # Smaller dataset for threshold test
-    return pd.DataFrame({
-        "modality": ["CT", "XR"],
-        "manufacturer": ["Discovery", "Discovery"],
-        "accession_id": ["id_1", "id_2"],
-    })
+    return pd.DataFrame(
+        {
+            "modality": ["CT", "XR"],
+            "manufacturer": ["Discovery", "Discovery"],
+            "accession_id": ["id_1", "id_2"],
+        }
+    )
 
 
 @patch("pandas.read_sql")
@@ -127,11 +131,13 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
     lower value cannot weaken suppression.
     """
     # Create a dataframe with 8 records (between 5 and 10)
-    mock_df_medium = pd.DataFrame({
-        "modality": ["CT"] * 8,
-        "manufacturer": ["GE"] * 8,
-        "accession_id": [f"id_{i}" for i in range(8)],
-    })
+    mock_df_medium = pd.DataFrame(
+        {
+            "modality": ["CT"] * 8,
+            "manufacturer": ["GE"] * 8,
+            "accession_id": [f"id_{i}" for i in range(8)],
+        }
+    )
 
     mock_read_sql.return_value = pd.DataFrame({"subject_count": [8]})
 
@@ -563,11 +569,11 @@ def test_validate_query_rejects_select_into(query: str):
 @pytest.mark.parametrize(
     "query",
     [
-        "",                  # empty input → sqlglot returns [None]
-        "   ",               # whitespace only → [None]
-        "; ;",               # multiple Nones
-        "SELECT 1; ;",       # valid statement followed by stray semicolon → [Select, None]
-        "; SELECT 1",        # leading stray semicolon → [None, Select]
+        "",  # empty input → sqlglot returns [None]
+        "   ",  # whitespace only → [None]
+        "; ;",  # multiple Nones
+        "SELECT 1; ;",  # valid statement followed by stray semicolon → [Select, None]
+        "; SELECT 1",  # leading stray semicolon → [None, Select]
     ],
 )
 def test_validate_query_rejects_empty_or_partial_statements(query: str):
@@ -986,11 +992,13 @@ def test_get_counts_with_data():
     """
     Test get_counts with a DataFrame containing various data types and null values.
     """
-    df = pd.DataFrame({
-        "column_a": [1, 2, None, 4, 5],
-        "column_b": ["x", "y", "z", None, "w"],
-        "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-    })
+    df = pd.DataFrame(
+        {
+            "column_a": [1, 2, None, 4, 5],
+            "column_b": ["x", "y", "z", None, "w"],
+            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
+        }
+    )
 
     result = get_counts(df)
 
@@ -1026,10 +1034,12 @@ def test_get_counts_all_null_column():
     """
     Test get_counts with a column containing all null values.
     """
-    df = pd.DataFrame({
-        "all_null": [None, None, None],
-        "some_data": [1, 2, 3],
-    })
+    df = pd.DataFrame(
+        {
+            "all_null": [None, None, None],
+            "some_data": [1, 2, 3],
+        }
+    )
 
     result = get_counts(df)
 
@@ -1051,11 +1061,13 @@ def test_get_null_counts_with_data():
     """
     Test get_null_counts with a DataFrame containing various data types and null values.
     """
-    df = pd.DataFrame({
-        "column_a": [1, 2, None, 4, 5],
-        "column_b": ["x", "y", "z", None, "w"],
-        "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-    })
+    df = pd.DataFrame(
+        {
+            "column_a": [1, 2, None, 4, 5],
+            "column_b": ["x", "y", "z", None, "w"],
+            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
+        }
+    )
 
     result = get_null_counts(df)
 
@@ -1091,10 +1103,12 @@ def test_get_null_counts_all_null_column():
     """
     Test get_null_counts with a column containing all null values.
     """
-    df = pd.DataFrame({
-        "all_null": [None, None, None],
-        "some_data": [1, 2, 3],
-    })
+    df = pd.DataFrame(
+        {
+            "all_null": [None, None, None],
+            "some_data": [1, 2, 3],
+        }
+    )
 
     result = get_null_counts(df)
 
@@ -1113,11 +1127,13 @@ def test_get_null_counts_no_nulls():
     """
     Test get_null_counts with a DataFrame containing no null values.
     """
-    df = pd.DataFrame({
-        "column_a": [1, 2, 3, 4, 5],
-        "column_b": ["x", "y", "z", "w", "v"],
-        "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
-    })
+    df = pd.DataFrame(
+        {
+            "column_a": [1, 2, 3, 4, 5],
+            "column_b": ["x", "y", "z", "w", "v"],
+            "column_c": [1.1, 2.2, 3.3, 4.4, 5.5],
+        }
+    )
 
     result = get_null_counts(df)
 
@@ -1140,10 +1156,12 @@ def test_get_sex_distribution_no_person_id():
     """
     Test get_sex_distribution when DataFrame doesn't have person_id column.
     """
-    df = pd.DataFrame({
-        "accession_id": ["id_1", "id_2"],
-        "modality": ["CT", "MR"],
-    })
+    df = pd.DataFrame(
+        {
+            "accession_id": ["id_1", "id_2"],
+            "modality": ["CT", "MR"],
+        }
+    )
 
     result = get_sex_distribution(df)
 
@@ -1158,16 +1176,20 @@ def test_get_sex_distribution_with_person_id(mock_get_records):
     Test get_sex_distribution when DataFrame has person_id column.
     """
     # Mock the input DataFrame with person_id
-    df = pd.DataFrame({
-        "person_id": [1, 2, 3, 1, 2],  # Some duplicates
-        "accession_id": ["id_1", "id_2", "id_3", "id_4", "id_5"],
-    })
+    df = pd.DataFrame(
+        {
+            "person_id": [1, 2, 3, 1, 2],  # Some duplicates
+            "accession_id": ["id_1", "id_2", "id_3", "id_4", "id_5"],
+        }
+    )
 
     # Mock the response from get_records (sex distribution query result)
-    mock_sex_data = pd.DataFrame({
-        "gender_source_value": ["M", "F"],
-        "count": [2, 1],
-    })
+    mock_sex_data = pd.DataFrame(
+        {
+            "gender_source_value": ["M", "F"],
+            "count": [2, 1],
+        }
+    )
     mock_get_records.return_value = mock_sex_data
 
     result = get_sex_distribution(df)
@@ -1199,10 +1221,12 @@ def test_get_age_distribution_no_person_id():
     """
     Test get_age_distribution when DataFrame doesn't have person_id column.
     """
-    df = pd.DataFrame({
-        "accession_id": ["id_1", "id_2"],
-        "modality": ["CT", "MR"],
-    })
+    df = pd.DataFrame(
+        {
+            "accession_id": ["id_1", "id_2"],
+            "modality": ["CT", "MR"],
+        }
+    )
 
     result = get_age_distribution(df)
 
@@ -1217,16 +1241,20 @@ def test_get_age_distribution_with_person_id(mock_get_records):
     Test get_age_distribution when DataFrame has person_id column.
     """
     # Mock the input DataFrame with person_id
-    df = pd.DataFrame({
-        "person_id": [1, 2, 3],
-        "accession_id": ["id_1", "id_2", "id_3"],
-    })
+    df = pd.DataFrame(
+        {
+            "person_id": [1, 2, 3],
+            "accession_id": ["id_1", "id_2", "id_3"],
+        }
+    )
 
     # Mock the response from get_records (age distribution query result)
-    mock_age_data = pd.DataFrame({
-        "age_group": [20.0, 30.0, 60.0],
-        "count": [5, 3, 2],
-    })
+    mock_age_data = pd.DataFrame(
+        {
+            "age_group": [20.0, 30.0, 60.0],
+            "count": [5, 3, 2],
+        }
+    )
     mock_get_records.return_value = mock_age_data
 
     result = get_age_distribution(df)
@@ -1260,10 +1288,12 @@ def test_verify_cardinality_sufficient_unique_values():
     """
     Test verify_cardinality with sufficient unique values in all columns.
     """
-    df = pd.DataFrame({
-        "col1": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # 10 unique out of 10 (100%)
-        "col2": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],  # 10 unique out of 10 (100%)
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # 10 unique out of 10 (100%)
+            "col2": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],  # 10 unique out of 10 (100%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.05)  # 5% threshold
 
@@ -1274,10 +1304,12 @@ def test_verify_cardinality_insufficient_unique_values():
     """
     Test verify_cardinality with insufficient unique values.
     """
-    df = pd.DataFrame({
-        "col1": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] * 10,  # 1 unique out of 100 (1%)
-        "col2": ["a", "b", "c", "d", "e"] * 20,  # 5 unique out of 100 (5%)
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] * 10,  # 1 unique out of 100 (1%)
+            "col2": ["a", "b", "c", "d", "e"] * 20,  # 5 unique out of 100 (5%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.05)  # 5% threshold
 
@@ -1288,10 +1320,12 @@ def test_verify_cardinality_mixed_columns():
     """
     Test verify_cardinality with mixed column uniqueness.
     """
-    df = pd.DataFrame({
-        "good_col": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # 10 unique out of 10 (100%)
-        "bad_col": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # 1 unique out of 10 (10%)
-    })
+    df = pd.DataFrame(
+        {
+            "good_col": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],  # 10 unique out of 10 (100%)
+            "bad_col": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],  # 1 unique out of 10 (10%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.20)  # 20% threshold
 
@@ -1302,9 +1336,11 @@ def test_verify_cardinality_edge_case_absolute_threshold():
     """
     Test verify_cardinality with exactly 5 unique values (edge case for absolute threshold).
     """
-    df = pd.DataFrame({
-        "col1": [1, 2, 3, 4, 5] * 20,  # 5 unique out of 100 (5%)
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2, 3, 4, 5] * 20,  # 5 unique out of 100 (5%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.05)  # 5% threshold
 
@@ -1315,9 +1351,11 @@ def test_verify_cardinality_only_relative_threshold_fails():
     """
     Test verify_cardinality when only relative threshold fails but absolute passes.
     """
-    df = pd.DataFrame({
-        "col1": [1, 2, 3, 4, 5, 6] * 20,  # 6 unique out of 120 (5%)
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2, 3, 4, 5, 6] * 20,  # 6 unique out of 120 (5%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.01)  # 1% threshold
 
@@ -1328,9 +1366,11 @@ def test_verify_cardinality_only_absolute_threshold_fails():
     """
     Test verify_cardinality when only absolute threshold fails but relative passes.
     """
-    df = pd.DataFrame({
-        "col1": [1, 2, 3, 4],  # 4 unique out of 4 (100%)
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1, 2, 3, 4],  # 4 unique out of 4 (100%)
+        }
+    )
 
     result = verify_cardinality(df, threshold=0.05)  # 5% threshold
 
@@ -1352,10 +1392,12 @@ def test_verify_cardinality_single_row():
     """
     Test verify_cardinality with single row DataFrame.
     """
-    df = pd.DataFrame({
-        "col1": [1],
-        "col2": ["a"],
-    })
+    df = pd.DataFrame(
+        {
+            "col1": [1],
+            "col2": ["a"],
+        }
+    )
 
     result = verify_cardinality(df, threshold=2.0)  # 200% threshold (impossible to meet)
 
@@ -1518,11 +1560,13 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
     """
     Test get_statistics when DataFrame has no person_id column (should return empty age/sex distributions).
     """
-    mock_df = pd.DataFrame({
-        "modality": ["CT", "MR", "XR"] * 10,
-        "manufacturer": ["GE", "Siemens", "Philips"] * 10,
-        "accession_id": [f"id_{i}" for i in range(30)],
-    })
+    mock_df = pd.DataFrame(
+        {
+            "modality": ["CT", "MR", "XR"] * 10,
+            "manufacturer": ["GE", "Siemens", "Philips"] * 10,
+            "accession_id": [f"id_{i}" for i in range(30)],
+        }
+    )
 
     def read_sql_side_effect(query, *args, **kwargs):
         if "modality" in str(query):
@@ -1575,25 +1619,31 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
     Should include age and sex distributions with make_other_category applied.
     """
     # Mock the main query result with person_id
-    mock_df = pd.DataFrame({
-        # 30 records, 30 distinct people. Five people across 30 rows would now be suppressed:
-        # the threshold counts subjects, not rows.
-        "person_id": list(range(30)),
-        "modality": ["CT", "MR", "XR"] * 10,
-        "accession_id": [f"id_{i}" for i in range(30)],
-    })
+    mock_df = pd.DataFrame(
+        {
+            # 30 records, 30 distinct people. Five people across 30 rows would now be suppressed:
+            # the threshold counts subjects, not rows.
+            "person_id": list(range(30)),
+            "modality": ["CT", "MR", "XR"] * 10,
+            "accession_id": [f"id_{i}" for i in range(30)],
+        }
+    )
 
     # Mock the age distribution query result
-    mock_age_data = pd.DataFrame({
-        "age_group": [20.0, 30.0, 40.0],
-        "count": [15, 12, 10],  # All >= COHORT_QUERY_THRESHOLD (10)
-    })
+    mock_age_data = pd.DataFrame(
+        {
+            "age_group": [20.0, 30.0, 40.0],
+            "count": [15, 12, 10],  # All >= COHORT_QUERY_THRESHOLD (10)
+        }
+    )
 
     # Mock the sex distribution query result
-    mock_sex_data = pd.DataFrame({
-        "gender_source_value": ["M", "F"],
-        "count": [18, 12],  # Both >= COHORT_QUERY_THRESHOLD (10)
-    })
+    mock_sex_data = pd.DataFrame(
+        {
+            "gender_source_value": ["M", "F"],
+            "count": [18, 12],  # Both >= COHORT_QUERY_THRESHOLD (10)
+        }
+    )
 
     # Configure mocks to return different data based on query
     def read_sql_side_effect(query, *args, **kwargs):
@@ -1660,23 +1710,29 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     Should group low-count entries into 'Other' category.
     """
     # Mock the main query result
-    mock_df = pd.DataFrame({
-        "person_id": list(range(1, 31)),  # 30 unique person IDs
-        "modality": ["CT"] * 30,
-        "accession_id": [f"id_{i}" for i in range(30)],
-    })
+    mock_df = pd.DataFrame(
+        {
+            "person_id": list(range(1, 31)),  # 30 unique person IDs
+            "modality": ["CT"] * 30,
+            "accession_id": [f"id_{i}" for i in range(30)],
+        }
+    )
 
     # Mock age distribution with some low-count age groups
-    mock_age_data = pd.DataFrame({
-        "age_group": [20.0, 30.0, 40.0, 50.0, 60.0],
-        "count": [25, 15, 9, 5, 2],  # Last 3 are below threshold of 10
-    })
+    mock_age_data = pd.DataFrame(
+        {
+            "age_group": [20.0, 30.0, 40.0, 50.0, 60.0],
+            "count": [25, 15, 9, 5, 2],  # Last 3 are below threshold of 10
+        }
+    )
 
     # Mock sex distribution with low-count category
-    mock_sex_data = pd.DataFrame({
-        "gender_source_value": ["M", "F", "U"],
-        "count": [20, 12, 8],  # 'U' is below threshold of 10
-    })
+    mock_sex_data = pd.DataFrame(
+        {
+            "gender_source_value": ["M", "F", "U"],
+            "count": [20, 12, 8],  # 'U' is below threshold of 10
+        }
+    )
 
     def read_sql_side_effect(query, *args, **kwargs):
         query_str = str(query)

@@ -468,10 +468,7 @@ def test_validate_query_cte_roundtrip():
 
 def test_validate_query_complex_pg_syntax_roundtrip():
     """PG-specific constructs (aggregate FILTER clauses) survive the round-trip."""
-    query = (
-        "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count "
-        "FROM omop.person GROUP BY person_id"
-    )
+    query = "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count FROM omop.person GROUP BY person_id"
     result = validate_query(query)
     assert "person_id" in result
     assert "adult_count" in result.lower()
