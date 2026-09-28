@@ -55,8 +55,9 @@ The Hub drives a net **only** through these endpoints
 | `/check_server_status` | GET | FLARE server status. |
 | `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 
-All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` (also
-served at `/`) reports liveness for container health checks — it is not called by the Hub.
+All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` reports
+liveness for container health checks, and `version` — the build the container runs: the baked
+`FLIP_RELEASE` image tag, or the pyproject version for a local build. It is not called by the Hub.
 
 ### Debug / admin endpoints
 

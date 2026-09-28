@@ -287,7 +287,7 @@ make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub;
 ```
 
 A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
-the four API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
+the four API images and both FL API images bake `FLIP_RELEASE` so `/health` names the build. `TAG` defaults to the release the
 hub reports on `/api/health` — never "latest on GitHub" (a v0.6.0 site would pull an nvflare-2.9 client
 against a 2.8 server). The resolver refuses (exit 5) a tag any site image was never built at — every
 `sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
