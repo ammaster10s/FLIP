@@ -12,8 +12,8 @@
 -->
 
 <!-- One project staged at the Trust Admin's trust (FLIP#1258): a summary line that expands to what the decision
-     needs — owner, description, the trust's own cohort count and query, whether it has imaging — with Approve /
-     Decline while it is pending. The page owns the confirmation and the call. -->
+     needs — owner, description, the trust's own cohort count, whether it has imaging, a link to the cohort query —
+     with Approve / Decline while it is pending. The page owns the confirmation and the call. -->
 <template>
     <li data-test="decision-row" :data-project="decision.projectId" class="py-3">
         <button
@@ -67,22 +67,26 @@
                     {{ decision.hasImaging ? "Yes — approving starts the imaging pull" : "No — tabular data only" }}
                 </dd>
             </dl>
-            <div v-if="decision.query">
-                <p class="mb-1 text-gray-500 dark:text-gray-300">
-                    Cohort query
-                </p>
-                <pre
-                    data-test="decision-query"
-                    class="p-3 overflow-x-auto font-mono text-xs whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded-md dark:bg-dark-canvas dark:border-dark-border"
-                >{{ decision.query }}</pre>
-            </div>
-            <div v-if="decision.status === 'PENDING'" class="flex justify-end gap-2">
-                <AiButton data-test="decline-btn" @click="emit('decide', 'decline')">
-                    Decline
-                </AiButton>
-                <AiButton data-test="approve-btn" primary @click="emit('decide', 'approve')">
-                    Approve
-                </AiButton>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <!-- The project's cohort-query page, rather than inline SQL. -->
+                <router-link
+                    v-if="decision.query"
+                    data-test="view-query-btn"
+                    :to="`/project/${decision.projectId}/cohort-query`"
+                    class="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-300"
+                >
+                    <icon-mdi-database-search-outline class="w-4 h-4" aria-hidden="true" />
+                    View query
+                </router-link>
+                <span v-else class="text-sm text-gray-500 dark:text-gray-300">No cohort query</span>
+                <span v-if="decision.status === 'PENDING'" class="flex gap-2 ml-auto">
+                    <AiButton data-test="decline-btn" @click="emit('decide', 'decline')">
+                        Decline
+                    </AiButton>
+                    <AiButton data-test="approve-btn" primary @click="emit('decide', 'approve')">
+                        Approve
+                    </AiButton>
+                </span>
             </div>
         </div>
     </li>

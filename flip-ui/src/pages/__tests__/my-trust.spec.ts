@@ -105,6 +105,10 @@ const pending = (overrides: Partial<ITrustDecision> = {}): ITrustDecision => ({
 });
 
 const stubs = {
+    "router-link": {
+        props: ["to"],
+        template: "<a :data-to='to' v-bind='$attrs'><slot /></a>"
+    },
     TrustDetailCard: {
         props: ["trust", "hubVersion"],
         template: "<div data-test='trust-card'>{{ trust.name }}</div>"
@@ -205,7 +209,9 @@ describe("My Trust", () => {
         await wrapper.find("[data-test='pending-list'] [data-test='decision-row-toggle']").trigger("click");
 
         expect(wrapper.find("[data-test='decision-cohort']").text()).toBe("142 records");
-        expect(wrapper.find("[data-test='decision-query']").text()).toBe("SELECT person_id FROM omop.person LIMIT 10");
+        // The query is a link to the project's cohort-query page, not inline SQL.
+        expect(wrapper.find("[data-test='decision-query']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='view-query-btn']").attributes("data-to")).toBe("/project/p1/cohort-query");
         expect(wrapper.find("[data-test='approve-btn']").exists()).toBe(true);
         expect(wrapper.find("[data-test='decline-btn']").exists()).toBe(true);
     });
