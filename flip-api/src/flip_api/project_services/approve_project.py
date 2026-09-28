@@ -37,7 +37,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 # TODO [#114] This endpoint was not defined in the old repo. It was used as a step of a 'approveProject' step function.
 @router.post(
     "/{project_id}/approve",
-    summary="Record trust decisions on a staged project, approving it once every trust is decided and one approved.",
+    summary="Record trust decisions on a project; it is approved as soon as one trust approves.",
     response_model=list[ITrust],
     status_code=status.HTTP_200_OK,
 )
@@ -50,10 +50,10 @@ def approve_project_endpoint(
     db: Session = Depends(get_session),
 ) -> list[ITrust]:
     """
-    Records trust decisions on a project that is currently in the 'STAGED' status.
+    Records trust decisions on a staged or approved project (FLIP#1258).
     The trusts in ``trusts`` approve the project and those in ``declined`` decline it; any trust named in neither
-    keeps its current decision. The project is approved once no trust is pending and at least one approved; if
-    every trust declined it stays STAGED.
+    keeps its current decision. The project is approved as soon as one trust approves; a trust still pending may be
+    decided later, and joins then. If every trust declined it stays STAGED.
 
     Args:
         project_id (UUID): The ID of the project to decide on.
@@ -62,8 +62,8 @@ def approve_project_endpoint(
         db (Session): The database session.
 
     Returns:
-        list[ITrust]: Every approved trust if this call approved the project, otherwise an empty list (the project
-        is still STAGED).
+        list[ITrust]: The trusts this call starts — every approved trust on the call that approves the project, the
+        newly approved ones on a later call — otherwise an empty list.
 
     Raises:
         HTTPException: 403 if the call names no trust, or a trust the caller may not decide (the trust's Trust
@@ -133,9 +133,9 @@ def approve_project_endpoint(
             detail=f"Project ID: {str(project_id)} does not exist",
         )
 
-    # 3. Validate whether project has STAGED status
-    if not project.status == ProjectStatus.STAGED:
-        logger.error(f"Project {project_id} is not in STAGED status, cannot approve.")
+    # 3. Validate that the project is open to decisions: STAGED, or APPROVED with trusts still to decide.
+    if project.status == ProjectStatus.UNSTAGED:
+        logger.error(f"Project {project_id} is not staged, cannot record trust decisions.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unable to approve the project as it has not been staged",
@@ -145,16 +145,16 @@ def approve_project_endpoint(
         outcome = record_trust_decisions(db, project_approval, user_id, decided_as=decided_as)
 
         # get_trusts with no ids returns every trust, so an empty list must never reach it.
-        if outcome.project_status != ProjectStatus.APPROVED or not outcome.approved_trust_ids:
-            logger.info(f"Project {project_id} stays STAGED: a trust is still pending, or every trust declined")
+        if not outcome.activated_trust_ids:
+            logger.info(f"Project {project_id} is {outcome.project_status}; these decisions start no trust")
             return []
 
-        logger.debug(f"Fetching endpoints for approved trusts: {outcome.approved_trust_ids} for project {project_id}")
-        return get_trusts(db, ids=outcome.approved_trust_ids)
+        logger.debug(f"Fetching endpoints for activated trusts: {outcome.activated_trust_ids} for project {project_id}")
+        return get_trusts(db, ids=outcome.activated_trust_ids)
 
     except ProjectNotStagedError:
-        # Another approver approved the project between the check above and taking the project lock.
-        logger.error(f"Project {project_id} left STAGED before its trust decisions were recorded.")
+        # The project was unstaged between the check above and taking the project lock.
+        logger.error(f"Project {project_id} was unstaged before its trust decisions were recorded.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unable to approve the project as it has not been staged",

@@ -25,10 +25,10 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
-from flip_api.db.models.main_models import ProjectTrustIntersect
+from flip_api.db.models.main_models import ModelTrustIntersect, ProjectTrustIntersect
 from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus, TrustIntersectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
 
 
@@ -200,11 +200,10 @@ def test_removing_last_trust_admin_hands_decision_back_to_hub(session, staged_pr
     assert _decisions(session, project)[site_trust.id].decided_as == DecisionMaker.HUB
 
 
-def test_each_trust_admin_decides_for_their_own_trust_and_the_last_approves_the_project(session, staged_project):
-    """Two sites, two Trust Admins, two calls: the second approves the project and gets BOTH trusts back.
+def test_each_trust_admin_decides_in_their_own_time(session, staged_project):
+    """Two sites, two Trust Admins, two calls: the first approval approves the project, the second joins later.
 
-    The first trust comes back although the second Trust Admin holds no authority there — its own Trust Admin's
-    recorded approval is what authorised it, so the imaging fan-out dispatches to it without re-checking.
+    Each call starts only the trust it approved — the first trust is not re-dispatched when the second joins.
     """
     first, second = staged_project["trusts"]
     first_admin, second_admin = uuid4(), uuid4()
@@ -215,15 +214,16 @@ def test_each_trust_admin_decides_for_their_own_trust_and_the_last_approves_the_
     )
     project = staged_project["project"]
 
-    assert approve_project_endpoint(project.id, _payload([first]), first_admin, session) == []
-    result = approve_project_endpoint(project.id, _payload([second]), second_admin, session)
+    assert [t.id for t in approve_project_endpoint(project.id, _payload([first]), first_admin, session)] == [first.id]
+    session.refresh(project)
+    assert project.status == ProjectStatus.APPROVED
 
-    assert {trust.id for trust in result} == {first.id, second.id}
+    assert [t.id for t in approve_project_endpoint(project.id, _payload([second]), second_admin, session)] == [
+        second.id
+    ]
     decisions = _decisions(session, project)
     assert decisions[first.id].decided_by == first_admin
     assert decisions[second.id].decided_by == second_admin
-    session.refresh(project)
-    assert project.status == ProjectStatus.APPROVED
 
 
 def test_a_researcher_cannot_decide_a_hub_run_trust(session, staged_project):
@@ -250,3 +250,105 @@ def test_trust_admin_role_granted_globally_confers_no_per_trust_authority(sessio
     )
 
     assert _refused(session, staged_project["project"], _payload([site_trust]), user_id) == 403
+
+
+def _hub_admin(session):
+    admin_id = uuid4()
+    _add(session, _grant(admin_id, RoleRef.ADMIN))
+    return admin_id
+
+
+def test_project_is_approved_as_soon_as_one_trust_approves(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, second = staged_project["trusts"]
+
+    activated = approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    assert [t.id for t in activated] == [first.id]
+    session.refresh(project)
+    assert project.status == ProjectStatus.APPROVED
+    assert _decisions(session, project)[second.id].status == TrustApprovalStatus.PENDING
+
+
+def test_a_declined_trust_alone_leaves_the_project_staged(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, _second = staged_project["trusts"]
+
+    assert approve_project_endpoint(project.id, _payload([], declined=[first]), admin_id, session) == []
+
+    session.refresh(project)
+    assert project.status == ProjectStatus.STAGED
+
+
+def test_late_approval_activates_only_the_new_trust(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    activated = approve_project_endpoint(project.id, _payload([second]), admin_id, session)
+
+    assert [t.id for t in activated] == [second.id]
+
+
+def test_late_decline_is_recorded_and_activates_nothing(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    assert approve_project_endpoint(project.id, _payload([], declined=[second]), admin_id, session) == []
+    assert _decisions(session, project)[second.id].status == TrustApprovalStatus.DECLINED
+
+
+def test_resent_approval_after_project_approved_activates_nothing(session, staged_project):
+    """Re-sending an approval the trust already made starts nothing: no second imaging pull."""
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, _second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    assert approve_project_endpoint(project.id, _payload([first]), admin_id, session) == []
+
+
+def test_a_final_decision_cannot_change_once_the_project_is_approved(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, _second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    assert _refused(session, project, _payload([], declined=[first]), admin_id) == 400
+    assert _decisions(session, project)[first.id].status == TrustApprovalStatus.APPROVED
+
+
+def test_late_trust_joins_existing_models(session, staged_project, model_factory):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    first, second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+    # A model created after approval is linked by save_model to the trusts approved then — `first` only.
+    model = model_factory.build(project_id=project.id, deleted=False)
+    session.add(model)
+    session.flush()
+    session.add(ModelTrustIntersect(model_id=model.id, trust_id=first.id, status=TrustIntersectStatus.PENDING))
+    session.commit()
+
+    approve_project_endpoint(project.id, _payload([second]), admin_id, session)
+
+    links = session.exec(select(ModelTrustIntersect).where(ModelTrustIntersect.model_id == model.id)).all()
+    assert {link.trust_id: link.status for link in links} == {
+        first.id: TrustIntersectStatus.PENDING,
+        second.id: TrustIntersectStatus.PENDING,
+    }
+
+
+def test_decisions_on_an_unstaged_project_are_refused(session, staged_project):
+    admin_id = _hub_admin(session)
+    project = staged_project["project"]
+    project.status = ProjectStatus.UNSTAGED
+    session.add(project)
+    session.commit()
+
+    assert _refused(session, project, _payload([staged_project["trusts"][0]]), admin_id) == 400

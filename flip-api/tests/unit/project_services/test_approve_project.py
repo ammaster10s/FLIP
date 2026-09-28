@@ -37,8 +37,8 @@ TEST_USER_ID = str(uuid.uuid4())
 TEST_TRUST_IDS = [str(uuid.uuid4()), str(uuid.uuid4())]
 DECLINED_TRUST_ID = str(uuid.uuid4())
 # An approved trust that is not in the payload: approved by an earlier, partial call.
-APPROVED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=[uuid.uuid4()])
-STAGED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.STAGED, approved_trust_ids=[])
+APPROVED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, activated_trust_ids=[uuid.uuid4()])
+STAGED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.STAGED, activated_trust_ids=[])
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +104,7 @@ def test_approve_project_endpoint_success(
     decisions = mock_record_trust_decisions.call_args.args[1]
     assert decisions.trust_ids == [uuid.UUID(tid) for tid in TEST_TRUST_IDS]
     assert decisions.declined_trust_ids == [uuid.UUID(DECLINED_TRUST_ID)]
-    mock_get_trusts.assert_called_once_with(mock_db_session, ids=APPROVED_OUTCOME.approved_trust_ids)
+    mock_get_trusts.assert_called_once_with(mock_db_session, ids=APPROVED_OUTCOME.activated_trust_ids)
 
     assert result == mock_trust_list
 
@@ -180,7 +180,7 @@ def test_approve_project_endpoint_maps_refused_decisions_to_400(
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch(
     "flip_api.project_services.approve_project.record_trust_decisions",
-    return_value=TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=[]),
+    return_value=TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, activated_trust_ids=[]),
 )
 @patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_never_asks_get_trusts_for_an_empty_list(
@@ -443,7 +443,7 @@ def test_approve_project_endpoint_project_not_staged(
     mock_staged_project,  # Use fixture but change status
 ):
     # Arrange
-    mock_staged_project.status = "SOME_OTHER_STATUS"  # Not ProjectStatus.STAGED
+    mock_staged_project.status = ProjectStatus.UNSTAGED  # Staged or approved projects take decisions
     mock_db_session.get.return_value = mock_staged_project
 
     # Act & Assert
@@ -457,7 +457,9 @@ def test_approve_project_endpoint_project_not_staged(
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     assert "Unable to approve the project as it has not been staged" == exc_info.value.detail
-    mock_logger.error.assert_called_once_with(f"Project {TEST_PROJECT_ID} is not in STAGED status, cannot approve.")
+    mock_logger.error.assert_called_once_with(
+        f"Project {TEST_PROJECT_ID} is not staged, cannot record trust decisions."
+    )
 
 
 @patch("flip_api.project_services.approve_project.logger")

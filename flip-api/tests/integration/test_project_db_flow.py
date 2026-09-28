@@ -41,7 +41,6 @@ from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus, X
 from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
     InvalidTrustDecisionsError,
-    ProjectNotStagedError,
     TrustDecisionOutcome,
     create_project,
     delete_project,
@@ -232,23 +231,23 @@ def test_declining_a_trust_records_the_refusal_against_that_trust(session, stage
     assert (ProjectAuditAction.DECLINE_TRUST, refused.id) in _audits(session, ctx["project"].id)
 
 
-def test_a_trust_left_undecided_keeps_the_project_staged(session, staged_project_with_trusts):
-    """Deciding only some trusts records those decisions but leaves the project STAGED.
+def test_one_approval_approves_the_project_and_leaves_the_rest_pending(session, staged_project_with_trusts):
+    """Approving some trusts approves the project and leaves the others PENDING, to decide later (FLIP#1258).
 
-    Pins the end of silent drops: before FLIP#1318, approving a subset excluded the rest for good
-    while their rows looked exactly like trusts nobody had looked at.
+    The undecided trust stays visibly undecided — no decider, no date — rather than being silently dropped, the
+    failure FLIP#1318 ended.
     """
     ctx = staged_project_with_trusts
     chosen, undecided = ctx["trusts"]
 
-    assert _decide(session, ctx, approve=[chosen]).project_status == ProjectStatus.STAGED
+    assert _decide(session, ctx, approve=[chosen]).project_status == ProjectStatus.APPROVED
 
-    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
+    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.APPROVED
     rows = _intersects(session, ctx["project"].id)
     assert rows[chosen.id].status == TrustApprovalStatus.APPROVED
     assert rows[undecided.id].status == TrustApprovalStatus.PENDING
     assert rows[undecided.id].decided_by is None
-    assert ProjectAuditAction.APPROVE not in {action for action, _ in _audits(session, ctx["project"].id)}
+    assert ProjectAuditAction.APPROVE in {action for action, _ in _audits(session, ctx["project"].id)}
 
 
 def test_declining_every_trust_keeps_the_project_staged(session, staged_project_with_trusts):
@@ -321,27 +320,27 @@ def test_rejects_a_trust_both_approved_and_declined(session, staged_project_with
     assert _audits(session, ctx["project"].id) == []
 
 
-def test_outcome_lists_every_approved_trust_including_earlier_calls(session, staged_project_with_trusts):
-    """The call that approves the project returns every approved trust, not just the ones it named, so the
-    imaging fan-out reaches a trust approved by an earlier, partial call."""
+def test_a_decline_then_an_approval_starts_only_the_approved_trust(session, staged_project_with_trusts):
+    """A decline alone leaves the project STAGED and starts nothing; the approval that follows approves it and
+    starts that trust only — the declined one is never activated."""
     ctx = staged_project_with_trusts
     early, late = ctx["trusts"]
 
-    staged = _decide(session, ctx, approve=[early])
-    approved = _decide(session, ctx, decline=[late])
+    staged = _decide(session, ctx, decline=[late])
+    approved = _decide(session, ctx, approve=[early])
 
-    assert (staged.project_status, staged.approved_trust_ids) == (ProjectStatus.STAGED, [])
-    assert (approved.project_status, approved.approved_trust_ids) == (ProjectStatus.APPROVED, [early.id])
+    assert (staged.project_status, staged.activated_trust_ids) == (ProjectStatus.STAGED, [])
+    assert (approved.project_status, approved.activated_trust_ids) == (ProjectStatus.APPROVED, [early.id])
 
 
-def test_refuses_decisions_once_the_project_has_left_staged(session, staged_project_with_trusts):
+def test_refuses_changing_a_decision_once_the_project_is_approved(session, staged_project_with_trusts):
     """Checked under the project lock, so a save that lost a race to another approver's approval is refused
-    rather than rewriting the decisions of an approved project."""
+    rather than rewriting a final decision of an approved project."""
     ctx = staged_project_with_trusts
     a, b = ctx["trusts"]
     _decide(session, ctx, approve=[a, b])
 
-    with pytest.raises(ProjectNotStagedError):
+    with pytest.raises(InvalidTrustDecisionsError):
         _decide(session, ctx, decline=[a])
     session.rollback()
 
@@ -391,7 +390,7 @@ def test_concurrent_saves_are_serialised_on_the_project_lock(
         engine.dispose()
 
     assert outcome["second"].project_status == ProjectStatus.APPROVED
-    assert set(outcome["second"].approved_trust_ids) == {first.id, second.id}
+    assert set(outcome["second"].activated_trust_ids) == {first.id, second.id}
 
 
 def test_record_trust_decisions_raises_for_missing_project(session, user_factory):

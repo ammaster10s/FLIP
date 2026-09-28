@@ -65,10 +65,10 @@ async def approve_project_step_function_endpoint(
     user_id: UUID = Depends(verify_token),
 ) -> dict[str, Any]:
     """
-    Records trust decisions on a staged project and, once that approves it, starts image creation on every
-    approved trust — unless the project was created without imaging (``has_imaging=False``, FLIP#1071), in
-    which case the imaging stage is skipped. While a trust is still pending, or if every trust declined, the
-    project stays STAGED and nothing is dispatched.
+    Records trust decisions on a project and starts image creation on every trust they activate — on the call that
+    approves the project every trust approved so far, on a later call the trusts it newly approved (FLIP#1258) —
+    unless the project was created without imaging (``has_imaging=False``, FLIP#1071), in which case the imaging
+    stage is skipped. Decisions that activate no trust dispatch nothing.
 
     This mimics the AWS Step Functions workflow defined in approveProject.yml
 
@@ -106,14 +106,15 @@ async def approve_project_step_function_endpoint(
         trusts = approve_project_endpoint(project_id=project_id, payload=body, user_id=user_id, db=db)
         logger.debug(f"Trusts returned from approve_project: {trusts}")
 
-        # Step 2: No trusts back means the project is still STAGED — a trust is still pending, or every trust
-        # declined — so there is nothing to dispatch.
+        # Step 2: No trusts back means these decisions start nothing — nothing approved yet, a late decline, or an
+        # approval re-sent. The project may be STAGED or already APPROVED, so its status is read back.
         if not trusts:
-            logger.info(f"Project {project_id} stays staged after the trust decisions")
+            logger.info(f"Trust decisions on project {project_id} start no trust")
+            after = get_project_by_id(project_id, db)
             return {
-                "message": "Trust decisions recorded; the project stays staged",
+                "message": "Trust decisions recorded; nothing to start",
                 "projectId": project_id,
-                "projectStatus": ProjectStatus.STAGED,
+                "projectStatus": after.status if after is not None else ProjectStatus.STAGED,
             }
 
         # Step 3: For Each Trust — unless the project has no imaging. FLIP#1071: this is the only

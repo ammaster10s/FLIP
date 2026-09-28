@@ -318,7 +318,7 @@ class TestRecordTrustDecisions:
             outcome = record_trust_decisions(mock_db_session, project_approval, user_id)
 
         assert outcome.project_status == ProjectStatus.APPROVED
-        assert sorted(outcome.approved_trust_ids) == sorted(sample_trust_ids)
+        assert sorted(outcome.activated_trust_ids) == sorted(sample_trust_ids)
         assert {row.status for row in intersects} == {TrustApprovalStatus.APPROVED}
         assert {row.decided_by for row in intersects} == {user_id}
         mock_update_status.assert_called_once_with(
@@ -349,7 +349,7 @@ class TestRecordTrustDecisions:
         ):
             outcome = record_trust_decisions(mock_db_session, project_approval, uuid4())
 
-        assert (outcome.project_status, outcome.approved_trust_ids) == (ProjectStatus.STAGED, [])
+        assert (outcome.project_status, outcome.activated_trust_ids) == (ProjectStatus.STAGED, [])
         assert {row.status for row in intersects} == {TrustApprovalStatus.DECLINED}
         mock_update_status.assert_not_called()
         assert {call.kwargs["action"] for call in mock_audit.call_args_list} == {ProjectAuditAction.DECLINE_TRUST}
@@ -362,10 +362,11 @@ class TestRecordTrustDecisions:
         with pytest.raises(ValueError, match="does not exist"):
             record_trust_decisions(mock_db_session, project_approval, uuid4())
 
-    def test_project_no_longer_staged_writes_nothing(
+    def test_unstaged_project_writes_nothing(
         self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
     ):
-        sample_project.status = ProjectStatus.APPROVED
+        """An approved project still takes decisions from its pending trusts (FLIP#1258); an unstaged one takes none."""
+        sample_project.status = ProjectStatus.UNSTAGED
         project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
         mock_db_session.exec.side_effect = _exec_results(sample_project)
 

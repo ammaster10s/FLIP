@@ -26,6 +26,7 @@ from flip_api.auth.trust_authority import trusts_with_admin
 # Assume these models and schemas are defined in your project
 from flip_api.db.models.main_models import (
     Model,
+    ModelTrustIntersect,
     Projects,
     ProjectTrustIntersect,
     ProjectUserAccess,
@@ -55,6 +56,7 @@ from flip_api.domain.schemas.status import (
     ProjectStatus,
     TaskStatus,
     TrustApprovalStatus,
+    TrustIntersectStatus,
     XNATImageStatus,
 )
 from flip_api.model_services.services.model_service import delete_models
@@ -633,11 +635,12 @@ def update_project_status(
 
 
 class ProjectNotStagedError(ValueError):
-    """The project has left STAGED, so its trust decisions are closed."""
+    """The project is not staged (UNSTAGED), so it takes no trust decisions."""
 
 
 class InvalidTrustDecisionsError(ValueError):
-    """The decisions name a trust the project was not staged for, or approve and decline the same trust."""
+    """The decisions name a trust the project was not staged for, approve and decline the same trust, or change a
+    decision that is final because the project is approved."""
 
 
 @dataclass(frozen=True)
@@ -645,13 +648,13 @@ class TrustDecisionOutcome:
     """Where a project stands after a set of trust decisions.
 
     Attributes:
-        project_status (ProjectStatus): APPROVED if the decisions approved the project, otherwise STAGED.
-        approved_trust_ids (list[UUID]): Every approved trust once the project is APPROVED — including any
-            approved by an earlier call — for the imaging fan-out; empty while it stays STAGED.
+        project_status (ProjectStatus): APPROVED once any trust approved, otherwise STAGED.
+        activated_trust_ids (list[UUID]): The trusts to start (imaging): on the call that approves the project every
+            trust approved so far, on a later call the trusts it newly approved; empty while the project is STAGED.
     """
 
     project_status: ProjectStatus
-    approved_trust_ids: list[UUID]
+    activated_trust_ids: list[UUID]
 
 
 def record_trust_decisions(
@@ -662,21 +665,20 @@ def record_trust_decisions(
     decided_as: Mapping[UUID, DecisionMaker] | None = None,
 ) -> TrustDecisionOutcome:
     """
-    Records per-trust decisions on a staged project, and approves the project once every trust is decided and at
-    least one approved.
+    Records per-trust decisions on a project, approving it as soon as one trust approves (FLIP#1258).
 
     Each trust named in ``trust_ids`` is approved and each in ``declined_trust_ids`` declined; trusts named in
     neither keep their current decision. A decision that changes a trust's status is recorded as a new decision
     — the caller as decider, now as the date — with a project audit entry naming the trust. A decision re-sent
     unchanged is not re-recorded, so it keeps its original decider and date.
 
-    Once no trust is PENDING and at least one approved, the project becomes APPROVED and any cohort-query task
-    still PENDING is cancelled. While a trust is PENDING, or if every trust declined, it stays STAGED — the latter
-    to be unstaged and reconsidered.
+    Trusts decide at their own pace. While the project is STAGED a decision may still change; the first approval
+    makes it APPROVED and cancels any cohort-query task still PENDING. On an APPROVED project a still-PENDING trust
+    may be decided, and a late approval links that trust to the project's existing models; an approved or declined
+    trust's decision is then final. A project every trust declined stays STAGED, to be unstaged and reconsidered.
 
     The project row is locked for the whole call, so two approvers saving at once are serialised: the second
-    sees the first's decisions (and, if the first approved the project, is refused) instead of overwriting them
-    from a stale read.
+    sees the first's decisions instead of overwriting them from a stale read.
 
     Args:
         db (Session): SQLModel session for database operations.
@@ -690,9 +692,9 @@ def record_trust_decisions(
 
     Raises:
         ValueError: If the project does not exist or is deleted.
-        ProjectNotStagedError: If the project is not STAGED. Nothing is written.
-        InvalidTrustDecisionsError: If a trust was not staged for the project, or is both approved and declined.
-            Nothing is written.
+        ProjectNotStagedError: If the project is UNSTAGED. Nothing is written.
+        InvalidTrustDecisionsError: If a trust was not staged for the project, is both approved and declined, or
+            already decided an APPROVED project. Nothing is written.
     """
     project_id = project_approval.project_id
     approve_ids = set(project_approval.trust_ids)
@@ -708,8 +710,9 @@ def record_trust_decisions(
     ).first()
     if not project or project.deleted:
         raise ValueError(f"Project {project_id} does not exist or is deleted, cannot record trust decisions.")
-    if project.status != ProjectStatus.STAGED:
-        raise ProjectNotStagedError(f"Project {project_id} is {project.status}, not STAGED.")
+    if project.status == ProjectStatus.UNSTAGED:
+        raise ProjectNotStagedError(f"Project {project_id} is {project.status}, not staged.")
+    was_approved = project.status == ProjectStatus.APPROVED
 
     both = approve_ids & decline_ids
     if both:
@@ -730,12 +733,15 @@ def record_trust_decisions(
     decided_at = datetime.now(timezone.utc)
     decisions = [(trust_id, TrustApprovalStatus.APPROVED) for trust_id in approve_ids]
     decisions += [(trust_id, TrustApprovalStatus.DECLINED) for trust_id in decline_ids]
-    changed = []
-    for trust_id, decision in decisions:
+    changed = [(trust_id, decision) for trust_id, decision in decisions if by_trust[trust_id].status != decision]
+    if was_approved:
+        final = sorted(str(t) for t, _ in changed if by_trust[t].status != TrustApprovalStatus.PENDING)
+        if final:
+            raise InvalidTrustDecisionsError(
+                f"Trusts {final} already decided this project; decisions are final once it is approved."
+            )
+    for trust_id, decision in changed:
         row = by_trust[trust_id]
-        if row.status == decision:
-            continue
-        changed.append((trust_id, decision))
         row.status = decision
         row.decided_by = user_id
         row.decided_at = decided_at
@@ -753,16 +759,23 @@ def record_trust_decisions(
             trust_id=trust_id,
         )
 
+    newly_approved = [trust_id for trust_id, decision in changed if decision == TrustApprovalStatus.APPROVED]
+    if was_approved:
+        _link_trusts_to_existing_models(db, project_id, newly_approved)
+        db.commit()
+        logger.info(f"Recorded late trust decisions {changed} on approved project {project_id}")
+        return TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, activated_trust_ids=newly_approved)
+
     statuses = {row.status for row in intersects}
-    if TrustApprovalStatus.PENDING in statuses or TrustApprovalStatus.APPROVED not in statuses:
+    if TrustApprovalStatus.APPROVED not in statuses:
         db.commit()
         logger.info(
             f"Recorded trust decisions {changed} for project {project_id}; it stays STAGED "
             f"(trust decisions: {sorted(statuses)})"
         )
-        return TrustDecisionOutcome(project_status=ProjectStatus.STAGED, approved_trust_ids=[])
+        return TrustDecisionOutcome(project_status=ProjectStatus.STAGED, activated_trust_ids=[])
 
-    approved_trust_ids = [
+    activated_trust_ids = [
         row.trust_id for row in intersects if row.status == TrustApprovalStatus.APPROVED and row.trust_id
     ]
 
@@ -806,9 +819,32 @@ def record_trust_decisions(
     logger.info(f"Audit response: {audit_response}")
 
     db.commit()
-    logger.info(f"Recorded trust decisions {changed} and approved project {project_id} for {approved_trust_ids}")
+    logger.info(f"Recorded trust decisions {changed} and approved project {project_id} for {activated_trust_ids}")
 
-    return TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=approved_trust_ids)
+    return TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, activated_trust_ids=activated_trust_ids)
+
+
+def _link_trusts_to_existing_models(db: Session, project_id: UUID, trust_ids: list[UUID]) -> None:
+    """Add a PENDING model-trust link for each late-approving trust on every existing model of the project.
+
+    Models created before a trust approved were linked only to the trusts approved then (``save_model``), so
+    without this a late trust could never train them.
+
+    Args:
+        db (Session): SQLModel session; the caller commits.
+        project_id (UUID): The approved project.
+        trust_ids (list[UUID]): Trusts that have just approved it.
+    """
+    if not trust_ids:
+        return
+    models = db.exec(select(Model).where(Model.project_id == project_id).where(col(Model.deleted).is_(False))).all()
+    for model in models:
+        linked = set(
+            db.exec(select(ModelTrustIntersect.trust_id).where(ModelTrustIntersect.model_id == model.id)).all()
+        )
+        for trust_id in trust_ids:
+            if trust_id not in linked:
+                db.add(ModelTrustIntersect(model_id=model.id, trust_id=trust_id, status=TrustIntersectStatus.PENDING))
 
 
 def stage_project_service(
