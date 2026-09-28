@@ -275,11 +275,24 @@ describe("My Trust", () => {
         });
     });
 
-    it("says so when nothing awaits a decision", async () => {
+    it("shows an empty-state card when nothing awaits a decision", async () => {
         decisionsRef.value = [];
         const wrapper = mountPage();
         await nextTick();
 
-        expect(wrapper.find("[data-test='nothing-pending']").exists()).toBe(true);
+        const empty = wrapper.find("[data-test='nothing-pending']");
+        expect(empty.text()).toContain("There are no requests awaiting your decision");
+        expect(empty.text()).toContain("New project requests for this Trust will appear here.");
+        expect(wrapper.find("[data-test='pending-list']").exists()).toBe(false);
+    });
+
+    it("titles each section above its card", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        // The heading is the section's label, outside the card that lists its projects.
+        const heading = wrapper.find("[data-test='pending-heading']");
+        expect(heading.element.closest("[data-test='pending-card']")).toBeNull();
+        expect(heading.element.parentElement?.querySelector("[data-test='pending-card']")).not.toBeNull();
     });
 });

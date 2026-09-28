@@ -33,16 +33,30 @@
             <!-- Decisions first, the page's job; the trust's own connection card to their right (below them on narrow
                  screens). -->
             <div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_410px]">
-                <div class="space-y-6">
-                    <AiCard>
-                        <div class="px-6 py-5">
-                            <h2 data-test="pending-heading" class="text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
-                                Awaiting your decision ({{ pending.length }})
-                            </h2>
-                            <p v-if="!pending.length" data-test="nothing-pending" class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                                Nothing awaiting your decision.
-                            </p>
-                            <ul data-test="pending-list" class="divide-y divide-gray-200 dark:divide-dark-border">
+                <div class="space-y-8">
+                    <!-- Each section is titled above its card. -->
+                    <section>
+                        <h2
+                            data-test="pending-heading"
+                            class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100"
+                        >
+                            Awaiting your decision ({{ pending.length }})
+                        </h2>
+                        <AiCard data-test="pending-card">
+                            <div
+                                v-if="!pending.length"
+                                data-test="nothing-pending"
+                                class="flex flex-col items-center justify-center px-6 py-12 text-center"
+                            >
+                                <icon-ph-check-circle-duotone class="w-12 h-12 text-primary-500 dark:text-primary-400" />
+                                <p class="mt-3 font-semibold text-gray-900 dark:text-gray-100">
+                                    There are no requests awaiting your decision
+                                </p>
+                                <p class="mt-1 text-sm text-gray-500 dark:text-gray-300">
+                                    New project requests for this Trust will appear here.
+                                </p>
+                            </div>
+                            <ul v-else data-test="pending-list" class="px-6 divide-y divide-gray-200 dark:divide-dark-border">
                                 <TrustDecisionRow
                                     v-for="decision in pending"
                                     :key="decision.projectId"
@@ -51,18 +65,18 @@
                                     @decide="askToDecide(decision, $event)"
                                 />
                             </ul>
-                        </div>
-                    </AiCard>
+                        </AiCard>
+                    </section>
 
-                    <AiCard>
-                        <div class="px-6 py-5">
-                            <h2 class="text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
-                                Decided
-                            </h2>
-                            <p v-if="!decided.length" class="mt-2 text-sm text-gray-500 dark:text-gray-300">
+                    <section>
+                        <h2 class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
+                            Decided
+                        </h2>
+                        <AiCard>
+                            <p v-if="!decided.length" class="px-6 py-5 text-sm text-gray-500 dark:text-gray-300">
                                 No decisions yet.
                             </p>
-                            <ul data-test="decided-list" class="divide-y divide-gray-200 dark:divide-dark-border">
+                            <ul v-else data-test="decided-list" class="px-6 divide-y divide-gray-200 dark:divide-dark-border">
                                 <TrustDecisionRow
                                     v-for="decision in decided"
                                     :key="decision.projectId"
@@ -70,16 +84,21 @@
                                     :trust-name="trustName"
                                 />
                             </ul>
-                        </div>
-                    </AiCard>
+                        </AiCard>
+                    </section>
                 </div>
 
-                <AiCard data-test="trust-card-column">
-                    <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
-                    <div v-else class="p-6">
-                        <AiLoader />
-                    </div>
-                </AiCard>
+                <section>
+                    <h2 class="mb-3 text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
+                        Connection status
+                    </h2>
+                    <AiCard data-test="trust-card-column">
+                        <TrustDetailCard v-if="derivedTrust" :trust="derivedTrust" :hub-version="hubVersion" />
+                        <div v-else class="p-6">
+                            <AiLoader />
+                        </div>
+                    </AiCard>
+                </section>
             </div>
         </div>
 
