@@ -289,7 +289,7 @@ from flip_api.trusts_services.services.register_trust import TrustRegistrationEr
 # hub_shared block
 # ---------------------------------------------------------------------------
 
-# Mirror of HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py — kept
+# Mirror of HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py — kept
 # local (rather than importing the production tuple) so the tests fail loudly
 # if the production list changes without an explicit test update.
 HUB_SHARED_KEYS = (

@@ -19,6 +19,7 @@ from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
+from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.private import ProjectApprovalBody
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.project_services.approve_project import approve_project_endpoint
@@ -29,14 +30,17 @@ from flip_api.utils.project_manager import get_project_by_id
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 
 
-async def process_trust(request: Request, project_id: UUID, trust: Any, db: Session, user_id: UUID) -> dict[str, Any]:
+async def process_trust(
+    request: Request, project_id: UUID, trust: ITrust, db: Session, user_id: UUID
+) -> dict[str, Any]:
     """
     Process a single trust by starting the imaging project creation.
 
     Args:
         request (Request): The FastAPI request object.
         project_id (UUID): The ID of the project.
-        trust: The trust object to process.
+        trust (ITrust): The trust to process (one element of the list returned by
+            ``approve_project_endpoint``).
         db (Session): The database session.
         user_id (UUID): The ID of the current user.
 
