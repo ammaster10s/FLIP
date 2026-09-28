@@ -509,7 +509,8 @@ def get_trusts_approval_status_for_projects(
                 status=status,
                 decided_by=decided_by,
                 decided_by_name=decider_name or None,
-                decided_at=decided_at.isoformat(timespec="milliseconds") if decided_at else None,
+                # `Z` suffix so the browser treats the naive UTC value as UTC.
+                decided_at=decided_at.isoformat(timespec="milliseconds") + "Z" if decided_at else None,
             )  # type: ignore[call-arg]
         )
 

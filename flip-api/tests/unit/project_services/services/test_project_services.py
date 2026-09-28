@@ -575,9 +575,10 @@ class TestGetTrustsApprovalStatusForProject:
             TrustApprovalStatus.APPROVED,
         )
         assert (result[0].decided_by, result[0].decided_by_name) == (decider, "Ada")
-        assert result[0].decided_at == decided_at_a.isoformat(timespec="milliseconds")
+        # `Z` suffix: the column is naive UTC, and a bare ISO string would be read as local time by the browser.
+        assert result[0].decided_at == "2026-03-19T10:30:00.000Z"
         assert (result[1].decided_by, result[1].decided_by_name) == (None, None)
-        assert result[1].decided_at == decided_at_a.isoformat(timespec="milliseconds")
+        assert result[1].decided_at == "2026-03-19T10:30:00.000Z"
         assert (result[2].code, result[2].status, result[2].decided_at) == (None, TrustApprovalStatus.PENDING, None)
 
     def test_get_trusts_approval_status_empty(self, mock_db_session: MagicMock):
