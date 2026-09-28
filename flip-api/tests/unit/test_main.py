@@ -103,13 +103,17 @@ class TestHealth:
     def test_openapi_names_the_same_build(self, monkeypatch):
         """FastAPI reads the version at app construction, so reload main under the release."""
         monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+        original_app = main.app
         try:
             importlib.reload(main)
             assert main.app.version == "v9.9.9"
         finally:
-            # Other tests in the suite hold references to the unreloaded app — restore it.
+            # Other tests in the suite hold references to the unreloaded app object while fixtures such as
+            # `fake_idp` resolve `flip_api.main.app` lazily: put the original back (see
+            # test_docs_urls_none_in_production below).
             monkeypatch.undo()
             importlib.reload(main)
+            main.app = original_app
 
 
 class TestDocsGating:

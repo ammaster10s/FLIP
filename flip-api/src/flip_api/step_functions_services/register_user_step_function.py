@@ -141,9 +141,7 @@ def register_user_step_function_endpoint(
         logger.info(f"Setting roles for user {user_id}: {roles}")
 
         try:
-            set_roles_response = set_user_roles(
-                user_id=user_id, roles_data=roles, db=db, token_id=token_id, idp=idp
-            )
+            set_roles_response = set_user_roles(user_id=user_id, roles_data=roles, db=db, token_id=token_id, idp=idp)
             logger.info(f"Roles set successfully for user {user_id}: {set_roles_response}")
 
         except Exception as role_err:

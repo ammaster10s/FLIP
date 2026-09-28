@@ -143,9 +143,7 @@ async def test_permission_failure(mock_request, mock_get_session, mock_has_permi
 
 # Test case for project not found
 @pytest.mark.asyncio
-async def test_project_not_found(
-    mock_request, mock_get_session, mock_has_permissions, mock_get_project, fake_idp
-):
+async def test_project_not_found(mock_request, mock_get_session, mock_has_permissions, mock_get_project, fake_idp):
     # Simulate project not found
     mock_get_project.return_value = None
 
@@ -204,13 +202,13 @@ async def test_queue_imaging_creation_does_not_check_the_caller(
     mock_get_session,
     mock_has_permissions,
     mock_get_project,
-    mock_get_user_pool_id,
     mock_get_users_with_access,
-    mock_get_cognito_users,
+    mock_list_users,
+    fake_idp,
 ):
     """The approval fan-out's entry point: a trust approved by an earlier call is queued whoever completes approval."""
     response = await queue_imaging_creation(
-        request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+        request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=fake_idp
     )
 
     assert response["success"] == "Imaging project creation task queued successfully"
@@ -314,6 +312,7 @@ async def test_imaging_follows_the_trusts_approval(
     mock_get_session,
     mock_get_project,
     mock_get_approved_trusts,
+    fake_idp,
     project_status,
     approved_trusts,
 ):
@@ -323,7 +322,7 @@ async def test_imaging_follows_the_trusts_approval(
 
     with pytest.raises(HTTPException) as excinfo:
         await queue_imaging_creation(
-            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=fake_idp
         )
 
     assert excinfo.value.status_code == 409

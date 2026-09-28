@@ -56,9 +56,7 @@ def mock_filter_enabled_users(fake_idp):
     return fake_idp.filter_enabled_users
 
 
-def test_edit_project_success(
-    client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_filter_enabled_users
-):
+def test_edit_project_success(client: TestClient, app_fixture: FastAPI, mock_edit_payload, mock_filter_enabled_users):
     mock_db_session = MagicMock()
     # Simulate an existing project
     mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc")
@@ -202,9 +200,7 @@ def test_edit_project_db_commit_generic_exception(
     app_fixture.dependency_overrides = {}
 
 
-def test_edit_project_ignores_has_imaging(
-    client: TestClient, app_fixture: FastAPI, mock_filter_enabled_users
-):
+def test_edit_project_ignores_has_imaging(client: TestClient, app_fixture: FastAPI, mock_filter_enabled_users):
     """FLIP#1071: has_imaging is creation-time only — an edit carrying it is accepted but the flag stays put."""
     mock_db_session = MagicMock()
     mock_project_instance = Projects(id=TEST_PROJECT_ID, name="Old Name", description="Old Desc", has_imaging=True)
@@ -226,9 +222,7 @@ def test_edit_project_ignores_has_imaging(
     app_fixture.dependency_overrides = {}
 
 
-def test_edit_project_filters_users_through_identity_provider(
-    client: TestClient, app_fixture: FastAPI, fake_idp
-):
+def test_edit_project_filters_users_through_identity_provider(client: TestClient, app_fixture: FastAPI, fake_idp):
     """The requested collaborators are narrowed to existing, enabled users by the identity provider."""
     requested = [uuid.uuid4(), uuid.uuid4()]
     kept = [requested[0]]

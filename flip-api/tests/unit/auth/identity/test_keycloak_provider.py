@@ -144,7 +144,9 @@ class FakeKeycloak:
             user_id = str(uuid4())
             self.users[user_id] = {"id": user_id, **body}
             self.credentials[user_id] = []
-            return httpx.Response(201, headers={"Location": f"http://keycloak:8080/admin/realms/{REALM}/users/{user_id}"})
+            return httpx.Response(
+                201, headers={"Location": f"http://keycloak:8080/admin/realms/{REALM}/users/{user_id}"}
+            )
         if path == "clients" and request.method == "GET":
             if params.get("clientId") != "flip-ui":
                 return httpx.Response(200, json=[])

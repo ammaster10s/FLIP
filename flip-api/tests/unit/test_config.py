@@ -242,6 +242,7 @@ def test_suffix_list_separator_only_values_fall_back_to_default(blank):
 
 # --- AUTH_BACKEND: the identity-provider seam (#919) -------------------------------------
 
+
 def test_auth_backend_defaults_per_environment_class():
     """The base selects no provider (so it demands no coordinates); each environment class picks one.
 

@@ -215,9 +215,7 @@ class KeycloakIdentityProvider(IdentityProvider):
             assert self._token is not None
             return self._token
 
-    def _request(
-        self, method: str, path: str, *, tolerate_server_error: bool = False, **kwargs: Any
-    ) -> httpx.Response:
+    def _request(self, method: str, path: str, *, tolerate_server_error: bool = False, **kwargs: Any) -> httpx.Response:
         """Call the admin API; refresh the token once on 401; 5xx is a provider error.
 
         4xx responses other than 401 are returned for the caller to interpret
