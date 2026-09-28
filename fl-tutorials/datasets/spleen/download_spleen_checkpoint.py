@@ -51,6 +51,4 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-dir", required=True, help="directory the checkpoint is copied into as model.pt.")
     parser.add_argument("--repo-id", default=REPO_ID, help="Hugging Face dataset repo to pull from.")
     args = parser.parse_args()
-    download_spleen_checkpoint(
-        cache_dir=args.cache_dir, checkpoint_dir=args.checkpoint_dir, repo_id=args.repo_id
-    )
+    download_spleen_checkpoint(cache_dir=args.cache_dir, checkpoint_dir=args.checkpoint_dir, repo_id=args.repo_id)

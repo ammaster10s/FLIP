@@ -43,6 +43,7 @@ instead of running to completion: once training is live, the smoke POSTs
 /fl/stop/{model_id} twice and asserts both return HTTP 204 — the first aborts
 the running job, the second is an idempotent no-op.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -301,9 +302,7 @@ def create_project_with_query(
         dicom_to_nifti=dicom_to_nifti,
         has_imaging=has_imaging,
     ).model_dump()
-    project_id = _ensure_ok(
-        _post(client, "/projects", project_payload, headers), "create project"
-    ).json()["id"]
+    project_id = _ensure_ok(_post(client, "/projects", project_payload, headers), "create project").json()["id"]
     _log(f"  ✅ project_id={project_id}")
     # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail here
     # rather than 20 minutes later on an image-pull wait that cannot succeed.
@@ -449,9 +448,7 @@ def stage_and_approve(
     if trusts_selection:
         _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
 
-    wait_for_trusts_responded(
-        client, headers, project_id, required_trust_ids={str(t["id"]) for t in trusts}
-    )
+    wait_for_trusts_responded(client, headers, project_id, required_trust_ids={str(t["id"]) for t in trusts})
 
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
@@ -613,9 +610,7 @@ def _blacklisted_filenames() -> set[str]:
     return {name.strip() for name in raw.split(",") if name.strip()}
 
 
-def upload_files(
-    client: requests.Session, headers: dict[str, str], model_id: str, files_dir: Path
-) -> list[str]:
+def upload_files(client: requests.Session, headers: dict[str, str], model_id: str, files_dir: Path) -> list[str]:
     if not files_dir.is_dir():
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
     blacklist = _blacklisted_filenames()
@@ -730,9 +725,7 @@ def initiate_training(
     _log("  ✅ training initiated (model status now INITIATED)")
 
 
-def wait_for_model_advanced(
-    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
-) -> str:
+def wait_for_model_advanced(client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int) -> str:
     """Block until the model reports any status past INITIATED (PREPARED counts).
 
     This is the "did the FL scheduler pick the job up at all" gate, not a wait for
@@ -767,9 +760,7 @@ def wait_for_model_advanced(
     )
 
 
-def wait_for_training_finished(
-    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
-) -> str:
+def wait_for_training_finished(client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int) -> str:
     """Block until the model reports RESULTS_UPLOADED (or surface ERROR fast).
 
     This is the long pole — real training on the xray tutorial against the
@@ -800,9 +791,7 @@ def wait_for_training_finished(
     )
 
 
-def wait_for_model_running(
-    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
-) -> str:
+def wait_for_model_running(client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int) -> str:
     """Block until the model reports RUNNING — a genuinely live FL job.
 
     ``wait_for_model_advanced`` returns on the first status past INITIATED, which
@@ -829,9 +818,7 @@ def wait_for_model_running(
         if status in (ModelStatus.RUNNING.value, ModelStatus.RESULTS_UPLOADED.value):
             return status
         time.sleep(poll_interval)
-    raise SmokeFailure(
-        f"Model did not reach RUNNING within {timeout_s}s (last status: {last_status or 'unknown'})."
-    )
+    raise SmokeFailure(f"Model did not reach RUNNING within {timeout_s}s (last status: {last_status or 'unknown'}).")
 
 
 def stop_training(client: requests.Session, headers: dict[str, str], model_id: str, *, attempt: int) -> None:
@@ -856,9 +843,7 @@ def assert_model_stopped(client: requests.Session, headers: dict[str, str], mode
     _log(f"  ✅ model status is {status}")
 
 
-def download_results(
-    client: requests.Session, headers: dict[str, str], model_id: str, dest_dir: Path
-) -> list[Path]:
+def download_results(client: requests.Session, headers: dict[str, str], model_id: str, dest_dir: Path) -> list[Path]:
     """Pull every FL-result artefact from S3 to ``dest_dir`` and return paths.
 
     /files/model/{model_id}/fl/results returns a list of presigned S3 URLs
@@ -870,8 +855,7 @@ def download_results(
     urls = resp.json()
     if not urls:
         raise SmokeFailure(
-            "FL result list is empty — fl-server should have uploaded at least one artefact "
-            "by RESULTS_UPLOADED time."
+            "FL result list is empty — fl-server should have uploaded at least one artefact by RESULTS_UPLOADED time."
         )
     dest_dir.mkdir(parents=True, exist_ok=True)
     _log(f"  ✅ {len(urls)} artefact(s); downloading to {dest_dir}")
@@ -907,9 +891,7 @@ def run_data_enrichment(cwd: Path, cmd: str, project_id: str) -> None:
     env = {**os.environ, "FLIP_PROJECT_ID": project_id}
     result = subprocess.run(cmd, shell=True, cwd=str(cwd), env=env)
     if result.returncode != 0:
-        raise SmokeFailure(
-            f"Data-enrichment command failed (exit {result.returncode}): {cmd}"
-        )
+        raise SmokeFailure(f"Data-enrichment command failed (exit {result.returncode}): {cmd}")
     _log("  ✅ data enrichment complete")
 
 
@@ -1133,12 +1115,12 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.
-            running_status = wait_for_model_running(
-                client, headers, model_id, args.training_start_timeout
-            )
+            running_status = wait_for_model_running(client, headers, model_id, args.training_start_timeout)
             if running_status == ModelStatus.RESULTS_UPLOADED.value:
-                _log("  ⚠️  training finished before the stop — both stops now exercise the "
-                     "idempotent (already-terminal) path only")
+                _log(
+                    "  ⚠️  training finished before the stop — both stops now exercise the "
+                    "idempotent (already-terminal) path only"
+                )
             # Stop #1 aborts the running job; stop #2 is an idempotent no-op. Both must 204.
             stop_training(client, headers, model_id, attempt=1)
             assert_model_stopped(client, headers, model_id)
@@ -1150,9 +1132,7 @@ def main(argv: list[str] | None = None) -> int:
             downloaded = []
         else:
             results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
-            final_status = wait_for_training_finished(
-                client, headers, model_id, args.training_finish_timeout
-            )
+            final_status = wait_for_training_finished(client, headers, model_id, args.training_finish_timeout)
             downloaded = download_results(client, headers, model_id, results_dir)
     except SmokeFailure as exc:
         _log(f"\n❌ Smoke failed: {exc}")

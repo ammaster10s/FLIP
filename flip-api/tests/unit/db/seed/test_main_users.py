@@ -74,9 +74,7 @@ def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_use
 
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
 @patch("flip_api.db.seed.main_users.logger")
-def test_seed_main_users_continues_after_per_user_http_failure(
-    mock_logger, mock_ensure_user_and_role, mock_session
-):
+def test_seed_main_users_continues_after_per_user_http_failure(mock_logger, mock_ensure_user_and_role, mock_session):
     """A transient Cognito read failure on a single user must not tank the whole seed.
 
     Seeding runs on every API boot and is now Cognito-dependent (Cognito is the source
@@ -101,9 +99,7 @@ def test_seed_main_users_continues_after_per_user_http_failure(
 
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
 @patch("flip_api.db.seed.main_users.logger")
-def test_seed_main_users_propagates_unexpected_errors(
-    mock_logger, mock_ensure_user_and_role, mock_session
-):
+def test_seed_main_users_propagates_unexpected_errors(mock_logger, mock_ensure_user_and_role, mock_session):
     """A non-HTTP Exception (e.g. programming error, misconfig) still propagates.
 
     The resilience policy is narrow: tolerate transient Cognito blips, not arbitrary
@@ -122,9 +118,7 @@ def test_seed_main_users_propagates_unexpected_errors(
 
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
 @patch("flip_api.db.seed.main_users.logger")
-def test_seed_main_users_propagates_4xx_http_failures(
-    mock_logger, mock_ensure_user_and_role, mock_session
-):
+def test_seed_main_users_propagates_4xx_http_failures(mock_logger, mock_ensure_user_and_role, mock_session):
     """A 4xx HTTPException is a definitive caller / config error, not a transient blip.
 
     Without this, a 400 ("no user email or id provided") from a misconfigured
@@ -213,9 +207,7 @@ def test_ensure_user_and_role_grants_role_when_missing(
     """Cognito user exists but has no UserRole row → add the grant and commit."""
     mock_get_settings.return_value = mock_settings
     sub = uuid4()
-    mock_get_user_by_email_or_id.return_value = CognitoUser(
-        id=sub, email="alex@example.com", is_disabled=False
-    )  # type: ignore[call-arg]
+    mock_get_user_by_email_or_id.return_value = CognitoUser(id=sub, email="alex@example.com", is_disabled=False)  # type: ignore[call-arg]
     mock_session.get.return_value = None
     mock_session.exec.return_value.first.return_value = None
 
@@ -242,12 +234,8 @@ def test_ensure_user_and_role_is_idempotent_when_grant_already_exists(
     """Cognito user exists and already has the role → no add, no commit."""
     mock_get_settings.return_value = mock_settings
     sub = uuid4()
-    mock_get_user_by_email_or_id.return_value = CognitoUser(
-        id=sub, email="alex@example.com", is_disabled=False
-    )  # type: ignore[call-arg]
-    mock_session.exec.return_value.first.return_value = UserRole(
-        user_id=sub, role_id=RoleRef.RESEARCHER.value
-    )
+    mock_get_user_by_email_or_id.return_value = CognitoUser(id=sub, email="alex@example.com", is_disabled=False)  # type: ignore[call-arg]
+    mock_session.exec.return_value.first.return_value = UserRole(user_id=sub, role_id=RoleRef.RESEARCHER.value)
 
     mock_session.get.return_value = UserProfile(user_id=sub, name="Alex Example", organisation="Example Org")
 
@@ -271,18 +259,12 @@ def test_ensure_user_and_role_updates_existing_profile_when_seed_fields_drift(
     """
     mock_get_settings.return_value = mock_settings
     sub = uuid4()
-    mock_get_user_by_email_or_id.return_value = CognitoUser(
-        id=sub, email="alex@example.com", is_disabled=False
-    )  # type: ignore[call-arg]
+    mock_get_user_by_email_or_id.return_value = CognitoUser(id=sub, email="alex@example.com", is_disabled=False)  # type: ignore[call-arg]
     existing_profile = UserProfile(user_id=sub, name="Stale Name", organisation="Old Org")
     mock_session.get.return_value = existing_profile
-    mock_session.exec.return_value.first.return_value = UserRole(
-        user_id=sub, role_id=RoleRef.RESEARCHER.value
-    )
+    mock_session.exec.return_value.first.return_value = UserRole(user_id=sub, role_id=RoleRef.RESEARCHER.value)
 
-    ensure_user_and_role(
-        "alex@example.com", RoleRef.RESEARCHER, mock_session, "Fresh Name", "New Org"
-    )
+    ensure_user_and_role("alex@example.com", RoleRef.RESEARCHER, mock_session, "Fresh Name", "New Org")
 
     # The in-place mutation + add() captures the updated row for the commit.
     assert existing_profile.name == "Fresh Name"
