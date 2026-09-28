@@ -243,6 +243,64 @@ describe("ProjectApproval", () => {
         });
     });
 
+    // The layout re-fetches the open project every few seconds, which hands the card a fresh trusts array
+    // each time. An approver who takes longer than that must not lose their unsaved choices.
+    describe("when the project is re-fetched mid-edit", () => {
+        const refetched = (trusts: IProjectTrust[]) => trusts.map(t => ({ ...t }));
+
+        test("keeps unsaved choices when nothing was saved in between", async () => {
+            const wrapper = mountProjectApproval();
+            await flushPromises();
+
+            await wrapper.find("[data-test=trust-approve-0]").trigger("click");
+            await wrapper.find("[data-test=trust-decline-1]").trigger("click");
+            await wrapper.setProps({ approvedTrusts: refetched(PENDING_TRUSTS) });
+
+            expect(wrapper.find("[data-test=trust-approve-0]").attributes("aria-pressed")).toBe("true");
+            expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");
+            await saveButton(wrapper).trigger("click");
+            expect(wrapper.emitted("approveProject")).toEqual([[{
+                approved: ["t1"],
+                declined: ["t2"]
+            }]]);
+        });
+
+        test("keeps an unsaved change to a saved decision", async () => {
+            const declined: IProjectTrust[] = PENDING_TRUSTS.map(t => ({
+                ...t,
+                status: "DECLINED"
+            }));
+            const wrapper = mountProjectApproval({ approvedTrusts: declined });
+            await flushPromises();
+
+            await wrapper.find("[data-test=trust-approve-0]").trigger("click");
+            await wrapper.setProps({ approvedTrusts: refetched(declined) });
+
+            expect(wrapper.find("[data-test=trust-approve-0]").attributes("aria-pressed")).toBe("true");
+            expect(saveButton(wrapper).attributes("disabled")).toBeUndefined();
+        });
+
+        test("takes up a decision someone else saved, without touching the other rows", async () => {
+            const wrapper = mountProjectApproval();
+            await flushPromises();
+
+            await wrapper.find("[data-test=trust-approve-0]").trigger("click");
+            await wrapper.setProps({
+                approvedTrusts: [
+                    { ...PENDING_TRUSTS[0] },
+                    {
+                        ...PENDING_TRUSTS[1],
+                        status: "DECLINED",
+                        decidedByName: "Other Approver"
+                    }
+                ]
+            });
+
+            expect(wrapper.find("[data-test=trust-approve-0]").attributes("aria-pressed")).toBe("true");
+            expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");
+        });
+    });
+
     describe("read-only views", () => {
         test("a user without CanApproveProjects sees each trust's status and no choices", async () => {
             const wrapper = mountProjectApproval({ permissions: [] });

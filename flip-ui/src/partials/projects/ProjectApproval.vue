@@ -211,12 +211,21 @@ const canDecide = computed(() => props.canApprove && !props.projectApproved && h
 // declined, the approver changes one decision rather than re-entering them all.
 const choices = ref<Record<string, Decision>>({});
 
+const savedStatuses = computed<Record<string, TrustApprovalStatus>>(() =>
+    Object.fromEntries(props.approvedTrusts.map(t => [t.id, t.status])));
+
+// The layout re-fetches the project every few seconds, handing this card a fresh array each time, so a
+// trust's choice is reset only when its saved decision actually changed (a save, or another approver).
+// Otherwise the approver's unsaved choice stands, however long they take.
 watch(
-    () => props.approvedTrusts,
-    trusts => {
-        choices.value = Object.fromEntries(
-            trusts.filter(t => t.status !== "PENDING").map(t => [t.id, t.status as Decision])
-        );
+    savedStatuses,
+    (saved, previous) => {
+        const next: Record<string, Decision> = {};
+        for (const [id, status] of Object.entries(saved)) {
+            if (previous?.[id] === status && choices.value[id]) next[id] = choices.value[id];
+            else if (status !== "PENDING") next[id] = status;
+        }
+        choices.value = next;
     },
     { immediate: true }
 );
