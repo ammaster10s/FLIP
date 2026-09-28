@@ -59,6 +59,7 @@
 <!-- Update this section if a fix lands before the cut. -->
 
 - The Helm trust-seed hook seeds again. SQLAlchemy 2.1 picks psycopg v3 for a bare `postgresql://` URL, which the omop-db seed tools do not install; they and data-access-api now name `psycopg2` in their database URLs, and the seed install honours the 72-hour dependency cooldown (#1310, #1314). A deploy whose `trustData.seed.sourceRef` predates the fix still fails to seed; the chart's `TROUBLESHOOTING.md` has the workaround.
+- `ENFORCE_MFA` fails closed on the hub. Any value other than `true` or `1` used to switch the MFA gate off, including `yes`, `on`, a padded `True ` or a typo. Now only `false`, `0`, `no` or `off` (or their capitalised forms) turn it off, and anything unrecognised keeps MFA on with a warning naming the value (#1329). A hub that leaves the variable unset, as the production Terraform does, is unaffected. A hub that set it to `yes` or `on` now enforces MFA, as intended.
 
 ## :white_check_mark: Release checks
 
