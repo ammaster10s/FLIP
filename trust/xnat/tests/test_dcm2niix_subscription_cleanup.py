@@ -47,9 +47,7 @@ CONFIGURE_EXPORT_MASK = REPO_ROOT / "trust/xnat/xnat/config/configure-export-mas
 # Matches a DELETE aimed at the event-subscription endpoint, however it is spelled:
 # `-X DELETE "$XNAT_URL/xapi/events/subscription/$ID"`, `--request DELETE …`, or with
 # the URL built up in a variable first.
-_SUBSCRIPTION_DELETE = re.compile(
-    r"(-X\s+DELETE|--request\s+DELETE)(?!.*\n?.*xapi/commands)", re.IGNORECASE
-)
+_SUBSCRIPTION_DELETE = re.compile(r"(-X\s+DELETE|--request\s+DELETE)(?!.*\n?.*xapi/commands)", re.IGNORECASE)
 _SUBSCRIPTION_ENDPOINT = re.compile(r"xapi/events/subscription", re.IGNORECASE)
 
 
