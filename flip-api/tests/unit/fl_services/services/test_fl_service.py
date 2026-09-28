@@ -683,9 +683,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_nvflare_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
@@ -883,9 +881,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     mock_verify.return_value = None
 
     if job_type == "invalid":
-        with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
-        ):
+        with pytest.raises(fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"):
             _ = fl_service.bundle_flower_application(model_id)
     else:
         dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
@@ -1719,9 +1715,7 @@ def test_bundle_flower_application_clears_existing_dest(
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_missing_config_json_is_rejected(
-    mock_s3, mock_required, mocked_settings, model_id
-):
+def test_bundle_flower_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
     """config.json is a required Flower file, so a submission without one never reaches a Trust.
 
     Without it the bundler cannot know the job type, and silently defaulting to ``standard`` would

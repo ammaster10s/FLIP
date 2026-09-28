@@ -200,7 +200,7 @@ class Settings(BaseSettings):
             return True
         if isinstance(v, bool):
             return v
-        return v.lower() in ("true", "1")    # type: ignore[union-attr]
+        return v.lower() in ("true", "1")  # type: ignore[union-attr]
 
     @field_validator("EMAIL_BACKEND", mode="before")
     @classmethod
@@ -316,8 +316,7 @@ class Settings(BaseSettings):
                 # flip_api.utils.logger imports get_settings(), so it cannot be
                 # imported here without a cycle — use the same underlying logger.
                 logging.getLogger("uvicorn").warning(
-                    f"{info.field_name} resolved to an empty list from {v!r}; "
-                    f"falling back to the default {default}"
+                    f"{info.field_name} resolved to an empty list from {v!r}; falling back to the default {default}"
                 )
                 return default
             return normalised

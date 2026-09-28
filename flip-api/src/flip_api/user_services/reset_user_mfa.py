@@ -99,6 +99,4 @@ def reset_mfa_for_user(
         raise
     except Exception as e:
         logger.exception(f"Error resetting user MFA for user_id={user_id}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset user MFA"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset user MFA") from e

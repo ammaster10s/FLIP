@@ -35,7 +35,10 @@ Cypress.Commands.add("login", (options: LoginOptions | string = {}) => {
     const username = opts.username ?? "HasAdminRole@gmail.com";
     const permissionsFixture = opts.permissionsFixture ?? "user/getPermissions";
 
-    cy.fixture(permissionsFixture).then((perms: { permissions: string[] }) => {
+    cy.fixture(permissionsFixture).then((perms: {
+        permissions: string[];
+        trustAdminOf?: { id: string; code?: string | null; name: string } | null
+    }) => {
         const user = {
             username: DEFAULT_USER_ID,
             userId: DEFAULT_USER_ID,
@@ -43,7 +46,9 @@ Cypress.Commands.add("login", (options: LoginOptions | string = {}) => {
                 sub: DEFAULT_USER_ID,
                 email: username
             },
-            permissions: perms.permissions ?? []
+            permissions: perms.permissions ?? [],
+            // A Trust Admin's trust (FLIP#1258), from the same fixture as their permissions.
+            trustAdminOf: perms.trustAdminOf ?? null
         };
 
         window.localStorage.setItem("cypress.auth.user", JSON.stringify(user));

@@ -688,15 +688,17 @@ class TestGetLatestImagingStatus:
         trust_id = uuid4()
         xnat_project_id = uuid4()
         mock_task = MagicMock()
-        mock_task.result = json.dumps({
-            "import_status": {
-                "successful_count": 10,
-                "failed_count": 2,
-                "processing_count": 3,
-                "queued_count": 5,
-                "queue_failed_count": 1,
+        mock_task.result = json.dumps(
+            {
+                "import_status": {
+                    "successful_count": 10,
+                    "failed_count": 2,
+                    "processing_count": 3,
+                    "queued_count": 5,
+                    "queue_failed_count": 1,
+                }
             }
-        })
+        )
         mock_db_session.exec.return_value.first.return_value = mock_task
 
         result = _get_latest_imaging_status(trust_id, xnat_project_id, mock_db_session)
@@ -739,13 +741,15 @@ class TestGetLatestImagingStatus:
     def test_handles_flat_result_structure(self, mock_db_session: MagicMock):
         """Should handle result where counts are at the top level (no import_status wrapper)."""
         mock_task = MagicMock()
-        mock_task.result = json.dumps({
-            "successful_count": 5,
-            "failed_count": 0,
-            "processing_count": 1,
-            "queued_count": 2,
-            "queue_failed_count": 0,
-        })
+        mock_task.result = json.dumps(
+            {
+                "successful_count": 5,
+                "failed_count": 0,
+                "processing_count": 1,
+                "queued_count": 2,
+                "queue_failed_count": 0,
+            }
+        )
         mock_db_session.exec.return_value.first.return_value = mock_task
 
         result = _get_latest_imaging_status(uuid4(), uuid4(), mock_db_session)
@@ -1002,9 +1006,7 @@ class TestGetImagingStatusSnapshot:
         assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
 
     @pytest.mark.parametrize("payload", ['"boom"', "[404]", "404"], ids=["string", "list", "number"])
-    def test_non_object_failure_result_falls_back_to_unreachable(
-        self, payload: str, mock_db_session: MagicMock
-    ):
+    def test_non_object_failure_result_falls_back_to_unreachable(self, payload: str, mock_db_session: MagicMock):
         """Valid JSON that isn't an object has no `status_code` to read, so it can't be a 404."""
         failed = MagicMock()
         failed.status = TaskStatus.FAILED
