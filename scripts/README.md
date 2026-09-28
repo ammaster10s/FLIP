@@ -59,15 +59,22 @@ ports, bind dirs) always survive a re-run.
 
 ## Site upgrades
 
-- **`site_upgrade.py`** (`make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1]
-  [YES=1] [ALLOW_CHECKOUT_DRIFT=1]`, and the twin AWS/Helm targets — see `AGENTS.md` "Site release
-  upgrades") — the data-safe upgrade verb for a site (on-prem, EC2, or Kubernetes). Runs the
-  onboarding readiness checklist, resolves the tag against what the hub reports on `/api/health`
-  (`vX.Y.Z` or a `sha-<short7>` the tag guard confirms was built for every site image), and drives
-  the per-shape upgrade (`make -C trust upgrade-trust` / the EC2 twin /
-  `make -C trust/deploy/helm upgrade-trust-k8s`). Refuses a release `TAG` unless the checkout is at
-  that tag (exit 6) and refuses a tag any site image was never built at (exit 5). Runbook:
-  `docs/source/sys-admin/admin-upgrading-sites.rst`.
+- **`site_upgrade.py`** (invoked by `make -C trust upgrade-trust`, and by the AWS/Helm twins —
+  see `AGENTS.md` "Site release upgrades") — the **plan-and-guard-and-pin** phase of a site release
+  upgrade (FLIP#1204). Resolves the target tag against what the hub reports on `/api/health`
+  (defaults to that; `--tag vX.Y.Z` or `--tag sha-<short7>` overrides), runs the guards (image tag
+  shape, downgrade → `--force`, release-tag checkout match → `--allow-checkout-drift`, every image
+  actually built at the tag via `docker manifest inspect`, operator confirmation unless `--yes`),
+  and — if everything passes — rewrites `DOCKER_TAG` / `DOCKER_FL_TAG` in the kit's Hub-shared
+  block. The script **stops before any container is touched**; the Makefile then re-includes the
+  updated kit and does the pull / recreate (`_upgrade-trust-apply` on trust; the EC2 twin and
+  `make -C trust/deploy/helm upgrade-trust-k8s` do the same for the other shapes). The operator
+  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<slot>` also runs
+  `onboard-onprem-trust --gate` (the readiness checklist implemented by `onboard_onprem_trust.py`,
+  above) before the plan phase. Exit codes (the Makefile's contract): 0 pinned, 2 no usable target,
+  3 refused downgrade, 4 not confirmed, 5 an image is missing at the target tag, 6 the checkout is
+  not at the target release. Running the script directly rewrites the kit but leaves the containers
+  at the old tag — use the Make targets. Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ## Status and environment checks
 
