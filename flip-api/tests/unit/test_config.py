@@ -18,6 +18,8 @@ comma-separated, empty -> default) plus the lowercase/leading-dot
 normalisation the suffix matching relies on.
 """
 
+import logging
+
 import pytest
 from pydantic import ValidationError
 
@@ -212,17 +214,33 @@ def test_dev_ses_addresses_tolerate_empty_strings():
     assert blanked.AWS_SES_SENDER_EMAIL_ADDRESS == "flip-no-reply@example.com"
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"), [("true", True), ("TRUE", True), ("1", True), ("false", False), ("0", False)]
-)
-def test_enforce_mfa_parses_env_strings(raw, expected):
-    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is expected
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "On", "True ", " true", "\ttrue\n"])
+def test_enforce_mfa_on_spellings_enable_mfa(raw):
+    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is True
 
 
-@pytest.mark.parametrize("blank", ["", None], ids=["empty", "none"])
-def test_enforce_mfa_blank_keeps_the_secure_default(blank):
-    """CI env injection can hand over an empty string; that must not switch MFA off."""
-    assert Settings(ENFORCE_MFA=blank).ENFORCE_MFA is True
+@pytest.mark.parametrize("raw", ["false", "FALSE", "0", "no", "Off", " false "])
+def test_enforce_mfa_off_spellings_disable_mfa(raw):
+    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is False
+
+
+@pytest.mark.parametrize("raw", ["ture", "enabled", "2", "disable", "t r u e"])
+def test_enforce_mfa_unrecognised_value_keeps_mfa_on_and_warns(raw, caplog):
+    """Fail closed: a typo must never be the thing that switches the MFA gate off."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is True
+
+    assert "ENFORCE_MFA" in caplog.text
+    assert repr(raw) in caplog.text
+
+
+@pytest.mark.parametrize("blank", ["", "   ", None], ids=["empty", "whitespace", "none"])
+def test_enforce_mfa_blank_keeps_the_secure_default(blank, caplog):
+    """CI env injection can hand over an empty string; that must not switch MFA off, nor warn."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        assert Settings(ENFORCE_MFA=blank).ENFORCE_MFA is True
+
+    assert "ENFORCE_MFA" not in caplog.text
 
 
 @pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])
