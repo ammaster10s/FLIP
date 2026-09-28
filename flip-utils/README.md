@@ -80,13 +80,14 @@ flip/
 ├── exceptions.py # Package-level exception types
 ├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
 ├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
-├── nvflare/      # NVFLARE-specific logic and components
-│   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
-│   ├── components/   # Event handlers, persistors, privacy filters, locators, …
-│   ├── recipes/      # High-level NVFLARE job recipes
-│   ├── runtime.py    # Runtime helpers for NVFLARE apps
-│   ├── site_policy.py # NVFLARE site-policy helpers
-│   └── metrics.py    # Metrics collection and reporting
+├── nvflare/           # NVFLARE-specific logic and components
+│   ├── controllers/   # FLIP workflows (ScatterAndGather, BroadcastTask, …)
+│   ├── components/    # Event handlers, persistors, privacy filters, locators, …
+│   ├── recipes/       # High-level NVFLARE job recipes
+│   ├── runtime.py     # Runtime helpers for NVFLARE apps
+│   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
+│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   └── metrics.py     # Metrics collection and reporting
 └── flower/       # Flower helpers (mix of server-side and client-side modules)
     ├── identity.py   # Client-side: partition-id + SUPERNODE_NAME site-identity fallback
     ├── metrics.py    # Server-side: handle_client_metrics / handle_client_exception (hub only)
@@ -193,14 +194,16 @@ carries a `.env.app` (`JOB_TYPE`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and a `job.
 drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 
 1. Get the tutorial's dataset. Datasets are managed under `fl-tutorials/datasets/` with
-   dedicated Make targets forwarded from `fl-tutorials/`:
-   `make -C fl-tutorials download-xray-data` (Hugging Face reference dataset),
-   `make -C fl-tutorials download-spleen-data` (spleen segmentation),
-   `make -C fl-tutorials download-brain-mri-data`, `make -C fl-tutorials download-synthea-data`,
-   `make -C fl-tutorials download-arkplus-finetuning-data` (Ark+ TRAIN splits),
-   `make -C fl-tutorials download-arkplus-eval-data` (Ark+ HOLD-OUT splits). The spleen and
-   brain_mri datasets are regenerated locally from a public MSD download and are not
-   published (see `fl-tutorials/AGENTS.md` and `fl-tutorials/datasets/README.md`).
+   dedicated Make targets forwarded from `fl-tutorials/`. Only the tutorial-facing ones:
+   `make -C fl-tutorials download-xray-data` (Hugging Face reference dataset, xray_classification),
+   `make -C fl-tutorials download-spleen-data` (spleen segmentation tutorials),
+   `make -C fl-tutorials download-synthea-data` (EHR risk-prediction tutorials),
+   `make -C fl-tutorials download-arkplus-finetuning-data` (Ark+ TRAIN splits, arkplus_fine_tuning),
+   `make -C fl-tutorials download-arkplus-eval-data` (Ark+ HOLD-OUT splits, the two arkplus evaluation
+   tutorials). For spleen and brain_mri the **DICOM sets are regenerated locally** from a public MSD
+   download and are not republished (their converters are deterministic); the **OMOP tables and metadata
+   table are published** to HF and fetched by the `reproduce-<dataset>-omop` chain. See
+   `fl-tutorials/AGENTS.md` and `fl-tutorials/datasets/README.md`.
 
 2. Adapt the tutorial's `app_files/` as needed; on the platform they are merged onto the
    matching `fl-apps/nvflare/<JOB_TYPE>/app` template at submit time.
@@ -372,13 +375,13 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 | `make -C fl-tutorials run-all-tutorials` | Run every tutorial (heavy; stops on first failure) |
 | `make -C fl-tutorials download-xray-data` | Fetch the xray_classification dataset from Hugging Face |
 | `make -C fl-tutorials download-spleen-data` | Fetch the spleen segmentation dataset |
-| `make -C fl-tutorials download-brain-mri-data` | Fetch the brain MRI dataset |
-| `make -C fl-tutorials download-synthea-data` | Fetch the Synthea EHR dataset |
+| `make -C fl-tutorials download-synthea-data` | Fetch the Synthea EHR dataset (EHR risk-prediction tutorials) |
 | `make -C fl-tutorials download-arkplus-finetuning-data` | Fetch the Ark+ TRAIN splits |
 | `make -C fl-tutorials download-arkplus-eval-data` | Fetch the Ark+ HOLD-OUT splits |
+| `make -C fl-tutorials download-brain-mri-data` | Fetch the brain MRI dataset (trust seeding only; no tutorial consumes it) |
 | `make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> …` | Enrich XNAT with spleen labels |
-| `make -C fl-tutorials reproduce-<dataset>-omop` | Rebuild + verify the dataset's OMOP tables |
-| `make -C fl-tutorials seed-<dataset> KIT=<CODE>` | Seed a running dev trust from the local tree |
+| `make -C fl-tutorials reproduce-<dataset>-omop` | Rebuild + verify the dataset's OMOP tables against the published copy |
+| `make -C fl-tutorials seed-spleen KIT=<CODE>` / `seed-brain-mri KIT=<CODE>` | Seed a running dev trust from the local tree (cxr uses `make -C trust seed PROJECTS=cxr_project`) |
 | `make -C fl-tutorials test` | ruff + both CPU-only pytest suites (tutorial-app + per-dataset) |
 
 The full dataset-tooling reference lives in
