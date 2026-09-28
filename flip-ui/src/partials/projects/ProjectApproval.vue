@@ -91,14 +91,14 @@
                             </div>
                             <span
                                 v-else
-                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold shrink-0', STATUS_CHIP[trust.status].class]"
+                                :class="['inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold shrink-0', chipFor(trust).class]"
                                 :data-test="`trust-status-chip-${idx}`"
                                 :data-status="trust.status"
                                 :title="decisionTitle(trust)"
                             >
                                 <icon-ph-check-bold v-if="trust.status === 'APPROVED'" class="w-3.5 h-3.5" aria-hidden="true" />
                                 <icon-ph-x-bold v-else-if="trust.status === 'DECLINED'" class="w-3.5 h-3.5" aria-hidden="true" />
-                                {{ STATUS_CHIP[trust.status].label }}
+                                {{ chipFor(trust).label }}
                             </span>
                         </div>
                     </li>
@@ -167,6 +167,19 @@ const STATUS_CHIP: Record<TrustApprovalStatus, { label: string; class: string }>
         class: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
     }
 };
+
+// A trust left out of an approval made before decisions were recorded (FLIP#1318) migrates to PENDING. On an
+// approved project it is awaiting nothing: it was simply not approved, as the card said before.
+const NOT_APPROVED_CHIP = {
+    label: "Not approved",
+    class: STATUS_CHIP.DECLINED.class
+};
+
+const undecidedOnApprovedProject = (trust: IProjectTrust): boolean =>
+    trust.status === "PENDING" && props.projectApproved;
+
+const chipFor = (trust: IProjectTrust) =>
+    (undecidedOnApprovedProject(trust) ? NOT_APPROVED_CHIP : STATUS_CHIP[trust.status]);
 
 const CHOICE_BASE_CLASS =
     "relative inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold border transition "
@@ -262,6 +275,7 @@ const shortDate = (iso: string): string =>
 
 // "Approved by Ada · 26 May". An approval recorded before decisions were attributed has a date but no decider.
 const decisionLine = (trust: IProjectTrust): string => {
+    if (undecidedOnApprovedProject(trust)) return "No decision recorded";
     if (trust.status === "PENDING") return "Awaiting decision";
 
     const by = trust.decidedByName ? ` by ${trust.decidedByName}` : "";
@@ -271,6 +285,7 @@ const decisionLine = (trust: IProjectTrust): string => {
 };
 
 const decisionTitle = (trust: IProjectTrust): string => {
+    if (undecidedOnApprovedProject(trust)) return `${trust.name} was not approved; no decision was recorded`;
     if (trust.status === "PENDING") return `${trust.name} is awaiting a decision`;
 
     const by = trust.decidedByName ? ` by ${trust.decidedByName}` : "";

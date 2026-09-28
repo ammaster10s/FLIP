@@ -44,10 +44,12 @@ vi.mock("@/services/project-service", () => ({
 
 const snackbarSuccess = vi.fn();
 const snackbarError = vi.fn();
+const snackbarWarning = vi.fn();
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
         success: (...args: unknown[]) => snackbarSuccess(...args),
-        error: (...args: unknown[]) => snackbarError(...args)
+        error: (...args: unknown[]) => snackbarError(...args),
+        warning: (...args: unknown[]) => snackbarWarning(...args)
     }
 }));
 
@@ -159,6 +161,7 @@ beforeEach(() => {
     editProject.mockClear();
     snackbarSuccess.mockClear();
     snackbarError.mockClear();
+    snackbarWarning.mockClear();
 });
 
 describe("Project page (/project/[id]/index.vue)", () => {
@@ -290,7 +293,8 @@ describe("Project page (/project/[id]/index.vue)", () => {
                 decidedAt: "2026-05-15T10:00:00Z"
             },
             {
-                // A later decline is not an approval date.
+                // Decisions freeze once the project is approved, so the last one — here a decline — is
+                // the save that approved it.
                 id: "t3",
                 name: "GSTT",
                 status: "DECLINED",
@@ -300,7 +304,21 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const approvedWrapper = mountProjectPage({ project: approvedProject });
         const step04 = approvedWrapper.find("[data-test=step-04]");
         expect(step04.attributes("data-completed")).toBe("true");
-        expect(step04.attributes("data-date")).toBe("2026-05-15T10:00:00Z");
+        expect(step04.attributes("data-date")).toBe("2026-05-20T10:00:00Z");
+    });
+
+    test("leaves the Project Approved step undated while the project is still staged", () => {
+        const staged = baseProject();
+        staged.status = "STAGED";
+        staged.approvedTrusts = [{
+            id: "t1",
+            name: "KCH",
+            status: "APPROVED",
+            decidedAt: "2026-05-01T10:00:00Z"
+        }];
+        const wrapper = mountProjectPage({ project: staged });
+
+        expect(wrapper.find("[data-test=step-04]").attributes("data-date")).toBeFalsy();
     });
 
     describe("saving trust decisions", () => {
@@ -357,6 +375,62 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
             expect(snackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Trust decisions saved" }));
             expect(snackbarSuccess.mock.calls[0][0].text).toContain("until every trust has a decision");
+        });
+
+        test("warns, naming the trust, when the approval could not start imaging there", async () => {
+            approveProject.mockResolvedValue({
+                projectStatus: "APPROVED",
+                successful: false,
+                details: [
+                    {
+                        trust: "Kings College Hospital",
+                        success: false,
+                        message: "boom"
+                    },
+                    {
+                        trust: "UCLH",
+                        success: true,
+                        message: "Imaging started successfully"
+                    }
+                ]
+            });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarWarning).toHaveBeenCalledTimes(1);
+            const { text } = snackbarWarning.mock.calls[0][0];
+            expect(text).toContain("Kings College Hospital");
+            expect(text).not.toContain("UCLH");
+            expect(wrapper.emitted("UpdateProject")).toHaveLength(1);
+        });
+
+        test("treats a response without a known project status as a failure", async () => {
+            approveProject.mockResolvedValue({});
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarSuccess).not.toHaveBeenCalled();
+            expect(snackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to save trust decisions" }));
+        });
+
+        test("shows the hub's reason when it refuses the decisions", async () => {
+            approveProject.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: { detail: "Unable to approve the project as it has not been staged" }
+                }
+            });
+            const wrapper = mountProjectPage({ project: stagedProject() });
+
+            await wrapper.find("[data-test=stub-save-decisions]").trigger("click");
+            await flushPromises();
+
+            expect(snackbarError.mock.calls[0][0].text).toBe("Unable to approve the project as it has not been staged");
         });
 
         test("reports a failed save without claiming anything was decided", async () => {

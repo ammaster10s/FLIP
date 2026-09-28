@@ -299,6 +299,26 @@ describe("ProjectApproval", () => {
             expect(wrapper.find("[data-test=trust-approve-0]").attributes("aria-pressed")).toBe("true");
             expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");
         });
+
+        test("a saved decision overrides an unsaved choice on the same row", async () => {
+            const wrapper = mountProjectApproval();
+            await flushPromises();
+
+            await wrapper.find("[data-test=trust-approve-1]").trigger("click");
+            await wrapper.setProps({
+                approvedTrusts: [
+                    { ...PENDING_TRUSTS[0] },
+                    {
+                        ...PENDING_TRUSTS[1],
+                        status: "DECLINED",
+                        decidedByName: "Other Approver"
+                    }
+                ]
+            });
+
+            expect(wrapper.find("[data-test=trust-approve-1]").attributes("aria-pressed")).toBe("false");
+            expect(wrapper.find("[data-test=trust-decline-1]").attributes("aria-pressed")).toBe("true");
+        });
     });
 
     describe("read-only views", () => {
@@ -371,6 +391,41 @@ describe("ProjectApproval", () => {
             expect(line).toMatch(/^Approved · .*May/);
             expect(line).not.toContain("by");
             expect(wrapper.find("[data-test=trust-status-chip-0]").attributes("title")).toMatch(/^UCLH approved on /);
+        });
+
+        test("an approved project shows a trust left undecided before FLIP#1318 as not approved", async () => {
+            // Trusts left out of an approval made before #1318 migrate to PENDING; on an approved project they
+            // are not awaiting anything.
+            const wrapper = mountProjectApproval({
+                projectApproved: true,
+                approvedTrusts: [
+                    {
+                        id: "t1",
+                        name: "UCLH",
+                        code: "UCH",
+                        status: "PENDING"
+                    }
+                ]
+            });
+            await flushPromises();
+
+            const chip = wrapper.find("[data-test=trust-status-chip-0]");
+            expect(chip.text()).toBe("Not approved");
+            expect(chip.attributes("title")).toBe("UCLH was not approved; no decision was recorded");
+            expect(wrapper.find("[data-test=trust-decision-0]").text()).toBe("No decision recorded");
+        });
+
+        test("says the project stays staged once every trust declined", async () => {
+            const wrapper = mountProjectApproval({
+                permissions: [],
+                approvedTrusts: PENDING_TRUSTS.map(t => ({
+                    ...t,
+                    status: "DECLINED"
+                }))
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test=trust-all-declined]").text()).toContain("stays staged");
         });
 
         test("renders no choices when the project is neither staged nor approved", async () => {

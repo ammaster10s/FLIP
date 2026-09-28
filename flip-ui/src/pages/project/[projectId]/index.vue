@@ -229,11 +229,12 @@ const projectUpdating = ref(false);
 const approvingProject = ref(false);
 const unstagingProject = ref(false);
 
-// Most-recent per-trust approval (sourced server-side from
-// project_trust_intersect.decided_at) doubles as the project-level
-// approval date in the lifecycle bar. Declines are not approval dates.
+// Trust decisions freeze once the project is approved, so the most recent one (sourced server-side from
+// project_trust_intersect.decided_at) is the save that approved it — the project-level approval date in the
+// lifecycle bar. Undated until then, like the Staged step.
 const latestTrustApprovalAt = computed<string | null>(() => {
-    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.status === "APPROVED" && t.decidedAt);
+    if (project?.value?.status !== "APPROVED") return null;
+    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.status !== "PENDING" && t.decidedAt);
     if (!trusts.length) return null;
 
     return trusts
@@ -360,39 +361,65 @@ const updateProjectEvent = async (update: IEditProject) => {
     projectUpdating.value = false;
 };
 
+// The hub's own explanation of a refused save (e.g. another approver finished first). Only 400s are shown
+// verbatim — other statuses can carry internal detail.
+const getRefusalReason = (error: unknown): string | undefined => {
+    const response = (error as { response?: { status?: number, data?: { detail?: unknown } } })?.response;
+
+    if (response?.status !== 400) return undefined;
+
+    return typeof response.data?.detail === "string" ? response.data.detail : undefined;
+};
+
 const approveProjectEvent = async (decisions: ITrustDecisions) => {
     approvingProject.value = true;
 
     const { name } = { ...project?.value };
 
     try {
-        const { projectStatus } = await approveProject(`/step/project/${route.params.projectId}/approve`, decisions);
+        const response = await approveProject(`/step/project/${route.params.projectId}/approve`, decisions);
 
-        if (projectStatus === "APPROVED") {
-            Snackbar.success({
-                title: "Project Approved",
-                text: `${name} has been approved.`
-            });
+        if (response.projectStatus === "APPROVED") {
+            // The approval is committed even when imaging could not be started at a trust, so this is a
+            // warning, not an error — but it must name the trust, as nothing else will.
+            const failed = (response.details ?? []).filter(d => !d.success).map(d => d.trust);
+            if (response.successful === false && failed.length) {
+                Snackbar.warning({
+                    title: "Project approved, imaging not started everywhere",
+                    text: `${name} has been approved, but imaging could not be started at ${failed.join(", ")}.`
+                });
+            }
+            else {
+                Snackbar.success({
+                    title: "Project Approved",
+                    text: `${name} has been approved.`
+                });
+            }
         }
-        else if (!decisions.approved.length) {
+        else if (response.projectStatus === "STAGED" && !decisions.approved.length) {
             Snackbar.success({
                 title: "All trusts declined",
                 text: `${name} stays staged. Unstage it to reconsider, or change a decision.`
             });
         }
-        else {
+        else if (response.projectStatus === "STAGED") {
             Snackbar.success({
                 title: "Trust decisions saved",
                 text: `${name} stays staged until every trust has a decision.`
             });
         }
+        else {
+            throw new Error(`Unexpected project status after saving trust decisions: ${response.projectStatus}`);
+        }
 
         emit("UpdateProject");
     }
-    catch {
+    catch (error) {
+        console.error(error);
         Snackbar.error({
             title: "Unable to save trust decisions",
-            text: `The trust decisions for ${name} could not be saved. Reload the project to check its status.`
+            text: getRefusalReason(error)
+                ?? `The trust decisions for ${name} could not be saved. Reload the project to check its status.`
         });
 
         errorStore.setError();

@@ -171,9 +171,18 @@ export interface ITrustDecisions {
     declined: string[];
 }
 
+export interface IImagingDispatchResult {
+    trust: string;
+    success: boolean;
+    message: string;
+}
+
 export interface IApproveProjectResponse {
     // APPROVED once every trust has a decision and at least one approved; otherwise the project stays STAGED.
     projectStatus: ProjectStatus;
+    // Present once the project is APPROVED: whether imaging started at every approved trust, and per trust.
+    successful?: boolean;
+    details?: IImagingDispatchResult[];
 }
 
 export async function approveProject(url: string, decisions: ITrustDecisions): Promise<IApproveProjectResponse> {
