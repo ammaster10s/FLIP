@@ -437,7 +437,7 @@ endef
 # redeploy the stack (Swarm rolls each service onto the new image; the bind-mounted
 # archive and xnat-db-data stay put; XNAT migrates its schema on boot), then re-run the
 # configure pass, which converges an already-initialised instance (receiver, DQR, PACS,
-# Container Service, dcm2niix). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
+# Container Service, dcm2niix, data types). Everything up-xnat does EXCEPT xnat-reset — that rm -rf
 # is why up-xnat can never be the upgrade verb.
 #
 # The ownership check is what turns a pre-1.10 site's upgrade into a loud, one-line fix

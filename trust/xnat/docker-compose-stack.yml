@@ -61,7 +61,6 @@ services:
       # kit file on any host whose XNAT is opened from another machine -- the OHIF whole-slide
       # viewport is fetched by the browser and goes black if this does not resolve there.
       - XNAT_SITE_URL=${XNAT_SITE_URL:-}
-      - PACS_DICOM_PORT=${PACS_DICOM_PORT:-4242}
       - XNAT_AETITLE=${XNAT_AETITLE-XNAT}
       # Upstream PACS, read by configure-xnat.sh. Defaults are the mocked Orthanc, so an
       # unconfigured stack behaves exactly as before; a real trust sets these in its kit file.

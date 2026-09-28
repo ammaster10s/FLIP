@@ -75,9 +75,9 @@ lists such a type as enabled and the admin UI looks right, but every permission 
 so archiving dies much later with "This user has insufficient privileges for the data type" — which
 reads like a problem with the user rather than a missing data type.
 
-> The K8s trust chart's `xnat-init-job` carries its own translations of the `configure-*` scripts and
-> does **not** yet run this one, so a K8s trust still needs the manual wizard step for slide
-> microscopy.
+> The K8s trust chart's `xnat-init-job` runs `configure-xnat.sh` and its own translation of
+> `configure-dcm2niix.sh`, but does **not** yet run this one, so a K8s trust still needs the manual
+> wizard step for slide microscopy.
 
 ## Docker Swarm
 
@@ -362,7 +362,7 @@ wants. Two things the viewer needs beyond the plugin itself, both of which fail 
 - **`siteUrl` must be a URL the browser can reach.** The viewer builds its DICOMweb roots from it
   and fetches them from the user's machine, so the Docker-internal `http://xnat-web:8080` makes
   every tile fail at DNS and the viewport render black — with *nothing* in the XNAT logs, because
-  the requests never arrive. `configure-xnat.sh` defaults it to `http://127.0.0.1:${XNAT_PORT}`;
+  the requests never arrive. `configure-xnat.sh` defaults it to `http://127.0.0.1:${XNAT_WEB_PORT}`;
   set `XNAT_SITE_URL` wherever the browser reaches XNAT by another name. It must also match the
   origin actually browsed, or the tile requests are cross-origin and carry no session cookie.
 
