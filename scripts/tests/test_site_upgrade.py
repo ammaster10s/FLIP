@@ -661,7 +661,8 @@ class PlanNewerRelease(_PlanHarness):
                 code, out = self._run(kit, stdin="y\n", tty=True)
             assert code == 0, out
             assert self.NOTICE in out
-            assert "Your hub runs v0.9.0, and a site cannot run ahead of its hub" in out
+            assert "The Central Hub runs v0.9.0, and a site cannot run ahead of the Central Hub" in out
+            assert "move to v0.10.0 once it has." in out
             assert self.CHOICE not in out
             assert "DOCKER_TAG=v0.9.0" in kit.read_text()
 
@@ -672,7 +673,7 @@ class PlanNewerRelease(_PlanHarness):
                 code, out = self._run(kit, "--tag", "v0.9.0", stdin="l\n", tty=True)
             assert code == su.EXIT_NOT_CONFIRMED, out
             assert self.NOTICE in out
-            assert "Your hub runs it." in out
+            assert "The Central Hub already runs it." in out
             assert self.CHOICE in out
             assert "Nothing changed" in out
             assert "fetch --tags origin" in out
@@ -702,7 +703,7 @@ class PlanNewerRelease(_PlanHarness):
             with mock.patch.object(su, "fetch_hub_version", return_value="sha-956532c"):
                 code, out = self._run(kit, "--tag", "v0.9.0", stdin="l\n", tty=True)
             assert code == su.EXIT_NOT_CONFIRMED, out
-            assert "Your hub runs it." in out
+            assert "The Central Hub already runs it." in out
         self.release_commit.assert_called_once_with("v0.10.0")
 
     def test_a_hub_on_another_sha_build_does_not_run_it(self):
@@ -712,7 +713,7 @@ class PlanNewerRelease(_PlanHarness):
             with mock.patch.object(su, "fetch_hub_version", return_value="sha-e7f4925"):
                 code, out = self._run(kit, "--tag", "v0.9.0", stdin="y\n", tty=True)
             assert code == 0, out
-            assert "Your hub runs sha-e7f4925, and a site cannot run ahead of its hub" in out
+            assert "The Central Hub runs sha-e7f4925, and a site cannot run ahead of the Central Hub" in out
             assert self.CHOICE not in out
 
     def test_a_scripted_run_keeps_the_specified_release_and_says_how_to_move(self):
@@ -743,7 +744,7 @@ class PlanNewerRelease(_PlanHarness):
                 code, out = self._run(kit, "--tag", "v0.9.0", stdin="y\n", tty=True)
             assert code == 0, out
             assert self.NOTICE in out
-            assert "only once your hub runs it" in out
+            assert "only once the Central Hub runs it" in out
             assert self.CHOICE not in out
             assert "DOCKER_TAG=v0.9.0" in kit.read_text()
 

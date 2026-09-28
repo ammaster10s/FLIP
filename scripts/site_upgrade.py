@@ -32,8 +32,8 @@ Everything that decides *what* to move to happens here, before any container is 
    GitHub prints one line and changes nothing). A newer stable platform release is reported
    with both release dates. When the hub already runs it (its tag, or the ``sha-`` build of its
    commit) the operator may stop and move the checkout to it instead (exit 4, nothing
-   changed); otherwise it is a warning, since a site cannot run ahead of its hub. ``--yes``
-   and ``--dry-run`` never ask.
+   changed); otherwise it is a warning, since a site cannot run ahead of the Central Hub.
+   ``--yes`` and ``--dry-run`` never ask.
 2. **Guards**, in this order. The tag must look like an image tag (``v<X.Y.Z>`` or
    ``sha-<short7>`` — never ``prod``/``stag``, which move under a site); a move to an older
    release (a release's own pre-releases included) needs ``--force``; for a release target the
@@ -320,7 +320,7 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
     """Tell the operator about a release newer than ``target``: the exit code to stop with, or None to go on.
 
     It is a choice only when the hub already runs the newer release; otherwise a warning, since a
-    site ahead of its hub is the untested pairing the hub default exists to avoid. Moving to it is
+    site ahead of the Central Hub is the untested pairing the hub default exists to avoid. Moving to it is
     always a re-run from a new checkout, never done here: the compose files and this very verb
     come from the checkout, which is still at the older release.
     """
@@ -337,11 +337,11 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
     published = {r.tag: r.published for r in releases}
     was = f" ({target} was released {_day(published[target])})" if target in published else ""
     print(f"⚠️  A more recent release exists: {newer.tag}, released {_day(newer.published)}{was}.")
-    behind = "and a site cannot run ahead of its hub — move to it once the hub has."
+    behind = f"and a site cannot run ahead of the Central Hub — move to {newer.tag} once it has."
 
     if source == "hub":
         # The target is the hub's own release: had the hub run the newer one, that would be the target.
-        print(f"   Your hub runs {target}, {behind}")
+        print(f"   The Central Hub runs {target}, {behind}")
         return None
     try:
         hub_version = fetch_hub_version(hub_url) if hub_url else None
@@ -350,13 +350,13 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
     runs = _runs_release(hub_version, newer)
     if runs is None:
         why = f"it reports {hub_version}" if hub_version else "its version could not be read"
-        print(f"   Move to it only once your hub runs it — a site cannot run ahead of its hub ({why}).")
+        print(f"   Move to it only once the Central Hub runs it — a site cannot run ahead of the Central Hub ({why}).")
         return None
     if not runs:
-        print(f"   Your hub runs {hub_version}, {behind}")
+        print(f"   The Central Hub runs {hub_version}, {behind}")
         return None
 
-    print("   Your hub runs it.")
+    print("   The Central Hub already runs it.")
     move = f"git -C {_REPO_ROOT} fetch --tags origin && git -C {_REPO_ROOT} checkout {newer.tag}"
     if not can_ask or not getattr(sys.stdin, "isatty", lambda: False)():
         print(f"   Continuing to {target}, as specified. To move to {newer.tag} instead: {move}, then re-run")
