@@ -12,12 +12,12 @@
 
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlalchemy import ColumnElement
+from sqlmodel import Session, col, select
 
 from flip_api.db.models.user_models import (
     TRUST_SCOPED_PERMISSIONS,
     PermissionRef,
-    Role,
     RolePermission,
     UserRole,
 )
@@ -42,18 +42,7 @@ def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
     Returns:
         set[UUID]: The permission IDs granted by the user's global roles.
     """
-    # Get user roles
-    user_roles = db.exec(
-        select(Role).join(UserRole).where(UserRole.user_id == user_id).where(UserRole.trust_id.is_(None))  # type: ignore[union-attr]
-    ).all()
-
-    # Get all permissions for these roles
-    user_permission_ids: set[UUID] = set()
-    for role in user_roles:
-        role_permissions = db.exec(select(RolePermission.permission_id).where(RolePermission.role_id == role.id)).all()
-        user_permission_ids.update(role_permissions)
-
-    return user_permission_ids
+    return _permission_ids(user_id, col(UserRole.trust_id).is_(None), db)
 
 
 def _user_trust_permission_ids(user_id: UUID, trust_id: UUID, db: Session) -> set[UUID]:
@@ -71,16 +60,32 @@ def _user_trust_permission_ids(user_id: UUID, trust_id: UUID, db: Session) -> se
     Returns:
         set[UUID]: The permission IDs granted by the user's roles at that trust.
     """
-    user_roles = db.exec(
-        select(Role).join(UserRole).where(UserRole.user_id == user_id).where(UserRole.trust_id == trust_id)
-    ).all()
+    return _permission_ids(user_id, col(UserRole.trust_id) == trust_id, db)
 
-    user_permission_ids: set[UUID] = set()
-    for role in user_roles:
-        role_permissions = db.exec(select(RolePermission.permission_id).where(RolePermission.role_id == role.id)).all()
-        user_permission_ids.update(role_permissions)
 
-    return user_permission_ids
+def _permission_ids(user_id: UUID, scope: ColumnElement[bool], db: Session) -> set[UUID]:
+    """
+    Collect the permission IDs granted by those of a user's roles that ``scope`` selects, in one query.
+
+    Every permission check pays this lookup, so it joins ``user_role`` to ``role_permission`` rather
+    than querying once per role.
+
+    Args:
+        user_id (UUID): The ID of the user to collect permissions for.
+        scope (ColumnElement[bool]): The condition on ``user_role`` rows that decides which grants count.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        set[UUID]: The permission IDs granted by the selected roles.
+    """
+    return set(
+        db.exec(
+            select(RolePermission.permission_id)
+            .join(UserRole, col(UserRole.role_id) == col(RolePermission.role_id))
+            .where(UserRole.user_id == user_id)
+            .where(scope)
+        ).all()
+    )
 
 
 def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db: Session) -> bool:

@@ -37,12 +37,9 @@ def test_module_does_not_expose_local_jwt_primitives():
 
 
 def _db_granting(*permissions: PermissionRef) -> MagicMock:
-    """Build a session mock whose single role grants exactly ``permissions``."""
+    """Build a session mock whose permission query returns exactly ``permissions``."""
     db = MagicMock()
-    db.exec.return_value.all.side_effect = [
-        [MagicMock(id=uuid4())],
-        [p.value for p in permissions],
-    ]
+    db.exec.return_value.all.return_value = [p.value for p in permissions]
     return db
 
 
@@ -128,20 +125,19 @@ def test_and_or_helpers_disagree_on_a_partially_privileged_user():
 
 
 def _db_with_trust_grant(*permissions: PermissionRef) -> MagicMock:
-    """Build a session mock whose trust-scoped role query finds one role holding ``permissions``.
+    """Build a session mock whose trust-scoped permission query returns ``permissions``.
 
     It answers whatever trust is asked: a mock cannot evaluate the ``UserRole.trust_id == trust_id`` predicate.
     That only the queried trust's rows count is pinned against real rows by
     ``tests/integration/test_auth_permissions_db_flow.py::test_has_trust_permissions_true_only_at_the_granted_trust``.
     """
     db = MagicMock()
-    # First call selects the user's roles at the trust, second selects that role's permissions.
-    db.exec.return_value.all.side_effect = [[MagicMock(id=uuid4())], [p.value for p in permissions]]
+    db.exec.return_value.all.return_value = [p.value for p in permissions]
     return db
 
 
 def test_has_trust_permissions_allows_a_grant_held_at_the_trust():
-    """The happy path: a permission the trust-scoped role query returns satisfies the check."""
+    """The happy path: a permission the trust-scoped query returns satisfies the check."""
     db = _db_with_trust_grant(PermissionRef.CAN_APPROVE_FOR_TRUST)
 
     assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], uuid4(), db) is True
@@ -150,7 +146,7 @@ def test_has_trust_permissions_allows_a_grant_held_at_the_trust():
 def test_has_trust_permissions_denies_when_the_trust_grants_nothing():
     """A user with no role at this trust is denied, even though the DB query succeeds."""
     db = MagicMock()
-    db.exec.return_value.all.side_effect = [[], []]
+    db.exec.return_value.all.return_value = []
 
     assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], uuid4(), db) is False
 
@@ -164,13 +160,13 @@ def test_has_trust_permissions_ignores_global_grants():
     rights over every trust's data. That is precisely the hole FLIP#1258 exists to close, so
     it is asserted here rather than left to the query being written correctly.
 
-    The mock returns no roles for the trust-scoped query while the *global* helper would have
+    The mock returns no grants for the trust-scoped query while the *global* helper would have
     returned a fully-privileged Admin; a naive implementation therefore passes, and the
     correct one denies.
     """
     db = MagicMock()
-    # The trust-scoped role query finds nothing: the user's Admin grant carries trust_id NULL.
-    db.exec.return_value.all.side_effect = [[], []]
+    # The trust-scoped query finds nothing: the user's Admin grant carries trust_id NULL.
+    db.exec.return_value.all.return_value = []
 
     assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], uuid4(), db) is False
 
@@ -219,7 +215,7 @@ def test_trust_scoped_permissions_are_not_reachable_through_the_global_check():
     merging the two lookups back together.
     """
     db = MagicMock()
-    db.exec.return_value.all.side_effect = [[], []]
+    db.exec.return_value.all.return_value = []
 
     assert has_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], db) is False
 

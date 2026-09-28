@@ -25,7 +25,11 @@ Mocked-Session unit tests can't catch a join-column rename, an FK drift, or the 
 contract drifting away from ``PermissionRef`` / ``RoleRef`` — these can.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from uuid import uuid4
+
+from sqlalchemy import Engine, event
 
 from flip_api.auth.auth_utils import has_permissions, has_trust_permissions
 from flip_api.db.models.main_models import Trust
@@ -149,6 +153,59 @@ def test_has_permissions_dedupes_across_multiple_roles(session):
     session.commit()
 
     assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
+
+
+@contextmanager
+def _statements_sent_to(engine: Engine) -> Iterator[list[str]]:
+    """Collect every SQL statement the engine sends while the block runs."""
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+
+def test_a_global_check_is_one_query_however_many_roles_the_user_holds(session, integration_engine):
+    """Every permission check pays this lookup, so it reads all the user's roles' grants in one query."""
+    user_id = uuid4()
+    session.add_all(
+        [
+            UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value),
+            UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value),
+        ]
+    )
+    session.commit()
+
+    with _statements_sent_to(integration_engine) as statements:
+        assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
+
+    assert len(statements) == 1, statements
+
+
+def test_a_trust_check_is_one_query(session, integration_engine):
+    """A Trust Admin's check at their trust costs one query, like the global one."""
+    user_id = uuid4()
+    trust = Trust(name="Trust Admin Flow Query Count")
+    session.add(trust)
+    session.flush()
+    trust_id = trust.id
+    session.add_all(
+        [
+            UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value),
+            UserRole(user_id=user_id, role_id=RoleRef.TRUST_ADMIN.value, trust_id=trust_id),
+        ]
+    )
+    session.commit()
+
+    with _statements_sent_to(integration_engine) as statements:
+        assert has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust_id, session) is True
+
+    assert len(statements) == 1, statements
 
 
 def test_has_permissions_returns_false_for_unknown_user(session):
