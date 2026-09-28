@@ -446,8 +446,8 @@ Objective A — Managing risk
      - Shared
      - The per-project, per-trust approval gate places the decision with the
        organisation that carries the risk; the Central Hub records the outcome per
-       project–trust pairing, timestamped, with the approver in the project's audit
-       trail.
+       project–trust pairing — approved or declined — timestamped, with the hub user
+       who recorded it on the record and in the project's audit trail.
      - The gate is a hub-side record of the trust's decision, not a control on the
        trust's own deployment; what the trust enforces locally is the query
        validation and row-level suppression under E3.b.

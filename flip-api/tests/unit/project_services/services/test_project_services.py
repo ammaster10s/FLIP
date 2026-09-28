@@ -20,6 +20,7 @@ from psycopg2 import DatabaseError
 
 from flip_api.db.models.main_models import (
     Projects,
+    ProjectTrustIntersect,
     Queries,
     QueryStats,
     Trust,
@@ -37,10 +38,13 @@ from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import (
     ProjectStatus,
+    TaskStatus,
+    TrustApprovalStatus,
     XNATImageStatus,
 )
 from flip_api.project_services.services.project_services import (
-    approve_project,
+    InvalidTrustDecisionsError,
+    ProjectNotStagedError,
     create_project,
     delete_project,
     edit_project_service,
@@ -51,6 +55,7 @@ from flip_api.project_services.services.project_services import (
     get_reimport_queries_service,
     get_trusts_approval_status_for_project,
     get_users_with_access,
+    record_trust_decisions,
     stage_project_service,
     unstage_project_service,
     update_project_status,
@@ -272,99 +277,159 @@ class TestEditProjectService:
         mock_db_session.rollback.assert_called_once()
 
 
-class TestApproveProject:
-    def test_approve_project_success(
-        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
-    ):
-        project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
-        user_id = uuid4()
+def _pending_intersects(project_id: UUID, trust_ids: list[UUID]) -> list[ProjectTrustIntersect]:
+    return [ProjectTrustIntersect(project_id=project_id, trust_id=trust_id) for trust_id in trust_ids]
 
-        mock_db_session.get.return_value = sample_project
-        mock_intersect = MagicMock()
-        mock_db_session.exec.return_value.one_or_none.return_value = mock_intersect
+
+def _exec_results(project: Projects | None, intersects=(), latest_query=None, orphans=()) -> list[MagicMock]:
+    """Mocked ``db.exec`` results in call order: locked project, its intersects, latest query, its PENDING tasks."""
+    project_exec = MagicMock()
+    project_exec.first.return_value = project
+    intersects_exec = MagicMock()
+    intersects_exec.all.return_value = list(intersects)
+    latest_query_exec = MagicMock()
+    latest_query_exec.first.return_value = latest_query
+    orphan_exec = MagicMock()
+    orphan_exec.all.return_value = list(orphans)
+    return [project_exec, intersects_exec, latest_query_exec, orphan_exec]
+
+
+class TestRecordTrustDecisions:
+    """Mocked-session coverage of the control flow; SQL behaviour and the lock are in test_project_db_flow.py."""
+
+    @pytest.fixture
+    def staged_project(self, sample_project: Projects) -> Projects:
+        sample_project.status = ProjectStatus.STAGED
+        return sample_project
+
+    def test_approving_every_trust_approves_the_project(
+        self, mock_db_session: MagicMock, staged_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        project_approval = IProjectApproval(project_id=staged_project.id, trust_ids=sample_trust_ids)
+        user_id = uuid4()
+        intersects = _pending_intersects(staged_project.id, sample_trust_ids)
+        mock_db_session.exec.side_effect = _exec_results(staged_project, intersects)
 
         with (
             patch(f"{MOCK_SERVICE_PATH}.update_project_status") as mock_update_status,
             patch(f"{MOCK_SERVICE_PATH}.audit_project_action") as mock_audit,
         ):
-            result = approve_project(mock_db_session, project_approval, user_id)
+            outcome = record_trust_decisions(mock_db_session, project_approval, user_id)
 
-            assert result is True
-            assert mock_intersect.approved is True
-            mock_db_session.add.assert_called()
-            mock_update_status.assert_called_once()
-            mock_audit.assert_called_once_with(
-                project_id=project_approval.project_id,
-                action=ProjectAuditAction.APPROVE,
-                user_id=user_id,
-                session=mock_db_session,
-            )
-            mock_db_session.commit.assert_called_once()
+        assert outcome.project_status == ProjectStatus.APPROVED
+        assert sorted(outcome.approved_trust_ids) == sorted(sample_trust_ids)
+        assert {row.status for row in intersects} == {TrustApprovalStatus.APPROVED}
+        assert {row.decided_by for row in intersects} == {user_id}
+        mock_update_status.assert_called_once_with(
+            project_id=staged_project.id, new_status=ProjectStatus.APPROVED, session=mock_db_session
+        )
+        per_trust = [call.kwargs["trust_id"] for call in mock_audit.call_args_list if "trust_id" in call.kwargs]
+        assert sorted(per_trust) == sorted(sample_trust_ids)
+        mock_audit.assert_any_call(
+            project_id=staged_project.id,
+            action=ProjectAuditAction.APPROVE,
+            user_id=user_id,
+            session=mock_db_session,
+        )
+        mock_db_session.commit.assert_called_once()
 
-    def test_approve_project_not_found(self, mock_db_session: MagicMock, sample_trust_ids: list[UUID]):
+    def test_every_trust_declined_keeps_the_project_staged(
+        self, mock_db_session: MagicMock, staged_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        project_approval = IProjectApproval(
+            project_id=staged_project.id, trust_ids=[], declined_trust_ids=sample_trust_ids
+        )
+        intersects = _pending_intersects(staged_project.id, sample_trust_ids)
+        mock_db_session.exec.side_effect = _exec_results(staged_project, intersects)
+
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.update_project_status") as mock_update_status,
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action") as mock_audit,
+        ):
+            outcome = record_trust_decisions(mock_db_session, project_approval, uuid4())
+
+        assert (outcome.project_status, outcome.approved_trust_ids) == (ProjectStatus.STAGED, [])
+        assert {row.status for row in intersects} == {TrustApprovalStatus.DECLINED}
+        mock_update_status.assert_not_called()
+        assert {call.kwargs["action"] for call in mock_audit.call_args_list} == {ProjectAuditAction.DECLINE_TRUST}
+        mock_db_session.commit.assert_called_once()
+
+    def test_project_not_found(self, mock_db_session: MagicMock, sample_trust_ids: list[UUID]):
         project_approval = IProjectApproval(project_id=uuid4(), trust_ids=sample_trust_ids)
-        user_id = uuid4()
-
-        mock_db_session.get.return_value = None
+        mock_db_session.exec.side_effect = _exec_results(None)
 
         with pytest.raises(ValueError, match="does not exist"):
-            approve_project(mock_db_session, project_approval, user_id)
+            record_trust_decisions(mock_db_session, project_approval, uuid4())
 
-    def test_approve_project_trust_not_found(
+    def test_project_no_longer_staged_writes_nothing(
         self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
     ):
+        sample_project.status = ProjectStatus.APPROVED
         project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
-        user_id = uuid4()
+        mock_db_session.exec.side_effect = _exec_results(sample_project)
 
-        mock_db_session.get.return_value = sample_project
-        mock_db_session.exec.return_value.one_or_none.return_value = None
+        with pytest.raises(ProjectNotStagedError):
+            record_trust_decisions(mock_db_session, project_approval, uuid4())
 
-        result = approve_project(mock_db_session, project_approval, user_id)
+        mock_db_session.add.assert_not_called()
+        mock_db_session.commit.assert_not_called()
 
-        assert result is False
-        mock_db_session.rollback.assert_called_once()
-
-    def test_approve_project_cancels_orphan_pending_tasks(
-        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
+    def test_trust_not_staged_for_the_project_writes_nothing(
+        self, mock_db_session: MagicMock, staged_project: Projects, sample_trust_ids: list[UUID]
     ):
-        """A trust the project is approved *without* (because it never
-        responded) shouldn't keep an orphan PENDING task sitting in the
-        queue. Approval flips those tasks to CANCELLED so the trust
-        skips them on its next poll."""
-        from flip_api.domain.schemas.status import TaskStatus
+        project_approval = IProjectApproval(project_id=staged_project.id, trust_ids=sample_trust_ids)
+        mock_db_session.exec.side_effect = _exec_results(
+            staged_project, _pending_intersects(staged_project.id, sample_trust_ids[:1])
+        )
 
-        project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
-        user_id = uuid4()
-        mock_db_session.get.return_value = sample_project
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action") as mock_audit,
+            pytest.raises(InvalidTrustDecisionsError, match=str(sample_trust_ids[1])),
+        ):
+            record_trust_decisions(mock_db_session, project_approval, uuid4())
 
-        # Mock the trust-intersect lookup + latest_query + orphan tasks chain.
-        # one_or_none() drives the per-trust approval loop; .first() and .all()
-        # drive the new cancel block.
-        mock_intersect = MagicMock()
-        latest_query = MagicMock(id=uuid4())
+        mock_audit.assert_not_called()
+        mock_db_session.add.assert_not_called()
+        mock_db_session.commit.assert_not_called()
+
+    def test_trust_both_approved_and_declined_writes_nothing(
+        self, mock_db_session: MagicMock, staged_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        project_approval = IProjectApproval(
+            project_id=staged_project.id, trust_ids=sample_trust_ids, declined_trust_ids=sample_trust_ids[:1]
+        )
+        mock_db_session.exec.side_effect = _exec_results(
+            staged_project, _pending_intersects(staged_project.id, sample_trust_ids)
+        )
+
+        with pytest.raises(InvalidTrustDecisionsError, match="both approved and declined"):
+            record_trust_decisions(mock_db_session, project_approval, uuid4())
+
+        mock_db_session.add.assert_not_called()
+        mock_db_session.commit.assert_not_called()
+
+    def test_approval_cancels_orphan_pending_tasks(
+        self, mock_db_session: MagicMock, staged_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        """Approval closes the cohort-query stage: a query task no trust has picked up yet is cancelled, so it
+        is not run on the next poll."""
+        project_approval = IProjectApproval(project_id=staged_project.id, trust_ids=sample_trust_ids)
         orphan_a = MagicMock(status=TaskStatus.PENDING)
         orphan_b = MagicMock(status=TaskStatus.PENDING)
-
-        approval_exec = MagicMock()
-        approval_exec.one_or_none.return_value = mock_intersect
-        latest_query_exec = MagicMock()
-        latest_query_exec.first.return_value = latest_query
-        orphan_exec = MagicMock()
-        orphan_exec.all.return_value = [orphan_a, orphan_b]
-
-        # Per-trust approval calls fire first (one per sample trust), then
-        # the latest-query lookup, then the orphan PENDING fetch.
-        mock_db_session.exec.side_effect = (
-            [approval_exec] * len(sample_trust_ids)
-            + [latest_query_exec, orphan_exec]
+        mock_db_session.exec.side_effect = _exec_results(
+            staged_project,
+            _pending_intersects(staged_project.id, sample_trust_ids),
+            latest_query=MagicMock(id=uuid4()),
+            orphans=[orphan_a, orphan_b],
         )
 
         with (
             patch(f"{MOCK_SERVICE_PATH}.update_project_status"),
             patch(f"{MOCK_SERVICE_PATH}.audit_project_action"),
         ):
-            assert approve_project(mock_db_session, project_approval, user_id) is True
+            outcome = record_trust_decisions(mock_db_session, project_approval, uuid4())
 
+        assert outcome.project_status == ProjectStatus.APPROVED
         assert orphan_a.status == TaskStatus.CANCELLED
         assert orphan_b.status == TaskStatus.CANCELLED
         assert orphan_a.updated_at is not None
@@ -511,17 +576,18 @@ class TestGetApprovedTrustsForProject:
 
 
 class TestGetTrustsApprovalStatusForProject:
-    def test_get_trusts_approval_status_unpacks_six_columns(self, mock_db_session: MagicMock):
+    def test_get_trusts_approval_status_unpacks_each_decision(self, mock_db_session: MagicMock):
         project_id = uuid4()
         trust_a, trust_b, trust_c = uuid4(), uuid4(), uuid4()
-        approved_at_a = datetime(2026, 3, 19, 10, 30, 0)
+        decider = uuid4()
+        decided_at_a = datetime(2026, 3, 19, 10, 30, 0)
         mock_results = [
-            # Now joined-and-grouped by project_id; first column is project_id.
-            (project_id, trust_a, "Trust A", "TA", True, approved_at_a),
-            (project_id, trust_b, "Trust B", "TB", False, None),
-            # `approved` may come back as None for unstaged trusts; should normalise to False.
-            # `code` and `approved_at` may be None on legacy rows.
-            (project_id, trust_c, "Trust C", None, None, None),
+            # Joined-and-grouped by project_id; first column is project_id.
+            (project_id, trust_a, "Trust A", "TA", TrustApprovalStatus.APPROVED, decider, "Ada", decided_at_a),
+            # An approval predating FLIP#1318 has a date but no decider.
+            (project_id, trust_b, "Trust B", "TB", TrustApprovalStatus.APPROVED, None, None, decided_at_a),
+            # `code` may be None on legacy rows; a PENDING trust has no decider or date.
+            (project_id, trust_c, "Trust C", None, TrustApprovalStatus.PENDING, None, None, None),
         ]
 
         mock_db_session.exec.return_value.all.return_value = mock_results
@@ -530,11 +596,18 @@ class TestGetTrustsApprovalStatusForProject:
 
         assert len(result) == 3
         assert all(isinstance(t, IApprovedTrust) for t in result)
-        assert (result[0].id, result[0].name, result[0].code, result[0].approved) == (trust_a, "Trust A", "TA", True)
-        assert result[0].approved_at == approved_at_a.isoformat(timespec="milliseconds")
-        assert (result[1].id, result[1].name, result[1].code, result[1].approved) == (trust_b, "Trust B", "TB", False)
-        assert result[1].approved_at is None
-        assert (result[2].id, result[2].name, result[2].code, result[2].approved) == (trust_c, "Trust C", None, False)
+        assert (result[0].id, result[0].name, result[0].code, result[0].status) == (
+            trust_a,
+            "Trust A",
+            "TA",
+            TrustApprovalStatus.APPROVED,
+        )
+        assert (result[0].decided_by, result[0].decided_by_name) == (decider, "Ada")
+        # `Z` suffix: the column is naive UTC, and a bare ISO string would be read as local time by the browser.
+        assert result[0].decided_at == "2026-03-19T10:30:00.000Z"
+        assert (result[1].decided_by, result[1].decided_by_name) == (None, None)
+        assert result[1].decided_at == "2026-03-19T10:30:00.000Z"
+        assert (result[2].code, result[2].status, result[2].decided_at) == (None, TrustApprovalStatus.PENDING, None)
 
     def test_get_trusts_approval_status_empty(self, mock_db_session: MagicMock):
         project_id = uuid4()
