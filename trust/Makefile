@@ -31,7 +31,7 @@ include ../deploy/env_mode.mk
 # file's "Hub-shared (managed)" section, populated by `make register-trusts`
 # / `make sync-trust-kits`, carries the values that used to flow from hub env
 # (AES_KEY_BASE64, CENTRAL_HUB_API_URL, DOCKER_*, FL_BACKEND, NLB_SUBDOMAIN,
-# etc.) — see HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py.
+# etc.) — see HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py.
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
 # Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. The
