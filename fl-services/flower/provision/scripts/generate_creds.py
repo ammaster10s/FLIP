@@ -20,7 +20,6 @@ import argparse
 import datetime
 import ipaddress
 import os
-import shutil
 from pathlib import Path
 
 from cryptography import x509

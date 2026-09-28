@@ -93,13 +93,13 @@ TRUST_LOCAL_PASSWORD_KEYS: tuple[str, ...] = (
 # ANSI colour codes — empty strings when stdout isn't a tty so the output
 # stays clean in CI logs / pipes.
 _TTY = sys.stdout.isatty()
-RESET  = "\033[0m"  if _TTY else ""
-BOLD   = "\033[1m"  if _TTY else ""
-DIM    = "\033[2m"  if _TTY else ""
-GREEN  = "\033[32m" if _TTY else ""
-RED    = "\033[31m" if _TTY else ""
+RESET = "\033[0m" if _TTY else ""
+BOLD = "\033[1m" if _TTY else ""
+DIM = "\033[2m" if _TTY else ""
+GREEN = "\033[32m" if _TTY else ""
+RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
-CYAN   = "\033[36m" if _TTY else ""
+CYAN = "\033[36m" if _TTY else ""
 
 
 class Status(Enum):
@@ -265,7 +265,7 @@ def check_kit_file(kit: str, kit_file: Path) -> Check:
     return Check(
         "Kit file MISSING", Status.FAIL, f"trust/.env.{kit}",
         hints=[
-            f"Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
+            "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
             f"  KIT={kit}` from deploy/providers/AWS), extract the tarball, then:",
             f"    cp <extracted-dir>/.env.{kit} trust/.env.{kit}",
         ],
@@ -345,7 +345,10 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         )
     stale_hints = [
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
-        "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>",
+        (
+            "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  "
+            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>"
+        ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]
     kit_fingerprint = kit_key_fingerprint(kit_vars)
@@ -414,7 +417,7 @@ def check_expected_trust_id_self_check(kit_vars: dict[str, str], kit_present: bo
             hints=[
                 "Without EXPECTED_TRUST_ID, a kit deployed to the wrong host will",
                 "  silently act as the wrong trust until something downstream breaks.",
-                f"Re-register on the hub side and re-send the kit, OR ask the admin to",
+                "Re-register on the hub side and re-send the kit, OR ask the admin to",
                 f"  fill the value into trust/.env.{kit} before bringing the stack up.",
             ],
         )
@@ -781,9 +784,9 @@ def main() -> None:
     ip = fetch_public_ip()
     ip_display = ip or f"{DIM}<could not detect — set it manually>{RESET}"
     print(f"  {BOLD}Your public IP:{RESET}  {CYAN}{ip_display}{RESET}")
-    print(f"  Send this to the FLIP admin so they can open the prod FL-server NLB")
+    print("  Send this to the FLIP admin so they can open the prod FL-server NLB")
     print(f"  (the admin runs this from {BOLD}deploy/providers/AWS{RESET}, with prod AWS creds):")
-    print(f"      cd deploy/providers/AWS")
+    print("      cd deploy/providers/AWS")
     print(f"      AWS_PROFILE=prod make allow-local-trust-nlb "
           f"LOCAL_TRUST_IP={ip or '<your-ip>'} PROD=true")
     print()
@@ -818,7 +821,10 @@ def main() -> None:
             # docker group (root-equivalent), so the stack comes up via sudo.
             print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
         if n_warn:
-            print(f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above before running in production.")
+            print(
+                f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above "
+                "before running in production."
+            )
         print()
         sys.exit(0)
     parts = [f"{n_pass} pass", f"{n_fail} fail", f"{n_pending} pending"]

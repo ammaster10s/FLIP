@@ -33,9 +33,9 @@ This script reads that kit file and:
      infrastructure secrets (XNAT / OMOP / S3) created by the chart untouched.
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
-     FL backend, AWS region, the fl-client kit S3 bucket, and the FL kit slot
-     (so the NVFLARE kit path resolves to the slot the hub assigned, not the
-     cosmetic trust name).
+     FL backend, AWS region, trust number, where the FL kit sits on the node,
+     the release image pins, the OMOP vocabulary bucket and the FL-server
+     egress port.
 
 The plaintext keys are never written to disk — they go straight from the kit
 file into the Kubernetes Secret over kubectl's TLS channel. The generated
@@ -198,7 +198,6 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
 def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
     """Render the Helm values override (no secrets) from kit settings."""
     trust_name = kit.get("TRUST_NAME", code)
-    slot = kit.get("FL_KIT_SLOT", "").strip()
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"

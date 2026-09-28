@@ -55,19 +55,19 @@ WIDTH = 71
 # ─────────────────────────────────────────────────────────────────────
 
 _TTY = sys.stdout.isatty()
-RESET  = "\033[0m"  if _TTY else ""
-BOLD   = "\033[1m"  if _TTY else ""
-DIM    = "\033[2m"  if _TTY else ""
-GREEN  = "\033[32m" if _TTY else ""
-RED    = "\033[31m" if _TTY else ""
+RESET = "\033[0m" if _TTY else ""
+BOLD = "\033[1m" if _TTY else ""
+DIM = "\033[2m" if _TTY else ""
+GREEN = "\033[32m" if _TTY else ""
+RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
-CYAN   = "\033[36m" if _TTY else ""
+CYAN = "\033[36m" if _TTY else ""
 
 
 class Status(Enum):
-    PASS    = ("✅", GREEN)
-    FAIL    = ("❌", RED)
-    WARN    = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
+    PASS = ("✅", GREEN)
+    FAIL = ("❌", RED)
+    WARN = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
 
     @property
     def glyph(self) -> str:
@@ -303,7 +303,7 @@ def check_public_ip(provided_ip: str | None) -> Check:
         "cannot reach api.ipify.org — IP undetectable",
         hints=[
             "Provide the K8s node's public/egress IP explicitly:",
-            f"  make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=<env>",
+            "  make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=<env>",
         ],
     )
 

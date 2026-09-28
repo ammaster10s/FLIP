@@ -47,7 +47,6 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 
 
 # Color codes for terminal output
@@ -597,7 +596,15 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
-def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, expected: int | list[int], namespace: str, timeout: int = 20) -> bool:
+def forward_then_check(
+    pod_name: str,
+    remote_port: int,
+    url: str,
+    name: str,
+    expected: int | list[int],
+    namespace: str,
+    timeout: int = 20,
+) -> bool:
     """Port-forward to a pod, check the endpoint, then clean up.
 
     This is a diagnostic convenience — not a persistent tunnel. Each check
@@ -614,7 +621,6 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
     Returns:
         True if endpoint responds as expected
     """
-    import threading
     import socket
 
     # Find a free local port
@@ -717,7 +723,11 @@ def main(
                 match = [r for r in releases if r.get("name") == helm_release]
                 if match:
                     rel = match[0]
-                    print_status("PASS", f"Helm release '{helm_release}' is {rel.get('status', '?')} (revision {rel.get('revision', '?')})")
+                    print_status(
+                        "PASS",
+                        f"Helm release '{helm_release}' is {rel.get('status', '?')} "
+                        f"(revision {rel.get('revision', '?')})",
+                    )
                 else:
                     print_status("FAIL", f"Helm release '{helm_release}' not found in namespace '{namespace}'")
             except json.JSONDecodeError:
@@ -832,7 +842,9 @@ def main(
             if gpu_count and int(gpu_count) > 0:
                 print_status("PASS", f"fl-client has {gpu_count} GPU(s) allocated (NUM_AVAILABLE_GPUS={gpu_count})")
             else:
-                print_status("WARN", "fl-client has no GPUs allocated — check nvidia-device-plugin and time-slicing config")
+                print_status(
+                    "WARN", "fl-client has no GPUs allocated — check nvidia-device-plugin and time-slicing config"
+                )
         else:
             print_status("INFO", "No fl-client pods — skipping GPU check")
 
@@ -861,7 +873,9 @@ def main(
             if phase_str == "Bound":
                 print_status("PASS", f"PVC '{pvc_short}' is {phase_str}")
             elif phase_str == "Pending":
-                print_status("WARN", f"PVC '{pvc_short}' is {phase_str} — may be waiting for first consumer or provisioner")
+                print_status(
+                    "WARN", f"PVC '{pvc_short}' is {phase_str} — may be waiting for first consumer or provisioner"
+                )
             else:
                 print_status("FAIL", f"PVC '{pvc_short}' status: {phase_str}")
 
@@ -957,7 +971,7 @@ def main(
                 minio_local = s.getsockname()[1]
 
             minio_proc = subprocess.Popen(
-                ["kubectl", "port-forward", f"service/minio", f"{minio_local}:9000",
+                ["kubectl", "port-forward", "service/minio", f"{minio_local}:9000",
                  "-n", namespace],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
@@ -1014,7 +1028,12 @@ def main(
 
     for label_sel, svc_name in critical_containers.items():
         pods = kubectl_list(
-            ["pods", "-l", f"app.kubernetes.io/instance={helm_release},{label_sel}", "--field-selector=status.phase=Running"],
+            [
+                "pods",
+                "-l",
+                f"app.kubernetes.io/instance={helm_release},{label_sel}",
+                "--field-selector=status.phase=Running",
+            ],
             namespace,
         )
         if not pods:
@@ -1089,7 +1108,9 @@ def main(
                         used = int(fields[2])
                         mem_pct = int((used / total) * 100)
                         if mem_pct < 90:
-                            print_status("PASS", f"Memory usage is {mem_pct}% ({used // 1024} MiB / {total // 1024} MiB)")
+                            print_status(
+                                "PASS", f"Memory usage is {mem_pct}% ({used // 1024} MiB / {total // 1024} MiB)"
+                            )
                         else:
                             print_status("WARN", f"Memory usage is {mem_pct}% — high")
                     except (ValueError, ZeroDivisionError):

@@ -198,7 +198,7 @@ def test_5_in_place_replacement_on_template() -> None:
         _run(root, "Trust_1")
         lines = kit.read_text().splitlines()
         # AES_KEY_BASE64 line must still be at index 2 (between OMOP_DB_PORT and CENTRAL_HUB).
-        _assert(lines[2] == "AES_KEY_BASE64=v1==", f"AES_KEY_BASE64 in-place (line 2)")
+        _assert(lines[2] == "AES_KEY_BASE64=v1==", "AES_KEY_BASE64 in-place (line 2)")
         # Comment + creds line preserved.
         _assert("# Kit credentials section" in lines, "comment preserved")
         _assert("TRUST_API_KEY=preserved" in lines, "creds preserved")

@@ -486,6 +486,12 @@ uv run ruff check . --fix
 uv run mypy .
 ```
 
+CI also runs one `ruff check` over every tracked Python file ([`lint_python.yml`](.github/workflows/lint_python.yml)), which is the only lint for the files outside a service directory — `scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/` and the rest. It never auto-fixes, so a fixable error fails it even where a service's own `make test` would have fixed it silently. Reproduce it from the repository root:
+
+```bash
+git ls-files -z -- '*.py' '*.pyi' | xargs -0 uvx ruff@0.14.7 check --force-exclude
+```
+
 Most services have a `Makefile` with a `test` target that runs linting, type checking, and tests in sequence. For example, from a Python service directory:
 
 ```bash
