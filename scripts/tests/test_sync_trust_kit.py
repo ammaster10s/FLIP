@@ -229,14 +229,20 @@ def test_6_optional_key_absent_is_tolerated() -> None:
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
             ["uv", "run", "--no-config", str(copy), "Trust_1"],
-            cwd=root, env=env, capture_output=True, text=True,
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
         )
         _assert(result.returncode == 0, "exit 0 despite absent DOCKER_FL_REGISTRY", result.stderr)
         content = kit.read_text()
         _assert("AES_KEY_BASE64=v1==" in content, "present keys still synced")
         _assert("CENTRAL_HUB_API_URL=http://localhost:8080/api" in content, "other present keys synced")
-        live_fl_reg = [ln for ln in content.splitlines()
-                       if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == "DOCKER_FL_REGISTRY"]
+        live_fl_reg = [
+            ln
+            for ln in content.splitlines()
+            if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == "DOCKER_FL_REGISTRY"
+        ]
         _assert(not live_fl_reg, "absent optional key not written", str(live_fl_reg))
 
 

@@ -480,9 +480,7 @@ def authenticate_trust(
     #      (single compare_digest over equal-length digests; no early-exit
     #      shortcuts that depend on the cached match).
     for candidate in candidates:
-        if candidate.api_key_hash is not None and hmac.compare_digest(
-            provided_hash, candidate.api_key_hash
-        ):
+        if candidate.api_key_hash is not None and hmac.compare_digest(provided_hash, candidate.api_key_hash):
             matched = candidate
 
     if matched is not None:

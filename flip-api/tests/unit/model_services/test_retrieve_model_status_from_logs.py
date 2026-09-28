@@ -91,9 +91,7 @@ def test_upstream_error_does_not_leak_the_elasticsearch_url(
 @patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
 @patch(f"{MODULE}.get_model_status")
 @patch(f"{MODULE}.can_access_model", return_value=True)
-def test_upstream_404_still_reports_logs_not_found(
-    mock_can_access, mock_get_model_status, mock_get_secret, mock_post
-):
+def test_upstream_404_still_reports_logs_not_found(mock_can_access, mock_get_model_status, mock_get_secret, mock_post):
     """The 404 branch was already sanitised — keep it distinguishable from the 500 branch."""
     mock_get_model_status.return_value = MagicMock(deleted=False)
     mock_post.return_value.raise_for_status.side_effect = _elastic_status_error(404)

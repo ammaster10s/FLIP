@@ -30,14 +30,14 @@ from nvflare.apis.fl_context import FLContext
 
 
 class ClientEventHandler(FLComponent):
-    """ ClientEventHandler is a generic component that handles system events triggered by nvflare
-        or custom flip events. It executes logic inside its own event handler but may also call
-        other component's event handlers directly to help overcome the non-deterministic order
-        in which nvflare handles events.
+    """ClientEventHandler is a generic component that handles system events triggered by nvflare
+    or custom flip events. It executes logic inside its own event handler but may also call
+    other component's event handlers directly to help overcome the non-deterministic order
+    in which nvflare handles events.
 
-        Args:
-            cleanup_id (string, required)
-        Raises:
+    Args:
+        cleanup_id (string, required)
+    Raises:
     """
 
     def __init__(self, cleanup_id: str = "cleanup_images"):
@@ -62,11 +62,9 @@ class ClientEventHandler(FLComponent):
             engine = fl_ctx.get_engine()
             self.cleanup = engine.get_component(self.cleanup_id)
 
-            if self.cleanup is None \
-                    or not isinstance(self.cleanup, CleanupImages):
+            if self.cleanup is None or not isinstance(self.cleanup, CleanupImages):
                 self.system_panic(
-                    f"'cleanup_id' component must be CleanupImages. "
-                    f"But got: {type(self.cleanup)}",
+                    f"'cleanup_id' component must be CleanupImages. But got: {type(self.cleanup)}",
                     fl_ctx,
                 )
                 return

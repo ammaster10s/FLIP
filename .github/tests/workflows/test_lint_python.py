@@ -28,9 +28,7 @@ from pathlib import Path
 
 WORKFLOW = Path(__file__).resolve().parents[2] / "workflows" / "lint_python.yml"
 
-LINT_COMMAND = (
-    "git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff check --force-exclude --no-fix --output-format=github"
-)
+LINT_COMMAND = "git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff check --force-exclude --no-fix --output-format=github"
 
 
 def code_text() -> str:

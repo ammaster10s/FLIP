@@ -458,10 +458,12 @@ def get_imaging_project_statuses(
                 task = TrustTask(
                     trust_id=row_project.trust_id,
                     task_type=TaskType.GET_IMAGING_STATUS,
-                    payload=json.dumps({
-                        "imaging_project_id": str(row_project.xnat_project_id),
-                        "encoded_query": encoded_query,
-                    }),
+                    payload=json.dumps(
+                        {
+                            "imaging_project_id": str(row_project.xnat_project_id),
+                            "encoded_query": encoded_query,
+                        }
+                    ),
                 )
                 db.add(task)
 
@@ -578,10 +580,12 @@ def reimport_failed_studies(
             task = TrustTask(
                 trust_id=query.trust_id,
                 task_type=TaskType.REIMPORT_STUDIES,
-                payload=json.dumps({
-                    "imaging_project_id": str(query.xnat_project_id),
-                    "encoded_query": encoded_query,
-                }),
+                payload=json.dumps(
+                    {
+                        "imaging_project_id": str(query.xnat_project_id),
+                        "encoded_query": encoded_query,
+                    }
+                ),
             )
             db.add(task)
 
