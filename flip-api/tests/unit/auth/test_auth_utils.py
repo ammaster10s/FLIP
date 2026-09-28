@@ -13,6 +13,8 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from flip_api.auth import auth_utils
 from flip_api.auth.auth_utils import has_any_permission, has_permissions, has_trust_permissions
 from flip_api.db.models.user_models import TRUST_SCOPED_PERMISSIONS, PermissionRef
@@ -125,36 +127,24 @@ def test_and_or_helpers_disagree_on_a_partially_privileged_user():
 # --- trust-scoped checks (FLIP#1260) ------------------------------------------------------
 
 
-def _db_scoped_to(trust_id, *permissions: PermissionRef) -> MagicMock:
-    """Build a session mock that grants ``permissions`` only when queried for ``trust_id``.
+def _db_with_trust_grant(*permissions: PermissionRef) -> MagicMock:
+    """Build a session mock whose trust-scoped role query finds one role holding ``permissions``.
 
-    Mirrors the real query shape: ``_user_trust_permission_ids`` filters on
-    ``UserRole.trust_id == trust_id``, so a query for any other trust finds no roles and
-    therefore no permissions. The mock reproduces that by keying off the recorded filter.
+    It answers whatever trust is asked: a mock cannot evaluate the ``UserRole.trust_id == trust_id`` predicate.
+    That only the queried trust's rows count is pinned against real rows by
+    ``tests/integration/test_auth_permissions_db_flow.py::test_has_trust_permissions_true_only_at_the_granted_trust``.
     """
     db = MagicMock()
-    state = {"queried_trust": None}
-
-    def _exec(statement):
-        result = MagicMock()
-        # First call selects roles, second selects that role's permissions.
-        if state["queried_trust"] is None:
-            state["queried_trust"] = getattr(statement, "_flip_test_trust", trust_id)
-            result.all.return_value = [MagicMock(id=uuid4())]
-        else:
-            result.all.return_value = [p.value for p in permissions]
-        return result
-
-    db.exec.side_effect = _exec
+    # First call selects the user's roles at the trust, second selects that role's permissions.
+    db.exec.return_value.all.side_effect = [[MagicMock(id=uuid4())], [p.value for p in permissions]]
     return db
 
 
-def test_has_trust_permissions_allows_an_owner_of_that_trust():
-    """The happy path: a permission held at the queried trust satisfies the check."""
-    trust_id = uuid4()
-    db = _db_scoped_to(trust_id, PermissionRef.CAN_APPROVE_FOR_TRUST)
+def test_has_trust_permissions_allows_a_grant_held_at_the_trust():
+    """The happy path: a permission the trust-scoped role query returns satisfies the check."""
+    db = _db_with_trust_grant(PermissionRef.CAN_APPROVE_FOR_TRUST)
 
-    assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], trust_id, db) is True
+    assert has_trust_permissions(uuid4(), [PermissionRef.CAN_APPROVE_FOR_TRUST], uuid4(), db) is True
 
 
 def test_has_trust_permissions_denies_when_the_trust_grants_nothing():
@@ -205,17 +195,12 @@ def test_has_trust_permissions_rejects_non_trust_scoped_permissions():
     db.exec.assert_not_called()
 
 
-def test_has_trust_permissions_allows_non_scoped_check_when_explicitly_opted_in():
-    """The guard can be waived deliberately, but never by accident."""
-    trust_id = uuid4()
-    db = _db_scoped_to(trust_id, PermissionRef.CAN_MANAGE_USERS)
-
-    assert (
+def test_has_trust_permissions_guard_cannot_be_waived():
+    """No caller may ask for a global permission at trust scope, so there is no switch to allow it."""
+    with pytest.raises(TypeError):
         has_trust_permissions(
-            uuid4(), [PermissionRef.CAN_MANAGE_USERS], trust_id, db, require_trust_scoped=False
+            uuid4(), [PermissionRef.CAN_MANAGE_USERS], uuid4(), MagicMock(), require_trust_scoped=False
         )
-        is True
-    )
 
 
 def test_has_trust_permissions_returns_false_when_db_raises():

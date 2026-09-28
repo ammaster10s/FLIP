@@ -153,15 +153,12 @@ def has_trust_permissions(
     required_permissions: list[PermissionRef],
     trust_id: UUID,
     db: Session,
-    *,
-    require_trust_scoped: bool = True,
 ) -> bool:
     """
     Check if a user has ALL of the required permissions AT a specific trust.
 
     The trust-scoped counterpart to :func:`has_permissions`. Use it wherever the question is
-    "may this user do X *at trust Y*" — approving a project for a trust, managing that trust's
-    owners, editing its governance policy.
+    "may this user do X *at trust Y*" — approving or declining a project for that trust.
 
     **A global role does not satisfy this check.** Only ``user_role`` rows whose ``trust_id``
     matches are considered, so platform-wide Admin grants confer no authority over a trust's
@@ -179,10 +176,6 @@ def has_trust_permissions(
         required_permissions (list[PermissionRef]): Permissions the user must hold at the trust.
         trust_id (UUID): The trust the permissions must be held against.
         db (Session): The database session to query user roles and permissions.
-        require_trust_scoped (bool): Reject permissions that are not trust-scoped. Defaults to
-            True so a caller cannot ask for a global permission (say ``CAN_MANAGE_USERS``) at a
-            trust and have a Trust Admin grant satisfy it. Set False only when deliberately
-            checking a dual-purpose permission at trust scope.
 
     Returns:
         bool: True if the user holds all required permissions at that trust, False otherwise.
@@ -193,15 +186,14 @@ def has_trust_permissions(
         return False
 
     # A caller asking for a global permission at trust scope is a bug: it would let a Trust
-    # Owner grant stand in for a platform-wide one. Deny loudly rather than answering it.
-    if require_trust_scoped:
-        non_scoped = [p.name for p in required_permissions if p.value not in TRUST_SCOPED_PERMISSIONS]
-        if non_scoped:
-            logger.error(
-                f"Refusing to authorize user {user_id} at trust {trust_id}: "
-                f"{sorted(non_scoped)} are not trust-scoped permissions"
-            )
-            return False
+    # Admin grant stand in for a platform-wide one. Deny loudly rather than answering it.
+    non_scoped = [p.name for p in required_permissions if p.value not in TRUST_SCOPED_PERMISSIONS]
+    if non_scoped:
+        logger.error(
+            f"Refusing to authorize user {user_id} at trust {trust_id}: "
+            f"{sorted(non_scoped)} are not trust-scoped permissions"
+        )
+        return False
 
     try:
         user_permission_ids = _user_trust_permission_ids(user_id, trust_id, db)
