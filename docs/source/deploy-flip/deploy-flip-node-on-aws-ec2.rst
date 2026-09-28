@@ -73,8 +73,14 @@ apply then fails with ``VcpuLimitExceeded``.
 
 .. warning::
 
-   Changing the instance type or the AMI **replaces** the host; its data volumes
-   are not preserved. Resizing the root volume grows it in place.
+   The shape takes effect when the host is **created**. On an existing host,
+   Terraform ignores a changed AMI (so that a new image release never replaces the
+   trust and its data) and changes the instance type in place, which would leave a
+   GPU instance on the stock Ubuntu image with no NVIDIA driver. To move an existing
+   CPU host to a GPU shape, replace it deliberately — set the shape, then
+   ``TF_CLI_ARGS_plan='-replace=module.trust_ec2[0].aws_instance.trust_host' make plan PROD=<env>``
+   and ``make apply PROD=<env>`` — which destroys its root volume and the trust
+   data on it. Resizing the root volume grows it in place.
 
 *************
 Prerequisites

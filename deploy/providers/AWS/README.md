@@ -181,7 +181,21 @@ Then opt the trust into the GPU with `TRUST_EC2_NUM_GPUS=<n>` (in the kit or on 
 `deploy-trust` command line): `up-trust-ec2` adds the GPU overlay and sets
 `NUM_AVAILABLE_GPUS=<n>` for the fl-client. It is a separate key on purpose — the kit
 template's `NUM_AVAILABLE_GPUS=1` does not switch an existing CPU trust onto a GPU it lacks.
-Changing the AMI or instance type replaces the host (its data volumes are not preserved).
+`upgrade-trust-ec2` applies the same opt-in, so a release upgrade keeps a GPU trust on its GPU.
+
+The shape takes effect when the host is **created**. On a host that already exists, Terraform
+ignores a changed AMI (`ignore_changes = [ami]`, FLIP#1281 — otherwise every new image release
+would replace the trust and its data) and changes the instance type in place with a stop/start,
+which would leave a GPU instance on the stock Ubuntu image with no NVIDIA driver. To turn an
+existing CPU trust EC2 into a GPU one, replace it deliberately, with the shape above set:
+
+```bash
+TF_CLI_ARGS_plan='-replace=module.trust_ec2[0].aws_instance.trust_host' make plan PROD=<env>
+make apply PROD=<env>
+```
+
+Replacement destroys the root volume and the trust data on it; `ansible-init` and `deploy-trust`
+then provision and seed the new host as for a first install.
 
 ### Registering trusts against the ECS hub
 

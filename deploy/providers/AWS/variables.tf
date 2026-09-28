@@ -168,7 +168,7 @@ variable "deploy_trust_ec2" {
 }
 
 variable "trust_instance_type" {
-  description = "EC2 instance type of the cloud Trust host (TRUST_INSTANCE_TYPE). Default t3.xlarge is CPU-only; a GPU type (e.g. g4dn.xlarge) needs trust_ami_ssm_parameter pointing at an AMI that ships the NVIDIA driver (>= 580 for the cu130 FL images) and container toolkit, plus NUM_AVAILABLE_GPUS>0 in the trust's kit."
+  description = "EC2 instance type of the cloud Trust host (TRUST_INSTANCE_TYPE). Default t3.xlarge is CPU-only; a GPU type (e.g. g4dn.xlarge) needs trust_ami_ssm_parameter pointing at an AMI that ships the NVIDIA driver (>= 580 for the cu130 FL images) and container toolkit, plus TRUST_EC2_NUM_GPUS>0 in the trust's kit."
   type        = string
   default     = "t3.xlarge"
 }

@@ -23,11 +23,13 @@ deliberately NOT keyed on the kit's ``NUM_AVAILABLE_GPUS``: the kit template see
 keying on it would start every existing CPU EC2 trust with a GPU reservation it cannot satisfy.
 """
 
+import os
 import re
 from pathlib import Path
 
 import pytest
 from make_probe import probe_make
+from test_iam_permissions_boundary import STUB_ENV
 from tf_source import hcl_block, strip_comments
 
 AWS_DIR = Path(__file__).resolve().parents[1]
@@ -123,3 +125,40 @@ def test_up_trust_ec2_recipe_uses_the_opt_in() -> None:
     assert "NUM_AVAILABLE_GPUS=$(EC2_NUM_GPUS)" in recipe
     assert "$(EC2_GPU_OVERRIDE)" in recipe
     assert "NUM_AVAILABLE_GPUS=0" not in recipe
+
+
+# upgrade-trust-ec2 (deploy/providers/AWS/Makefile) drives trust/Makefile's upgrade-trust, which keys
+# its GPU overlay on NUM_AVAILABLE_GPUS and never reads the opt-in, so the AWS side resolves the
+# opt-in itself and passes it down. It must agree with up-trust-ec2 above, or an upgrade moves a GPU
+# trust onto CPU (or a CPU trust onto a GPU it lacks).
+def _upgrade_gpus(tmp_path: Path, variables: dict[str, str], env: dict[str, str] | None = None) -> str:
+    env_file = tmp_path / ".env.probe-stag"
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
+    process_env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
+    process_env.pop("TRUST_EC2_NUM_GPUS", None)
+    process_env.update(env or {})
+    # A KIT with no kit file, so the kit read is empty and only the command line / environment count.
+    base = {"PROD": "stag", "MAIN_ENV_FILE": str(env_file), "KIT": "ZZPROBE"}
+    (num,) = probe_make(AWS_DIR, ["$(EC2_NUM_GPUS)"], base | variables, env=process_env)
+    return num
+
+
+def test_upgrade_trust_ec2_defaults_to_cpu(tmp_path: Path) -> None:
+    assert _upgrade_gpus(tmp_path, {}) == "0"
+
+
+def test_upgrade_trust_ec2_ignores_the_kit_gpu_count(tmp_path: Path) -> None:
+    assert _upgrade_gpus(tmp_path, {"NUM_AVAILABLE_GPUS": "1"}) == "0"
+
+
+def test_upgrade_trust_ec2_follows_the_opt_in(tmp_path: Path) -> None:
+    assert _upgrade_gpus(tmp_path, {"TRUST_EC2_NUM_GPUS": "1"}) == "1"
+    assert _upgrade_gpus(tmp_path, {}, env={"TRUST_EC2_NUM_GPUS": "2"}) == "2"
+
+
+def test_upgrade_trust_ec2_reads_the_opt_in_from_the_kit() -> None:
+    makefile = (AWS_DIR / "Makefile").read_text()
+    assert (
+        "TRUST_EC2_NUM_GPUS_KIT := $(shell sed -n 's/^TRUST_EC2_NUM_GPUS=//p' "
+        "../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)"
+    ) in makefile
