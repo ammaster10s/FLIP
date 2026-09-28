@@ -90,15 +90,15 @@ def set_user_roles(
 
         user_roles_ids = roles_data.roles
 
-        # Trust Owner is trust-scoped (FLIP#1260) and cannot be granted here: this endpoint
-        # writes global grants (trust_id IS NULL), and a global Trust Owner row would confer
+        # Trust Admin is trust-scoped (FLIP#1260) and cannot be granted here: this endpoint
+        # writes global grants (trust_id IS NULL), and a global Trust Admin row would confer
         # authority at no trust while muddying the "global vs scoped" invariant. It is granted
         # against a specific trust through the Trust control panel.
-        if RoleRef.TRUST_OWNER.value in user_roles_ids:
-            logger.error(f"User {token_id} attempted to grant Trust Owner globally to user {user_id}")
+        if RoleRef.TRUST_ADMIN.value in user_roles_ids:
+            logger.error(f"User {token_id} attempted to grant Trust Admin globally to user {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Trust Owner is granted per-trust, not as a platform role.",
+                detail="Trust Admin is granted per-trust, not as a platform role.",
             )
 
         # Validate the requested role IDs against the Role table.

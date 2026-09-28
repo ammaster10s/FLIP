@@ -30,7 +30,7 @@ def has_role(user_id: UUID, db: Session) -> bool:
     Check if a user has at least one GLOBAL role assigned.
 
     Trust-scoped grants (FLIP#1260) do not count: this gates platform onboarding, and a
-    Trust Owner with no platform role still needs one to use the platform itself.
+    Trust Admin with no platform role still needs one to use the platform itself.
 
     Args:
         user_id (UUID): The unique identifier of the user.
@@ -50,7 +50,7 @@ def get_user_permissions(user_id: UUID, db: Session) -> list[Permission]:
 
     Trust-scoped grants (``user_role.trust_id`` set, FLIP#1260) are excluded: they confer
     authority at one trust only, and folding them into the platform-wide permission list
-    would present a Trust Owner as holding those rights everywhere. Trust authority is
+    would present a Trust Admin as holding those rights everywhere. Trust authority is
     answered by ``auth_utils.has_trust_permissions``.
 
     Args:

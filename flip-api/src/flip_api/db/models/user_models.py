@@ -55,7 +55,6 @@ class PermissionRef(Enum):
     # (see TRUST_SCOPED_PERMISSIONS below and `has_trust_permissions`).
     CAN_APPROVE_FOR_TRUST = UUID("3f9c5d21-7a64-4f0e-9b1d-2c8e6a4b7f35")
     CAN_MANAGE_TRUST_GOVERNANCE = UUID("b7e41a68-0d2f-4c95-8e37-5a1b9c6d4e82")
-    CAN_MANAGE_TRUST_OWNERS = UUID("d24f8b73-6c19-4a5e-b8d0-7f3e2c9a5146")
 
 
 # Permissions that are only ever granted against a specific trust. A holder of
@@ -71,7 +70,6 @@ TRUST_SCOPED_PERMISSIONS: frozenset[UUID] = frozenset(
     {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
-        PermissionRef.CAN_MANAGE_TRUST_OWNERS.value,
     }
 )
 
@@ -86,8 +84,9 @@ class RoleRef(Enum):
     ADMIN = UUID("64d3145b-034c-4328-b637-8eb54313b7c5")
     RESEARCHER = UUID("10b64ed0-bc90-4c01-9cc3-933c704905c1")
     VIEWER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
-    # Held per-trust: a TRUST_OWNER row always carries a `trust_id`.
-    TRUST_OWNER = UUID("8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053")
+    # Held per-trust: a TRUST_ADMIN row always carries a `trust_id`, and its holder also has a global
+    # Researcher row (FLIP#1258).
+    TRUST_ADMIN = UUID("8a3d6f14-9b52-4e07-a6c8-1d4f7b2e9053")
 
 
 class UserRole(SQLModel, table=True):
@@ -99,8 +98,7 @@ class UserRole(SQLModel, table=True):
     ``trust_id`` scopes the grant (FLIP#1260):
 
     * ``NULL`` — a global role (Admin, Researcher, Viewer), platform-wide.
-    * set — the role is held *only* at that trust (Trust Owner). Owning two
-      trusts is two rows, which needs no special case.
+    * set — the role is held *only* at that trust (Trust Admin).
 
     The two are not interchangeable in either direction. A global grant does not
     satisfy a trust-scoped check (``has_trust_permissions``), and a trust-scoped

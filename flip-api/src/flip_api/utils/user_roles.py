@@ -67,7 +67,7 @@ def get_user_role_data(
         list[IUser]: List of IUser objects with roles.
     """
     # Fetch roles for users. Global grants only (FLIP#1260): this feeds the admin user
-    # list, which shows platform roles. A Trust Owner grant belongs to the trust that
+    # list, which shows platform roles. A Trust Admin grant belongs to the trust that
     # made it and is surfaced in the Trust control panel, not here.
     user_ids = [user.id for user in users]
     statement = (

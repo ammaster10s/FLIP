@@ -45,13 +45,9 @@ CURRENT_ROLES: list[RoleSeed] = [
         "description": "Read-only access to assigned projects. Cannot create, edit, or delete resources.",
     },
     {
-        "id": RoleRef.TRUST_OWNER.value,
-        "name": "Trust Owner",
-        "description": (
-            "Governs a single participating trust: nominates that trust's owners, decides its "
-            "project approvals, and sets its governance policy. Always held with a trust_id — "
-            "authority stops at the trust boundary."
-        ),
+        "id": RoleRef.TRUST_ADMIN.value,
+        "name": "Trust Admin",
+        "description": "Researcher access, plus approving or declining projects for one trust.",
     },
 ]
 

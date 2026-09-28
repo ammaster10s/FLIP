@@ -75,17 +75,17 @@ def test_has_permissions_false_when_admin_requests_trust_scoped_permission(sessi
 
 
 def test_has_trust_permissions_true_only_at_the_granted_trust(session):
-    """A trust-scoped Trust Owner grant answers at that trust and nowhere else (FLIP#1260)."""
+    """A trust-scoped Trust Admin grant answers at that trust and nowhere else (FLIP#1260)."""
     user_id = uuid4()
-    trust = Trust(name="Trust Owner Flow A")
+    trust = Trust(name="Trust Admin Flow A")
     session.add(trust)
     session.flush()  # allocate trust.id before the FK row references it
-    session.add(UserRole(user_id=user_id, role_id=RoleRef.TRUST_OWNER.value, trust_id=trust.id))
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.TRUST_ADMIN.value, trust_id=trust.id))
     session.commit()
 
     assert has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, session) is True
 
-    other_trust = Trust(name="Trust Owner Flow B")
+    other_trust = Trust(name="Trust Admin Flow B")
     session.add(other_trust)
     session.flush()
     assert (
@@ -230,7 +230,7 @@ def test_role_permission_seed_contract(session):
         RoleRef.ADMIN.value: {p.value for p in PermissionRef if p.value not in TRUST_SCOPED_PERMISSIONS},
         RoleRef.RESEARCHER.value: {PermissionRef.CAN_CREATE_PROJECTS.value},
         RoleRef.VIEWER.value: set(),
-        RoleRef.TRUST_OWNER.value: set(TRUST_SCOPED_PERMISSIONS),
+        RoleRef.TRUST_ADMIN.value: set(TRUST_SCOPED_PERMISSIONS),
     }
 
     rows = session.exec(RolePermission.__table__.select()).all()

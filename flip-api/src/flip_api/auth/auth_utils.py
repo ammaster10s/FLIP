@@ -29,7 +29,7 @@ def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
     Collect the IDs of every permission granted to a user through their GLOBAL roles.
 
     Only platform-wide grants count here (``user_role.trust_id IS NULL``). Trust-scoped
-    grants are deliberately excluded: a Trust Owner's authority over their own trust must
+    grants are deliberately excluded: a Trust Admin's authority over their own trust must
     not leak into platform-wide checks. Use :func:`has_trust_permissions` for those.
 
     Raises rather than swallowing DB errors: each caller converts a failure into a deny, so the
@@ -181,7 +181,7 @@ def has_trust_permissions(
         db (Session): The database session to query user roles and permissions.
         require_trust_scoped (bool): Reject permissions that are not trust-scoped. Defaults to
             True so a caller cannot ask for a global permission (say ``CAN_MANAGE_USERS``) at a
-            trust and have a Trust Owner grant satisfy it. Set False only when deliberately
+            trust and have a Trust Admin grant satisfy it. Set False only when deliberately
             checking a dual-purpose permission at trust scope.
 
     Returns:

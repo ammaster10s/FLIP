@@ -330,3 +330,68 @@ def test_trust_decisions_downgrade_restores_the_approved_flag(empty_db_engine: E
     assert by_code["APP"].approved_at.isoformat() == "2026-03-19T10:30:00"
     assert by_code["NOT"].approved is False
     assert by_code["NOT"].approved_at is None
+
+
+def test_trust_admin_revision_adds_decision_maker_and_audit_subject(empty_db_engine: Engine) -> None:
+    """``e8c4a2f71b36`` records who decided (HUB or SITE) and who a trust audit row is about (FLIP#1258).
+
+    Every decision before it was the hub's — nobody could decide for a single trust — so past decisions are
+    backfilled as HUB, and a trust still pending has no decider at all.
+    """
+    # The #1318 fixture targets the pre-#1318 shape; upgrading through b7e3a1c95d20 maps it to APPROVED/PENDING.
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.upgrade(make_alembic_config(connection), "40f7934c6419")
+    with empty_db_engine.begin() as connection:
+        _insert_intersect_fixture(connection)
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT t.code, i.decided_as FROM project_trust_intersect i "
+                "JOIN trust t ON t.id = i.trust_id ORDER BY t.code"
+            )
+        ).all()
+        audit_columns = {
+            row.column_name
+            for row in connection.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'trusts_audit'")
+            )
+        }
+        audit_actions = {
+            row.enumlabel
+            for row in connection.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'trustauditaction'"
+                )
+            )
+        }
+    by_code = {row.code: row for row in rows}
+    assert by_code["APP"].decided_as == "HUB"
+    assert by_code["NOT"].decided_as is None
+    assert "subject_user_id" in audit_columns
+    assert {"ADMIN_ADDED", "ADMIN_REMOVED"} <= audit_actions
+
+
+def test_trust_admin_revision_downgrades_cleanly(empty_db_engine: Engine) -> None:
+    """Downgrading ``e8c4a2f71b36`` drops the decider column and its type."""
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+    with empty_db_engine.connect() as connection:
+        # pragma: allowlist nextline secret
+        command.downgrade(make_alembic_config(connection), "c3a7f1eb9402")
+    with empty_db_engine.connect() as connection:
+        columns = {
+            row.column_name
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'project_trust_intersect'"
+                )
+            )
+        }
+        decision_type = connection.execute(text("SELECT 1 FROM pg_type WHERE typname = 'decisionmaker'")).first()
+    assert "decided_as" not in columns
+    assert decision_type is None

@@ -196,7 +196,7 @@ def test_has_trust_permissions_denies_on_an_empty_permission_list():
 def test_has_trust_permissions_rejects_non_trust_scoped_permissions():
     """Asking for a global permission at trust scope is a caller bug and is denied up front.
 
-    Without this guard a Trust Owner grant could stand in for a platform-wide permission —
+    Without this guard a Trust Admin grant could stand in for a platform-wide permission —
     e.g. ``CAN_MANAGE_USERS`` checked at a trust the user happens to own.
     """
     db = MagicMock()
@@ -248,7 +248,6 @@ def test_trust_scoped_permission_set_matches_the_enum():
     expected = {
         PermissionRef.CAN_APPROVE_FOR_TRUST.value,
         PermissionRef.CAN_MANAGE_TRUST_GOVERNANCE.value,
-        PermissionRef.CAN_MANAGE_TRUST_OWNERS.value,
     }
 
     assert TRUST_SCOPED_PERMISSIONS == expected

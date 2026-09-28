@@ -106,14 +106,14 @@ def test_hub_admin_global_grant_cannot_approve(session, staged_project):
     assert project.status == ProjectStatus.STAGED
 
 
-def test_trust_owner_approves_at_their_own_trust(session, staged_project):
-    """A Trust Owner may approve for the trust they own — the point of the change.
+def test_trust_admin_approves_at_their_own_trust(session, staged_project):
+    """A Trust Admin may approve for the trust they own — the point of the change.
 
     The other trust is still pending, so the decision is recorded and the project stays STAGED (FLIP#1318).
     """
     owner_id = uuid4()
     own_trust, other = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=own_trust.id))
+    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=own_trust.id))
     session.commit()
     project = staged_project["project"]
 
@@ -133,7 +133,7 @@ def test_trust_owner_approves_at_their_own_trust(session, staged_project):
     assert project.status == ProjectStatus.STAGED
 
 
-def test_each_trust_owner_decides_for_their_own_trust_and_the_last_approves_the_project(session, staged_project):
+def test_each_trust_admin_decides_for_their_own_trust_and_the_last_approves_the_project(session, staged_project):
     """Two sites, two owners, two calls: the second approves the project and gets BOTH trusts back.
 
     The first trust comes back although the second owner holds no authority there — its own owner's recorded
@@ -141,8 +141,8 @@ def test_each_trust_owner_decides_for_their_own_trust_and_the_last_approves_the_
     """
     first, second = staged_project["trusts"]
     first_owner, second_owner = uuid4(), uuid4()
-    session.add(_grant(first_owner, RoleRef.TRUST_OWNER, trust_id=first.id))
-    session.add(_grant(second_owner, RoleRef.TRUST_OWNER, trust_id=second.id))
+    session.add(_grant(first_owner, RoleRef.TRUST_ADMIN, trust_id=first.id))
+    session.add(_grant(second_owner, RoleRef.TRUST_ADMIN, trust_id=second.id))
     session.commit()
     project = staged_project["project"]
 
@@ -157,11 +157,11 @@ def test_each_trust_owner_decides_for_their_own_trust_and_the_last_approves_the_
     assert project.status == ProjectStatus.APPROVED
 
 
-def test_trust_owner_declines_at_their_own_trust(session, staged_project):
+def test_trust_admin_declines_at_their_own_trust(session, staged_project):
     """Declining is the site's decision too, taken on the same grant."""
     owner_id = uuid4()
     own_trust, _other = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=own_trust.id))
+    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=own_trust.id))
     session.commit()
     project = staged_project["project"]
 
@@ -172,11 +172,11 @@ def test_trust_owner_declines_at_their_own_trust(session, staged_project):
     assert decisions[own_trust.id].decided_by == owner_id
 
 
-def test_trust_owner_cannot_decline_at_a_trust_they_do_not_own(session, staged_project):
+def test_trust_admin_cannot_decline_at_a_trust_they_do_not_own(session, staged_project):
     """A decline at a trust the caller does not own is refused like an approval, and nothing is recorded."""
     owner_id = uuid4()
     owned, not_owned = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=owned.id))
+    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=owned.id))
     session.commit()
     project = staged_project["project"]
 
@@ -188,11 +188,11 @@ def test_trust_owner_cannot_decline_at_a_trust_they_do_not_own(session, staged_p
     assert {row.status for row in decisions.values()} == {TrustApprovalStatus.PENDING}
 
 
-def test_trust_owner_cannot_approve_at_a_trust_they_do_not_own(session, staged_project):
+def test_trust_admin_cannot_approve_at_a_trust_they_do_not_own(session, staged_project):
     """Authority at trust A says nothing about trust B — the scope predicate, through the endpoint."""
     owner_id = uuid4()
     owned, not_owned = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=owned.id))
+    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=owned.id))
     session.commit()
     project = staged_project["project"]
 
@@ -217,7 +217,7 @@ def test_owner_of_one_trust_cannot_approve_a_list_naming_two(session, staged_pro
     """
     owner_id = uuid4()
     first, second = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_OWNER, trust_id=first.id))
+    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=first.id))
     session.commit()
     project = staged_project["project"]
 
@@ -234,17 +234,17 @@ def test_owner_of_one_trust_cannot_approve_a_list_naming_two(session, staged_pro
     assert project.status == ProjectStatus.STAGED, "no partial approval may have been committed"
 
 
-def test_trust_owner_role_granted_globally_confers_no_per_trust_authority(session, staged_project):
+def test_trust_admin_role_granted_globally_confers_no_per_trust_authority(session, staged_project):
     """``trust_id IS NULL`` never satisfies a trust-scoped check, even for the right role.
 
-    The Trust Owner role carries ``CAN_APPROVE_FOR_TRUST``, so a row that names the role but
+    The Trust Admin role carries ``CAN_APPROVE_FOR_TRUST``, so a row that names the role but
     no trust is the one shape which could plausibly be misread as "may approve anywhere". It
     must not be: authority is per trust, and a global row carries none. The seeder never
-    writes this shape and ``set_user_roles`` refuses to grant TRUST_OWNER without a trust —
+    writes this shape and ``set_user_roles`` refuses to grant TRUST_ADMIN without a trust —
     this pins the check itself, which is what actually stands between the two.
     """
     user_id = uuid4()
-    session.add(_grant(user_id, RoleRef.TRUST_OWNER, trust_id=None))
+    session.add(_grant(user_id, RoleRef.TRUST_ADMIN, trust_id=None))
     session.commit()
     project = staged_project["project"]
 

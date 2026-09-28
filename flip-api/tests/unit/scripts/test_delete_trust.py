@@ -136,14 +136,14 @@ def test_delete_one_trust_happy_path_cascades_dependents_and_frees_slot():
 
 
 def test_delete_one_trust_clears_trust_scoped_role_grants():
-    """A trust carrying a Trust Owner grant must hard-delete cleanly.
+    """A trust carrying a Trust Admin grant must hard-delete cleanly.
 
     ``user_role.trust_id`` (FLIP#1260) references ``trust.id`` and declares no
     ``ON DELETE CASCADE``, so a grant row left behind makes the Trust delete fail
     with an ``IntegrityError``. Clearing it here — rather than by a cascade —
     matches every other trust-referencing table in this script.
 
-    The scoping matters as much as the deletion: a TRUST_OWNER row for *another*
+    The scoping matters as much as the deletion: a TRUST_ADMIN row for *another*
     trust, and every global grant (``trust_id IS NULL``), must survive.
     """
     from sqlalchemy.dialects import postgresql
