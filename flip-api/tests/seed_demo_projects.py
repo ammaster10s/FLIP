@@ -326,6 +326,11 @@ def main(argv: list[str] | None = None) -> int:
 
     entries = select_entries(CATALOGUE, args.states)
 
+    # Approving is a site decision (FLIP#1258): a trust with no owner cannot approve, and that
+    # is every trust on a fresh stack. See ``e2e_smoke.ensure_trust_owners``.
+    if any(STATE_LADDER.index(e["state"]) >= STATE_LADDER.index("approved") for e in entries):
+        e2e_smoke.ensure_trust_owners(client, headers, trusts)
+
     # Idempotency: a re-run (or a lost record file) must not duplicate the
     # catalogue — approved entries kick off real imaging imports at the trusts.
     already = existing_project_names(client, headers, {e["name"] for e in entries})
