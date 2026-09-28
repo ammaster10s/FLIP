@@ -82,7 +82,6 @@
                     :to="`/project/${decision.projectId}/cohort-query`"
                     class="inline-flex items-center gap-1.5 px-2 py-1.5 text-[13.5px] font-semibold rounded text-primary-500 hover:bg-primary-100 dark:text-primary-300 dark:hover:bg-dark-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
                 >
-                    <icon-heroicons-outline-code class="w-4 h-4" aria-hidden="true" />
                     View query
                 </router-link>
                 <span v-else class="text-[13px] text-gray-500 dark:text-gray-300">No cohort query</span>
