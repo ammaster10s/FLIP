@@ -49,7 +49,7 @@
                                 </p>
                             </div>
                             <div
-                                v-if="canDecide"
+                                v-if="rowCanDecide(trust)"
                                 class="inline-flex shrink-0 rounded-md"
                                 role="group"
                                 :aria-label="`Decision for ${trust.name}`"
@@ -111,15 +111,8 @@
                     Every trust declined, so the project stays staged until a decision changes or it is unstaged.
                 </p>
             </div>
-            <div v-if="canDecide" class="p-4 shrink-0 mt-auto">
+            <div v-if="anyDecidable" class="p-4 shrink-0 mt-auto">
                 <div class="flex items-center justify-end w-full gap-4">
-                    <p
-                        v-if="!everyTrustDecided"
-                        data-test="trust-decision-hint"
-                        class="text-xs text-gray-500 dark:text-gray-300"
-                    >
-                        Approve or decline every trust to save.
-                    </p>
                     <AiButton
                         primary
                         small
@@ -168,18 +161,7 @@ const STATUS_CHIP: Record<TrustApprovalStatus, { label: string; class: string }>
     }
 };
 
-// A trust left out of an approval made before decisions were recorded (FLIP#1318) migrates to PENDING. On an
-// approved project it is awaiting nothing: it was simply not approved, as the card said before.
-const NOT_APPROVED_CHIP = {
-    label: "Not approved",
-    class: STATUS_CHIP.DECLINED.class
-};
-
-const undecidedOnApprovedProject = (trust: IProjectTrust): boolean =>
-    trust.status === "PENDING" && props.projectApproved;
-
-const chipFor = (trust: IProjectTrust) =>
-    (undecidedOnApprovedProject(trust) ? NOT_APPROVED_CHIP : STATUS_CHIP[trust.status]);
+const chipFor = (trust: IProjectTrust) => STATUS_CHIP[trust.status];
 
 const CHOICE_BASE_CLASS =
     "relative inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold border transition "
@@ -217,8 +199,19 @@ const allDeclined = computed(() =>
 
 const hasPermissionToApprove = computed(() => authStore.hasPermissions(["CanApproveProjects"]));
 
-// Decisions are taken on a STAGED project only; once it is APPROVED the card is a read-only record.
-const canDecide = computed(() => props.canApprove && !props.projectApproved && hasPermissionToApprove.value);
+// Who may decide a trust (FLIP#1258): its own Trust Admin when it has one, otherwise the hub admin. While the
+// project is STAGED a decision may still change; once it is APPROVED only a trust still pending can be decided.
+const rowCanDecide = (trust: IProjectTrust): boolean => {
+    if (!props.canApprove) return false;
+    if (props.projectApproved && trust.status !== "PENDING") return false;
+
+    return trust.hasTrustAdmin ? authStore.trustAdminOf?.id === trust.id : hasPermissionToApprove.value;
+};
+
+const decidableTrusts = computed(() => sortedTrusts.value.filter(rowCanDecide));
+const anyDecidable = computed(() => decidableTrusts.value.length > 0);
+
+const label = (trust: IProjectTrust) => trust.code || trust.name;
 
 // The approver's unsaved choice per trust, starting from what is already recorded — so after every trust
 // declined, the approver changes one decision rather than re-entering them all.
@@ -243,11 +236,11 @@ watch(
     { immediate: true }
 );
 
-const everyTrustDecided = computed(() => sortedTrusts.value.every(t => choices.value[t.id]));
+// The trusts whose choice differs from what is recorded; only these are sent, so each trust is decided on its own.
+const changedTrusts = computed(() =>
+    decidableTrusts.value.filter(t => choices.value[t.id] && choices.value[t.id] !== t.status));
 
-const changed = computed(() => sortedTrusts.value.some(t => choices.value[t.id] !== t.status));
-
-const canSave = computed(() => everyTrustDecided.value && changed.value && !props.approving);
+const canSave = computed(() => changedTrusts.value.length > 0 && !props.approving);
 
 const choose = (trust: IProjectTrust, decision: Decision) => {
     choices.value = {
@@ -260,7 +253,7 @@ const save = () => {
     if (!canSave.value) return;
 
     const idsWith = (decision: Decision) =>
-        sortedTrusts.value.filter(t => choices.value[t.id] === decision).map(t => t.id);
+        changedTrusts.value.filter(t => choices.value[t.id] === decision).map(t => t.id);
     emits("approveProject", {
         approved: idsWith("APPROVED"),
         declined: idsWith("DECLINED")
@@ -273,20 +266,26 @@ const shortDate = (iso: string): string =>
         month: "short"
     });
 
-// "Approved by Ada · 26 May". An approval recorded before decisions were attributed has a date but no decider.
+// "Approved by Ada · 26 May", "Approved by Tia (UCH's Trust Admin) · 26 May". An approval recorded before
+// decisions were attributed has a date but no decider.
 const decisionLine = (trust: IProjectTrust): string => {
-    if (undecidedOnApprovedProject(trust)) return "No decision recorded";
-    if (trust.status === "PENDING") return "Awaiting decision";
+    if (trust.status === "PENDING") {
+        return trust.hasTrustAdmin && !rowCanDecide(trust) ? `Awaiting ${label(trust)}'s Trust Admin` : "Awaiting decision";
+    }
 
-    const by = trust.decidedByName ? ` by ${trust.decidedByName}` : "";
+    const site = trust.decidedAs === "SITE" ? ` (${label(trust)}'s Trust Admin)` : "";
+    const by = trust.decidedByName ? ` by ${trust.decidedByName}${site}` : "";
     const on = trust.decidedAt ? ` · ${shortDate(trust.decidedAt)}` : "";
 
     return `${STATUS_CHIP[trust.status].label}${by}${on}`;
 };
 
 const decisionTitle = (trust: IProjectTrust): string => {
-    if (undecidedOnApprovedProject(trust)) return `${trust.name} was not approved; no decision was recorded`;
-    if (trust.status === "PENDING") return `${trust.name} is awaiting a decision`;
+    if (trust.status === "PENDING") {
+        return trust.hasTrustAdmin
+            ? `${trust.name} is awaiting a decision by its Trust Admin`
+            : `${trust.name} is awaiting a decision`;
+    }
 
     const by = trust.decidedByName ? ` by ${trust.decidedByName}` : "";
     const on = trust.decidedAt ? ` on ${new Date(trust.decidedAt).toLocaleString()}` : "";

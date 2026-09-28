@@ -25,6 +25,7 @@ interface MountOptions {
     approving?: boolean;
     canApprove?: boolean;
     permissions?: string[];
+    trustAdminOf?: { id: string; code: string; name: string } | null;
 }
 
 const PENDING_TRUSTS: IProjectTrust[] = [
@@ -47,7 +48,8 @@ function mountProjectApproval({
     projectApproved = false,
     approving = false,
     canApprove = true,
-    permissions = ["CanApproveProjects"]
+    permissions = ["CanApproveProjects"],
+    trustAdminOf = null
 }: MountOptions = {}) {
     return mount(ProjectApproval, {
         props: {
@@ -61,7 +63,14 @@ function mountProjectApproval({
                 createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false,
-                    initialState: { auth: { user: { permissions } } }
+                    initialState: {
+                        auth: {
+                            user: {
+                                permissions,
+                                trustAdminOf
+                            }
+                        }
+                    }
                 })
             ]
         }
@@ -153,20 +162,19 @@ describe("ProjectApproval", () => {
             expect(wrapper.find("[data-test=trust-decline-0]").attributes("aria-pressed")).toBe("true");
         });
 
-        test("keeps Save disabled, and says why, until every trust has a decision", async () => {
+        test("saves one trust's decision while the others stay pending (FLIP#1258)", async () => {
             const wrapper = mountProjectApproval();
             await flushPromises();
-
             expect(saveButton(wrapper).attributes("disabled")).toBeDefined();
-            expect(wrapper.find("[data-test=trust-decision-hint]").text()).toContain("Approve or decline every trust");
 
             await wrapper.find("[data-test=trust-approve-0]").trigger("click");
-            await saveButton(wrapper).trigger("click");
-            expect(wrapper.emitted("approveProject")).toBeUndefined();
-
-            await wrapper.find("[data-test=trust-decline-1]").trigger("click");
             expect(saveButton(wrapper).attributes("disabled")).toBeUndefined();
-            expect(wrapper.find("[data-test=trust-decision-hint]").exists()).toBe(false);
+            await saveButton(wrapper).trigger("click");
+
+            expect(wrapper.emitted("approveProject")).toEqual([[{
+                approved: ["t1"],
+                declined: []
+            }]]);
         });
 
         test("Save emits the approved and the declined trusts, sorted by row", async () => {
@@ -236,9 +244,10 @@ describe("ProjectApproval", () => {
             await wrapper.find("[data-test=trust-approve-0]").trigger("click");
             await saveButton(wrapper).trigger("click");
 
+            // Only the changed trust is sent; UCH's recorded decline stands untouched.
             expect(wrapper.emitted("approveProject")).toEqual([[{
                 approved: ["t1"],
-                declined: ["t2"]
+                declined: []
             }]]);
         });
     });
@@ -321,6 +330,83 @@ describe("ProjectApproval", () => {
         });
     });
 
+    describe("trusts that decide for themselves (FLIP#1258)", () => {
+        const SITE_RUN: IProjectTrust[] = [
+            {
+                id: "t1",
+                name: "Kings College Hospital",
+                code: "KCH",
+                status: "PENDING"
+            },
+            {
+                id: "t2",
+                name: "UCLH",
+                code: "UCH",
+                status: "PENDING",
+                hasTrustAdmin: true
+            }
+        ];
+
+        test("the hub admin sees a trust with a Trust Admin read-only, awaiting that Trust Admin", async () => {
+            const wrapper = mountProjectApproval({ approvedTrusts: SITE_RUN });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test=trust-approve-0]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=trust-approve-1]").exists()).toBe(false);
+            expect(wrapper.find("[data-test=trust-status-chip-1]").text()).toContain("Pending");
+            expect(wrapper.find("[data-test=trust-decision-1]").text()).toBe("Awaiting UCH's Trust Admin");
+        });
+
+        test("that trust's own Trust Admin can decide it, and only it", async () => {
+            const wrapper = mountProjectApproval({
+                approvedTrusts: SITE_RUN,
+                permissions: ["CanCreateProjects"],
+                trustAdminOf: {
+                    id: "t2",
+                    code: "UCH",
+                    name: "UCLH"
+                }
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test=trust-approve-0]").exists()).toBe(false);
+            await wrapper.find("[data-test=trust-decline-1]").trigger("click");
+            await saveButton(wrapper).trigger("click");
+            expect(wrapper.emitted("approveProject")).toEqual([[{
+                approved: [],
+                declined: ["t2"]
+            }]]);
+        });
+
+        test("names a site's decision as its Trust Admin's", async () => {
+            const wrapper = mountProjectApproval({
+                projectApproved: true,
+                approvedTrusts: [{
+                    id: "t2",
+                    name: "UCLH",
+                    code: "UCH",
+                    status: "APPROVED",
+                    hasTrustAdmin: true,
+                    decidedAs: "SITE",
+                    decidedByName: "Tia Trustadmin",
+                    decidedAt: "2026-05-26T10:00:00Z"
+                }]
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test=trust-decision-0]").text()).toMatch(
+                /^Approved by Tia Trustadmin \(UCH's Trust Admin\) · .*May/
+            );
+        });
+
+        test("offers no Save when the viewer can decide none of the trusts", async () => {
+            const wrapper = mountProjectApproval({ approvedTrusts: [SITE_RUN[1]] });
+            await flushPromises();
+
+            expect(saveButton(wrapper).exists()).toBe(false);
+        });
+    });
+
     describe("read-only views", () => {
         test("a user without CanApproveProjects sees each trust's status and no choices", async () => {
             const wrapper = mountProjectApproval({ permissions: [] });
@@ -393,14 +479,19 @@ describe("ProjectApproval", () => {
             expect(wrapper.find("[data-test=trust-status-chip-0]").attributes("title")).toMatch(/^UCLH approved on /);
         });
 
-        test("an approved project shows a trust left undecided before FLIP#1318 as not approved", async () => {
-            // Trusts left out of an approval made before #1318 migrate to PENDING; on an approved project they
-            // are not awaiting anything.
+        test("a trust still pending on an approved project can still be decided (FLIP#1258)", async () => {
             const wrapper = mountProjectApproval({
                 projectApproved: true,
                 approvedTrusts: [
                     {
                         id: "t1",
+                        name: "Kings College Hospital",
+                        code: "KCH",
+                        status: "APPROVED",
+                        decidedByName: "Ada Approver"
+                    },
+                    {
+                        id: "t2",
                         name: "UCLH",
                         code: "UCH",
                         status: "PENDING"
@@ -409,10 +500,15 @@ describe("ProjectApproval", () => {
             });
             await flushPromises();
 
-            const chip = wrapper.find("[data-test=trust-status-chip-0]");
-            expect(chip.text()).toBe("Not approved");
-            expect(chip.attributes("title")).toBe("UCLH was not approved; no decision was recorded");
-            expect(wrapper.find("[data-test=trust-decision-0]").text()).toBe("No decision recorded");
+            // The approved trust's decision is final; the pending one keeps its choices.
+            expect(wrapper.find("[data-test=trust-approve-0]").exists()).toBe(false);
+            expect(wrapper.find("[data-test=trust-status-chip-0]").text()).toContain("Approved");
+            await wrapper.find("[data-test=trust-approve-1]").trigger("click");
+            await saveButton(wrapper).trigger("click");
+            expect(wrapper.emitted("approveProject")).toEqual([[{
+                approved: ["t2"],
+                declined: []
+            }]]);
         });
 
         test("says the project stays staged once every trust declined", async () => {

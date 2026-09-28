@@ -111,16 +111,11 @@ describe("Project Page: STAGED", () => {
 
     // ProjectApproval.vue sorts trusts alphabetically by code (fallback: name) — the fixture's
     // three trusts go GSTT (0, SOMEIDFORKINGS), Kings (1, SOMEIDFORKCH), UCLH (2, SOMEIDFORUCLH).
-    it("keeps Save disabled until every trust has been approved or declined", () => {
+    // Trusts decide one at a time (FLIP#1258): Save needs one decision, not all of them.
+    it("enables Save as soon as one trust has a decision", () => {
         cy.getBySel("approve-project-btn").should("be.disabled");
-        cy.getBySel("trust-decision-hint").should("contain.text", "Approve or decline every trust to save.");
 
         cy.getBySel("trust-approve-0").click();
-        cy.getBySel("trust-decline-1").click();
-        cy.getBySel("approve-project-btn").should("be.disabled");
-
-        cy.getBySel("trust-approve-2").click();
-        cy.getBySel("trust-decision-hint").should("not.exist");
         cy.getBySel("approve-project-btn").should("not.be.disabled");
     });
 
