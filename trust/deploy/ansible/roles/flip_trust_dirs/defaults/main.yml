@@ -25,7 +25,7 @@ flip_group: ubuntu
 fl_backend: nvflare
 
 # Extra owner-owned directories under flip_dir a deployment needs (the EC2 play
-# adds /opt/flip/trust, where register-trusts scp's the kit file).
+# adds /opt/flip/trust, where a kit file delivered out of band would land).
 flip_app_dirs: []
 
 # The imaging-api / fl-client images trees. Each entry is one
