@@ -41,7 +41,9 @@ def admin_id(session):
 @pytest.fixture
 def make_trust(session, trust_factory):
     def _make():
-        trust = trust_factory.build()
+        # Unique, not the factory's Faker word: the trust table survives between tests and delete_one_trust finds a
+        # trust by name, so a word an earlier test used would delete that trust instead.
+        trust = trust_factory.build(name=f"trust-{uuid4().hex}")
         session.add(trust)
         session.commit()
         return trust
