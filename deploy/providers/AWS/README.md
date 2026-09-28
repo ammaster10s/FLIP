@@ -860,7 +860,7 @@ fixed per account by design.
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
 | `deploy-centralhub` git ref | `origin/main` (same as legacy prod) |
-| `TF_VAR_iam_permissions_boundary_name` | The `AICentre-FLIPTerraformBoundary` default, as on every mode — the policy is declared by `modules/terraform_ci_bootstrap`, which `aicentre-lza-iac` applies in both LZA accounts. An env file that sets the variable itself still wins ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
+| `TF_VAR_iam_permissions_boundary_name` | **`AICentre-WorkloadRoleBoundary` on the two LZA modes** — the platform's boundary ([londonaicentre/lza#51](https://github.com/londonaicentre/lza/pull/51)), deployed by the accelerator to every workload account. An LZA SCP denies creating a role, or attaching or writing a policy onto one, unless the role carries it, so no other value works there. The self-contained modes keep the `AICentre-FLIPTerraformBoundary` default declared by `modules/terraform_ci_bootstrap`. An env file that sets the variable itself wins on any mode — `?=` only supplies the default ([FLIP#1280](https://github.com/londonaicentre/FLIP/issues/1280)) |
 
 **Platform-managed vs FLIP-managed.** The LZA account's network is owned by the accelerator pipeline
 ([londonaicentre/lza](https://github.com/londonaicentre/lza)) and VPC-layer creation is SCP-denied in-account, so with
@@ -1746,11 +1746,12 @@ Run these in order **per account**, from a laptop authenticated to that account:
 #        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
 #        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
 
-# 1. The platform repository applies the OIDC provider, the state bucket, the CI
-#    roles and the permissions boundary: aicentre-lza-iac, one instantiation of
-#    modules/terraform_ci_bootstrap per FLIP workload account, pinned to a FLIP
-#    commit SHA. Nothing to run here — but it comes first: the boundary is the one
-#    every role in the main root is created under, and the bucket holds its state.
+# 1. The platform repository applies the OIDC provider, the state bucket and the CI
+#    roles: aicentre-lza-iac, one instantiation of modules/terraform_ci_bootstrap per
+#    FLIP workload account, pinned to a FLIP commit SHA, with the platform's own
+#    permissions boundary (AICentre-WorkloadRoleBoundary, londonaicentre/lza#51)
+#    rather than FLIP's. Nothing to run here — but it comes first: the roles are what
+#    CI assumes, and the bucket holds the main root's state.
 
 # 2. /flip/ci/host_aws_public_key — the EC2 keypair public key CI reproduces byte
 #    for byte — is declared in parameter_store.tf, so the first laptop apply of the

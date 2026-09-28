@@ -140,25 +140,34 @@ Things worth knowing before touching any of it:
   admitting the default branch would hand the production secrets to every workflow
   merged to develop. The nightly drift run reaches prod by dispatching itself onto
   `main` rather than by widening the policy.
+- **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
+  apply and drift, so a develop merge cannot rebuild a staging estate that has been
+  torn down; production never reads it. Set while the legacy staging account is
+  gone and `aws-stag` has not yet been repointed at LZA staging (`TF_PROD=lza-stag`);
+  delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
+  pins the three guards.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
   `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or
-  write an inline policy onto one, when the role carries it — which is what keeps
-  `PowerUserAccess` + IAM write from being administrator-equivalent. No mode
-  detaches it (FLIP#1280); an env file can still set
-  `TF_VAR_iam_permissions_boundary_name=""` for an account where the bootstrap has
-  genuinely not been applied, and `tests/test_iam_permissions_boundary.py` guards
-  that nothing else does.
-- **The CI identity is not this root's.** The plan/apply roles, the boundary and
-  the state bucket come from `modules/terraform_ci_bootstrap`, which the platform
-  repositories (`aicentre-iac`, `aicentre-lza-iac`) instantiate per account,
+  write an inline policy onto one, when the role carries it. **The LZA modes use the
+  platform's boundary instead**: the Makefile defaults the variable to
+  `AICentre-WorkloadRoleBoundary` there (londonaicentre/lza#51), which the
+  accelerator deploys to every workload account and an LZA SCP requires on every
+  role — a role change without it is denied, from a laptop or from CI. An env file
+  can still set the variable on any mode; `tests/test_iam_permissions_boundary.py`
+  pins both defaults (FLIP#1199, FLIP#1280).
+- **The CI identity is not this root's.** The plan/apply roles, the boundary (outside
+  LZA) and the state bucket come from `modules/terraform_ci_bootstrap`, which a
+  platform repository (`aicentre-lza-iac` for AI Centre) instantiates per account,
   **pinned to a FLIP commit SHA**. The module is a published interface: renaming an
   input, changing a default, a resource address or the boundary's description
   (ForceNew, attached to every FLIP role) breaks those callers or their imports —
   `tests/test_terraform_ci_bootstrap.py` pins them. Adding a role to this root means
-  adding its literal name to `managed_role_names` in the module, merging that, and
-  having both platform repositories bump their pinned SHA and apply **before** the
-  FLIP change that creates the role, or the apply cannot pass or re-trust it.
+  adding its literal name to `managed_role_names` in the module; adding a resource
+  from an AWS service this root does not use yet means adding the service to
+  `apply_service_actions`. Either way, merge that, have the platform repository bump
+  its pinned SHA and apply **before** the FLIP change that needs it, or the apply is
+  denied.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so

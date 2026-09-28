@@ -44,7 +44,7 @@ The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
 that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
 match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
-`flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
+`flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
 `DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).

@@ -15,13 +15,17 @@
 
 """Static guard on the IAM permissions boundary (FLIP#1082, FLIP#1199, FLIP#1280).
 
-Every IAM role this root owns carries ``var.iam_permissions_boundary_name``,
-whose ``variables.tf`` default is the ``AICentre-FLIPTerraformBoundary`` policy
-declared by ``modules/terraform_ci_bootstrap``. The platform repositories apply
-that module in every account this stack deploys into, self-contained and LZA
-alike, so the Makefile exports nothing for the variable on any mode and the
-default stands. An env file that sets the variable itself still wins — the
-escape hatch for an account where the bootstrap has not been applied.
+Every IAM role this root owns carries ``var.iam_permissions_boundary_name``. Which
+policy that names depends on who owns the account's guardrails:
+
+- The self-contained modes take the ``variables.tf`` default,
+  ``AICentre-FLIPTerraformBoundary``, declared by ``modules/terraform_ci_bootstrap``
+  (through ``ci/``, or a platform repository that instantiates it).
+- The LZA modes take the platform's ``AICentre-WorkloadRoleBoundary``
+  (londonaicentre/lza#51), which the accelerator deploys to every workload
+  account. An LZA SCP denies creating a role, or attaching or writing a policy
+  onto one, unless the role carries it — so a blank or a different name there
+  fails every role change, from a laptop or from CI.
 
 These probes run ``make`` for real, with the env-file include pointed at nothing
 so they are independent of any local ``.env.*`` file, and read back what
@@ -77,20 +81,32 @@ def _probe(tmp_path: Path, prod: str, extra_env: dict[str, str] | None = None) -
     return "|".join(values)
 
 
-@pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
-def test_no_mode_detaches_the_boundary(tmp_path: Path, prod: str) -> None:
-    """No export at all on any mode, so the Terraform default stands.
+@pytest.mark.parametrize("prod", ["stag", "true"])
+def test_the_self_contained_modes_let_the_terraform_default_apply(tmp_path: Path, prod: str) -> None:
+    """The modes the pipeline applies: no export at all, so the default stands.
 
-    An exported empty string would silently strip the boundary from every role an
-    apply creates or updates — and the CI apply role may only create a role that
-    carries it, so the next automated apply would be denied on its first CreateRole.
+    An exported empty string here would be the FLIP#1199 bug in reverse — those
+    accounts *have* a boundary policy, so blanking it silently strips the boundary
+    from every role the apply creates or updates.
     """
     assert _probe(tmp_path, prod) == "UNSET|"
 
 
+@pytest.mark.parametrize("prod", ["lza-stag", "lza"])
+def test_the_lza_modes_carry_the_platform_boundary(tmp_path: Path, prod: str) -> None:
+    """The LZA modes default to the platform's boundary, never to ``""``.
+
+    ``AICentre-FLIPTerraformBoundary`` does not exist in those accounts (the
+    platform instantiates the bootstrap with its own boundary), and the platform SCP rejects a role without
+    ``AICentre-WorkloadRoleBoundary``. Either wrong value fails every role change.
+    """
+    assert _probe(tmp_path, prod) == "AICentre-WorkloadRoleBoundary|exported"
+
+
 @pytest.mark.parametrize("prod", ["stag", "true", "lza-stag", "lza"])
 def test_an_env_file_boundary_name_still_wins(tmp_path: Path, prod: str) -> None:
-    # The env file (which `include` exports) is the one place the name is chosen:
-    # an operator who sets it there gets that name on every mode.
+    # `?=` supplies a default, it does not override: an operator who sets the
+    # variable in the env file (which `include` exports) gets that name on every
+    # mode, LZA included.
     probe = _probe(tmp_path, prod, {"TF_VAR_iam_permissions_boundary_name": "Custom-Boundary"})
     assert probe == "Custom-Boundary|exported"

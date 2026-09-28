@@ -118,11 +118,19 @@ ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
-# IAM permissions boundary (FLIP#1082): not set here on any mode, so the
-# variables.tf default (AICentre-FLIPTerraformBoundary) applies everywhere. The
-# policy is declared by modules/terraform_ci_bootstrap, which the platform
-# repositories apply in every account this stack deploys into. An env file that
-# sets TF_VAR_iam_permissions_boundary_name still wins.
+# IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
+# modules/terraform_ci_bootstrap (through ci/ or a platform repository). The LZA
+# modes take the platform's AICentre-WorkloadRoleBoundary instead
+# (londonaicentre/lza#51): the accelerator deploys it to every workload account,
+# and an LZA SCP denies creating a role, or attaching or writing a policy onto
+# one, unless the role carries it. So on LZA it is not a choice — without it every
+# role change is denied, from a laptop or from CI. There the platform instantiates
+# the bootstrap module with its own boundary rather than FLIP's. An env file that
+# sets the variable still wins: `?=` only supplies the default.
+ifneq ($(IS_LZA),)
+export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
+endif
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
 # .lza-prod / .lza-stag): selects the trust kit file trust/.env.<KIT>.<suffix> for
@@ -310,12 +318,9 @@ checkov-lint: ## Static checkov security lint (IAM policy content + promoted pos
 	bash scripts/checkov_lint.sh
 
 .PHONY: create-backend
-create-backend: ## Retired: the state bucket belongs to the Terraform-CI bootstrap
-	@echo "❌ The Terraform state bucket is declared by modules/terraform_ci_bootstrap, with the"
-	@echo "   CI roles and the permissions boundary, and is no longer created from here:"
-	@echo "   - AI Centre accounts: aicentre-iac (self-contained) / aicentre-lza-iac (LZA) apply it."
-	@echo "   - Your own account: deploy/providers/AWS/ci (see ci/README.md)."
-	@exit 1
+create-backend: ## Create Terraform backend S3 bucket - Only run once
+	@echo "🚀 Creating Terraform backend resources..."
+	@TFSTATE_BUCKET_NAME="$(FLIP_TFSTATE_BUCKET_NAME)" TFSTATE_KEY="flip/terraform.tfstate" TFSTATE_REGION="$(AWS_REGION)" ./scripts/create-backend.sh
 
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
