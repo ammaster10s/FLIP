@@ -12,14 +12,15 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, TaskType
 from flip_api.main import app
 from flip_api.step_functions_services.approve_project_step_function import (
     get_session,
@@ -176,6 +177,41 @@ def test_approve_project_with_failure_in_trust(
     assert data["trusts"]["processed"] == 2
     assert data["trusts"]["failed"] == 1
     assert data["trusts"]["succeeded"] == 1
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+def test_a_late_trust_approval_freezes_that_trusts_cohort_before_its_imaging(
+    mock_approve_project, project_id, mock_trusts, override_dependencies
+):
+    """A trust approving an already-APPROVED project starts only itself (FLIP#1258), through the real fan-out.
+
+    That fan-out must queue the late trust's own cohort snapshot (FLIP#857) ahead of its imaging: the row-level
+    routes serve only the frozen snapshot, so a trust joining without one would refuse its imaging and training.
+    """
+    mock_session, _ = override_dependencies
+    early_trust, late_trust = mock_trusts
+    mock_approve_project.return_value = [late_trust]
+    project = IProjectResponse(
+        id=UUID(project_id),
+        name="Approved earlier",
+        query=IProjectQuery(id=uuid4(), name="Cohort", query="SELECT person_id FROM omop.person"),
+        owner_id=uuid4(),
+        status=ProjectStatus.APPROVED,
+    )
+    fan_out = "flip_api.trusts_services.start_project_imaging_creation"
+    with (
+        patch(f"{fan_out}.get_project", return_value=project),
+        patch(f"{fan_out}.get_approved_trusts_for_project", return_value=[early_trust, late_trust]),
+        patch(f"{fan_out}.get_user_pool_id", return_value="pool-id"),
+        patch(f"{fan_out}.get_users_with_access", return_value=[]),
+        patch(f"{fan_out}.get_cognito_users", return_value=[]),
+    ):
+        response = client.post(f"/api/step/project/{project_id}/approve", json={"trusts": [str(late_trust.id)]})
+
+    assert response.status_code == 200
+    assert response.json()["trusts"] == {"processed": 1, "succeeded": 1, "failed": 0}
+    queued = [(call.args[0].task_type, call.args[0].trust_id) for call in mock_session.add.call_args_list]
+    assert queued == [(TaskType.PERSIST_COHORT, late_trust.id), (TaskType.CREATE_IMAGING, late_trust.id)]
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")

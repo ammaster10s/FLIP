@@ -487,6 +487,10 @@ _upgrade-trust-apply:
 	$(check_slot_not_taken)
 	@echo "⬆️  Upgrading trust services (KIT=$(KIT)) to $(DOCKER_TAG) (FL client $(DOCKER_FL_TAG))..."
 	@echo "$(GPU_STATUS_MSG)"
+	# A site upgrading from before the cohort-snapshot store (FLIP#857) has no bind dir yet: create it
+	# as the host user, as up-trust does, or compose creates it root-owned and the non-root
+	# data-access-api disables the store — refusing every row-level request. Same fallback as up-trust.
+	mkdir -p $(or $(COHORT_SNAPSHOT_STORAGE_DIR),./data-access-api/.snapshots/Trust_$(TRUST_NUM))
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."

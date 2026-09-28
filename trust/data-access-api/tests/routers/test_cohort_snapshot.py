@@ -83,9 +83,7 @@ def test_dataframe_serves_frozen_snapshot_and_ignores_client_sql(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_snapshot")
-def test_dataframe_frozen_below_threshold_uses_the_fixed_refusal(
-    mock_get_snapshot, mock_decrypt, mock_get_settings
-):
+def test_dataframe_frozen_below_threshold_uses_the_fixed_refusal(mock_get_snapshot, mock_decrypt, mock_get_settings):
     """The frozen count is gated with the same fixed text as the live path — the threshold
     is read live, so an operator raising their floor bites already-approved projects."""
     mock_decrypt.return_value = "my_project"

@@ -56,6 +56,12 @@ class UpgradeTrust(unittest.TestCase):
         out = dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
         assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
 
+    def test_apply_phase_creates_the_cohort_snapshot_dir_before_compose_does(self):
+        """A site upgrading into the snapshot store (FLIP#857) has no bind dir; compose would create it root-owned."""
+        out = dry_run("_upgrade-trust-apply")
+        assert "mkdir -p ./data-access-api/.snapshots/" in out, out
+        assert out.index("mkdir -p ./data-access-api/.snapshots/") < out.index(" up -d"), out
+
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = dry_run("up-trust")

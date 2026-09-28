@@ -125,8 +125,7 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
             timeout_seconds=get_settings().COHORT_QUERY_TIMEOUT_SECONDS,
         )
         logger.info(
-            f"Cohort snapshot persisted for project {request.project_id}: "
-            f"{response.get('row_count')} rows"  # type: ignore[union-attr]
+            f"Cohort snapshot persisted for project {request.project_id}: {response.get('row_count')} rows"  # type: ignore[union-attr]
         )
         return {"success": True, "result": json.dumps(response)}
     except Exception as e:

@@ -229,7 +229,41 @@ async def test_queue_imaging_creation_does_not_check_the_caller(
 
     assert response["success"] == "Imaging project creation task queued successfully"
     mock_has_permissions.assert_not_called()
-    mock_get_session.add.assert_called_once()
+    queued = [call.args[0].task_type for call in mock_get_session.add.call_args_list]
+    assert queued == [TaskType.PERSIST_COHORT, TaskType.CREATE_IMAGING]
+
+
+@pytest.mark.asyncio
+async def test_a_late_trust_freezes_its_own_cohort_before_its_imaging(
+    mock_request,
+    mock_get_session,
+    mock_get_project,
+    mock_get_approved_trusts,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+):
+    """A trust approving an already-APPROVED project (FLIP#1258) joins through this same entry point.
+
+    So it gets its own PERSIST_COHORT task (FLIP#857), committed before its CREATE_IMAGING task: the row-level
+    routes serve only the frozen snapshot, and a late trust without one would refuse its imaging and training.
+    """
+    late_trust = ITrust(id=uuid.uuid4(), name="Late Trust")
+    mock_get_approved_trusts.return_value = [trust_example, late_trust]
+
+    await queue_imaging_creation(request=mock_request, project_id=project_id, trust=late_trust, db=mock_get_session)
+
+    persist_task, imaging_task = [call.args[0] for call in mock_get_session.add.call_args_list]
+    assert (persist_task.task_type, imaging_task.task_type) == (TaskType.PERSIST_COHORT, TaskType.CREATE_IMAGING)
+    assert persist_task.trust_id == imaging_task.trust_id == late_trust.id
+    assert json.loads(persist_task.payload)["trust_id"] == str(late_trust.id)
+    # Each task in its own commit, the snapshot's first, so its created_at is the earlier.
+    assert [name for name, _, _ in mock_get_session.mock_calls if name in ("add", "commit")] == [
+        "add",
+        "commit",
+        "add",
+        "commit",
+    ]
 
 
 # Test case for DB error during task creation
