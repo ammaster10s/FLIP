@@ -70,10 +70,14 @@ Tutorial suite, on a GPU host:
 - [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
 - [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
 
+Not run for v0.10.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
 Full-platform smoke test, against a running deployment:
 
-- [ ] NVFLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Both passed on 28 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-2741573`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded.
 
 ## :file_folder: PRs merged in this release
 
