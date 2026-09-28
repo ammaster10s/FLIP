@@ -186,9 +186,11 @@ describe("My Trust", () => {
 
         expect(wrapper.find("[data-test='my-trust-eyebrow']").text()).toBe("Trust admin · DTA");
         expect(wrapper.find("h1").text()).toBe("My Trust");
-        expect(wrapper.find("[data-test='my-trust-description']").text()).toBe(
+        const description = wrapper.find("[data-test='my-trust-description']");
+        expect(description.text().replace(/\s+/g, " ")).toBe(
             "Review project requests to use data held at Decision Trust A, and monitor the health of the local FLIP node."
         );
+        expect(description.find("strong").text()).toBe("Decision Trust A");
     });
 
     it("shows the Trust Admin's own trust card beside the decisions", async () => {

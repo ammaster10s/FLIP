@@ -33,8 +33,9 @@
                         <span class="text-primary-500 underline decoration-4 decoration-primary-400/60 underline-offset-8 dark:text-white">My Trust</span>
                     </h1>
                     <p data-test="my-trust-description" class="mt-3.5 max-w-[620px] text-sm text-gray-500 dark:text-gray-300">
-                        Review project requests to use data held at {{ trustName }}, and monitor the health of the local
-                        FLIP node.
+                        Review project requests to use data held at
+                        <strong data-test="my-trust-name" class="font-semibold text-gray-900 dark:text-gray-100">{{ trustName }}</strong>,
+                        and monitor the health of the local FLIP node.
                     </p>
                 </header>
 
