@@ -130,7 +130,7 @@ change, since those live in the image layer, not the mounted `src/`.
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
-make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
+make -C fl-tutorials test  # ruff + both CPU-only pytest suites (tutorial-app + per-dataset; no GPU/dataset/FL image)
 make -C flip-utils unit-test  # ruff + format check + mypy + pytest for the flip package (not part of root unit_test; CI: unit-tests.yml)
 make -C docs test          # docs GIFs fetcher/publisher suites + rst<->spec wiring guard (no network)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
@@ -173,7 +173,7 @@ make -C fl-tutorials download-arkplus-finetuning-data    # Ark+ TRAIN splits (HF
 make -C fl-tutorials download-arkplus-eval-data          # Ark+ HOLD-OUT splits (HF, ~1.6 GB): the two arkplus evaluation tutorials
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
-make -C fl-tutorials test                                # ruff + the CPU-only transform-chain suite
+make -C fl-tutorials test                                # ruff + both CPU-only pytest suites (tutorial-app + per-dataset)
 ```
 
 `make run` delegates to `make sim` (NVFLARE simulator, needs a GPU; per-tutorial `make export` builds

@@ -152,16 +152,13 @@ Things worth knowing before touching any of it:
   carries it — which is what keeps `PowerUserAccess` + IAM write from being
   administrator-equivalent. Adding a role means adding its literal name to
   `var.managed_role_names` in `ci/variables.tf` and re-applying `ci/` from a laptop
-  first, or the apply cannot pass or re-trust it. The LZA modes used to be the
-  exception — the Makefile exported the variable as `""` there, because those
-  accounts were applied by hand, never received `ci/` and so held no boundary
-  policy to attach (attaching an unresolvable name fails every role update with
-  `NoSuchEntity`). That is no longer true: `ci/` is applied in the LZA accounts
-  first and the boundary is carried in every account this stack deploys into, so
-  no mode detaches it. An env file can still set
-  `TF_VAR_iam_permissions_boundary_name=""` for an account where `ci/` genuinely
-  has not been applied; `tests/test_iam_permissions_boundary.py` guards that no
-  mode detaches it by default (FLIP#1199).
+  first, or the apply cannot pass or re-trust it. **The LZA modes use the
+  platform's boundary instead**: the Makefile defaults the variable to
+  `AICentre-WorkloadRoleBoundary` there (londonaicentre/lza#51), which the
+  accelerator deploys to every workload account and an LZA SCP requires on every
+  role — a role change without it is denied, from a laptop or from CI. `ci/` is
+  not applied on LZA; the platform owns the boundary and the CI roles.
+  `tests/test_iam_permissions_boundary.py` pins both defaults (FLIP#1199, FLIP#1280).
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
