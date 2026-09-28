@@ -65,24 +65,44 @@ async def start_project_imaging_creation(
     Returns:
         dict[str, str]: Success message indicating the task has been queued.
     """
-    try:
-        # Permissions check — scoped to THIS trust (FLIP#1258).
-        #
-        # Reached via the approval fan-out, but also directly: a global CAN_APPROVE_PROJECTS
-        # here would let a hub administrator create XNAT projects and queue imaging pulls at a
-        # trust that never approved the project, bypassing the site-scoped check on the
-        # approval endpoint itself. The trust is named in the body, so the authority is checked
-        # against it.
-        if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, db):
-            logger.error(
-                f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}: "
-                f"CAN_APPROVE_FOR_TRUST is required at that trust, and global grants do not satisfy it"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"User with ID: {user_id} was unable to start XNAT project creation",
-            )
+    # Permissions check — scoped to THIS trust (FLIP#1258).
+    #
+    # A global CAN_APPROVE_PROJECTS here would let a hub administrator create XNAT projects and
+    # queue imaging pulls at a trust that never approved the project, bypassing the site-scoped
+    # check on the approval endpoint itself. The trust is named in the body, so the authority is
+    # checked against it.
+    if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, db):
+        logger.error(
+            f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}: "
+            f"CAN_APPROVE_FOR_TRUST is required at that trust, and global grants do not satisfy it"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"User with ID: {user_id} was unable to start XNAT project creation",
+        )
 
+    return await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db)
+
+
+async def queue_imaging_creation(request: Request, project_id: UUID, trust: ITrust, db: Session) -> dict[str, str]:
+    """
+    Queues imaging project creation as a task for the trust, with no authority check of its own.
+
+    The approval fan-out calls this directly rather than through the route above: it dispatches to every
+    approved trust, including ones approved by an earlier call — possibly by another trust's owner — so the
+    user completing the approval need hold no authority at those. Each trust's own recorded approval is what
+    authorised its imaging.
+
+    Args:
+        request (Request): FastAPI request object.
+        project_id (UUID): ID of the project.
+        trust (ITrust): Trust information.
+        db (Session): Database session.
+
+    Returns:
+        dict[str, str]: Success message indicating the task has been queued.
+    """
+    try:
         # Get project details
         project = get_project(project_id, db)
         if not project:

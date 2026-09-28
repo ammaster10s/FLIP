@@ -20,7 +20,10 @@ from fastapi import HTTPException
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.users import CognitoUser
-from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
+from flip_api.trusts_services.start_project_imaging_creation import (
+    queue_imaging_creation,
+    start_project_imaging_creation,
+)
 
 # =============================================================================================
 # Test data
@@ -181,6 +184,26 @@ async def test_successful_imaging_creation(
     # Verify task was added and committed
     mock_get_session.add.assert_called_once()
     mock_get_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_queue_imaging_creation_does_not_check_the_caller(
+    mock_request,
+    mock_get_session,
+    mock_has_permissions,
+    mock_get_project,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+):
+    """The approval fan-out's entry point: a trust approved by an earlier call is queued whoever completes approval."""
+    response = await queue_imaging_creation(
+        request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+    )
+
+    assert response["success"] == "Imaging project creation task queued successfully"
+    mock_has_permissions.assert_not_called()
+    mock_get_session.add.assert_called_once()
 
 
 # Test case for DB error during task creation

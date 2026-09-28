@@ -84,7 +84,7 @@ def mock_project_row(mock_project):
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_success(
@@ -146,7 +146,7 @@ def test_approve_project_rejects_a_trust_both_approved_and_declined(mock_approve
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_with_failure_in_trust(
@@ -214,7 +214,7 @@ def test_approve_project_that_stays_staged_dispatches_no_imaging(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
@@ -239,7 +239,7 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
@@ -263,7 +263,7 @@ def test_approve_project_leaves_a_missing_row_to_the_authorised_approval_path(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_reports_the_permission_refusal_whether_or_not_the_project_exists(
