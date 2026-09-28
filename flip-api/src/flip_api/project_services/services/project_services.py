@@ -452,12 +452,6 @@ def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -
         list[IApprovedTrust]: A list of IApprovedTrust objects containing trust details and their approval status for
         the specified project.
     """
-    # This query assumes ProjectTrustIntersect has all trusts linked to a project,
-    # and COALESCE handles trusts not yet explicitly approved/denied if they are in the intersect table.
-    # If you need ALL trusts from the Trusts table and then their status for *this* project,
-    # a LEFT JOIN from Trusts to ProjectTrustIntersect would be more appropriate.
-    # The original query was an INNER JOIN, so it only returns trusts *present* in ProjectTrustIntersect
-    # for that project.
     by_project = get_trusts_approval_status_for_projects([project_id], session)
     results = by_project.get(project_id, [])
 

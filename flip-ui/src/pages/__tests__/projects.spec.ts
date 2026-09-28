@@ -161,7 +161,7 @@ describe("Projects Page", () => {
         // green is the project-wide "this trust is in" marker, not a per-trust one.
         ["STAGED", "APPROVED", "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
             "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
-        // A decline is final for the trust whatever the project's status, so it shows at once.
+        // A decline is a recorded decision, not a wait, so it shows on a staged row too.
         ["STAGED", "DECLINED", "bg-red-500", TRUST_CHIP_DOTTED_PADDING,
             "KCH NHS Foundation Trust — declined", "— declined"],
         ["APPROVED", "PENDING", "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,

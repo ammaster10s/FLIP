@@ -56,7 +56,7 @@ const props = defineProps<{ project: IProject }>();
 
 // A chip's dot marks that trust's standing in the project. Colour, tooltip and the chip's
 // sr-only suffix all come from one row of this table so they can't disagree — the dot is
-// aria-hidden and the two states differ only by hue, which colour-blind and screen-reader
+// aria-hidden and the three states differ only by hue, which colour-blind and screen-reader
 // users can't read. The sr-only text after the label is the accessible channel for that
 // distinction: `title` is hover-only, so it reaches neither keyboard nor assistive-technology
 // users (and `aria-label` on a role-less span is not reliably announced either).
@@ -82,11 +82,12 @@ const TRUST_DOT = {
 
 // Emerald needs the project itself to have reached APPROVED as well as the trust to
 // have signed off — it is the project-wide "this trust is in" marker. Anything short
-// of that is pending, so on an APPROVED row a trust still awaiting sign-off stays
-// amber against an emerald spine: deliberate, so "still pending" reads against its
-// green neighbours. Drafts get no dot at all (`null` below) — their chips are merely
-// linked trusts, with no standing to report yet. A decline is final for that trust whatever
-// the project's status, so it shows on a staged row as well as an approved one.
+// of that is pending. An APPROVED row only carries a pending trust when it was approved
+// before decisions were recorded (FLIP#1318): the trusts left out then migrated to
+// PENDING, and stay amber against the emerald spine. A decline is a recorded decision,
+// not a wait, so it shows on a staged row as well as an approved one. Drafts get no dot
+// at all (`null` below) — their chips are merely linked trusts, with no standing to
+// report yet.
 //
 // Status is allow-listed rather than tested with `!== "UNSTAGED"`: it arrives off the
 // wire, where it can be absent or a value the union doesn't know yet, and an

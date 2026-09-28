@@ -104,8 +104,8 @@ async def approve_project_step_function_endpoint(
         project = get_project_by_id(project_id, db)
         has_imaging = project.has_imaging if project is not None else True
 
-        # Step 1: Approve Project
-        logger.info(f"Approving project with ID: {project_id}")
+        # Step 1: Record the trust decisions (approves the project once every trust is decided and one approved)
+        logger.info(f"Recording trust decisions on project {project_id}")
         trusts = approve_project_endpoint(project_id=project_id, payload=body, user_id=user_id, db=db)
         logger.debug(f"Trusts returned from approve_project: {trusts}")
 

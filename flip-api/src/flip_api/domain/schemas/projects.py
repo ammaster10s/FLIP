@@ -98,8 +98,14 @@ class XnatProjectStatusInfo(BaseModel):
 
 
 class ApproveProjectBodyPayload(BaseModel):
-    trusts: list[UUID] = Field(..., description="List of Trust IDs to approve for the project.")
-    declined: list[UUID] = Field(default_factory=list, description="List of Trust IDs that decline the project.")
+    trusts: list[UUID] = Field(
+        ...,
+        description="Trust IDs that approve the project. A staged trust named in neither list keeps its decision.",
+    )
+    declined: list[UUID] = Field(
+        default_factory=list,
+        description="Trust IDs that decline the project. A staged trust named in neither list keeps its decision.",
+    )
 
     @model_validator(mode="after")
     def _no_trust_both_approved_and_declined(self) -> "ApproveProjectBodyPayload":

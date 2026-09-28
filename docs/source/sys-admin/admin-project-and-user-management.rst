@@ -38,12 +38,12 @@ Approving a project allows the next stage of model training to commence and trig
 
 .. warning::
 
-   The model developer will not be able to initiate training at Trusts that have declined to participate in the project and its model's training.
+   The model developer will not be able to initiate training at Trusts that have not approved the project, whether they declined or were never decided.
 
 1. Navigate to the project page
 2. Navigate to the 'Trust Approval' section
 3. For each Trust staged for the project, click **Approve** or **Decline**
-4. Click the 'Save Trust Decisions' button, which is enabled once every Trust has a decision
+4. Click the 'Save Trust Decisions' button, which is enabled once every Trust has a decision and at least one decision differs from what is already saved
 
 The project is approved as soon as the decisions are saved with at least one Trust approved. If every Trust is declined, the project stays staged: either change a decision and save again, or un-stage the project so the model developer can amend it and stage it again. The earlier decisions stay in the project's audit trail. Once a project is approved its Trust decisions can no longer be changed.
 

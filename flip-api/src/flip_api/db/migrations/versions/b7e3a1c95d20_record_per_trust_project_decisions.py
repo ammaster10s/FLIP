@@ -19,8 +19,9 @@ out when the others were approved", and neither may be recorded as a refusal. Hi
 no recorded approver, so ``decided_by`` stays NULL.
 
 ``projects_audit`` gains ``trust_id`` and the APPROVE_TRUST / DECLINE_TRUST actions, so each
-decision is audited against its trust. ADD VALUE cannot run inside the migration transaction, hence
-the autocommit block; the values are appended so migrated databases keep a fresh one's enum order.
+decision is audited against its trust. The new enum values go in an autocommit block because a value
+added inside a transaction cannot be used until that transaction commits, and Alembic runs every
+pending revision in one; they are appended, matching their order in ``ProjectAuditAction``.
 
 Revision ID: b7e3a1c95d20
 Revises: 40f7934c6419
