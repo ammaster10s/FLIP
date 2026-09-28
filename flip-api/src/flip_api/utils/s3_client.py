@@ -199,8 +199,7 @@ class S3Client:
             # X-Amz-Signature / X-Amz-Credential, and writable capability
             # leaks chain into FL supply-chain attacks.
             logger.info(
-                "Generated pre-signed POST policy "
-                f"bucket={bucket} key_hash={hash_s3_key(key)} expires_in={ttl}"
+                f"Generated pre-signed POST policy bucket={bucket} key_hash={hash_s3_key(key)} expires_in={ttl}"
             )
             return response
         except ClientError as e:

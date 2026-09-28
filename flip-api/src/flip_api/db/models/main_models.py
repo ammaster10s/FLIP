@@ -405,9 +405,7 @@ class UploadedFiles(SQLModel, table=True):
     # row that predates this column). Never gates promotion: unlike the
     # picklescan verdict above, this never turns into an INFECTED/ERROR
     # status. Purely a signal for whoever next opens the model's file list.
-    bandit_findings: list[dict] | None = Field(
-        default=None, sa_column=Column("bandit_findings", JSONB, nullable=True)
-    )
+    bandit_findings: list[dict] | None = Field(default=None, sa_column=Column("bandit_findings", JSONB, nullable=True))
 
 
 class XNATProjectStatus(SQLModel, table=True):

@@ -63,7 +63,8 @@ class TerraformStagPause(unittest.TestCase):
     def test_the_production_drift_dispatch_does_not_wait_on_the_paused_job(self) -> None:
         text = (WORKFLOWS / "terraform_drift.yml").read_text()
         block = re.search(r"^  dispatch-prod:\n(?P<body>(?:    [^\n]*\n|\s*\n)*)", text, re.MULTILINE)
-        assert block and "needs:" not in block["body"], "dispatch-prod must not depend on the drift job"
+        assert block, "terraform_drift.yml has no dispatch-prod job"
+        assert "needs:" not in block["body"], "dispatch-prod must not depend on the drift job"
 
 
 if __name__ == "__main__":

@@ -252,9 +252,7 @@ def write_yaml(data, path, permissions=0o644):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate Helm values override file(s) from a .env file."
-    )
+    parser = argparse.ArgumentParser(description="Generate Helm values override file(s) from a .env file.")
     parser.add_argument(
         "--env-file",
         default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env.development")),
@@ -289,9 +287,7 @@ def main():
     print("Wrote non-sensitive overrides to: {}".format(overrides_path))
 
     # Write secrets file (never echo contents)
-    secrets_path = args.secrets_file or os.path.join(
-        args.output_dir, "values-secrets.yaml"
-    )
+    secrets_path = args.secrets_file or os.path.join(args.output_dir, "values-secrets.yaml")
     if secrets:
         write_yaml({"secrets": {"create": True, "data": secrets}}, secrets_path, permissions=0o600)
         print("Wrote secrets values to: {} (permissions: 0o600)".format(secrets_path))

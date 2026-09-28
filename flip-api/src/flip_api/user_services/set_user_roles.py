@@ -132,6 +132,4 @@ def set_user_roles(
         # services.
         db.rollback()
         logger.exception("Error setting user roles")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

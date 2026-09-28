@@ -415,8 +415,7 @@ def _validate_query_ast(query: str) -> str:
         function_name = function.name.lower()
         if function_name not in _ALLOWED_FUNCTIONS:
             raise _invalid_query(
-                f"'{function_name}' is not an allowed function. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
+                f"'{function_name}' is not an allowed function. Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
@@ -819,10 +818,12 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
         unique_count = df[col].nunique()
         percentage_unique = unique_count / len(df) if len(df) > 0 else 0
         logger.info(f"Column '{col}' has {unique_count} unique values ({percentage_unique:.2%} of total)")
-        if all([
-            unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
-            percentage_unique < threshold,  # Relative threshold
-        ]):
+        if all(
+            [
+                unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
+                percentage_unique < threshold,  # Relative threshold
+            ]
+        ):
             logger.info(f"Column '{col}' has insufficient unique values ({threshold=}, {unique_count=})")
             return False
     return True

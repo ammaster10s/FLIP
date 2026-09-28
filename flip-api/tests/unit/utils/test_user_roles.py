@@ -195,9 +195,7 @@ class TestGetUserRoleData:
             ],
         )
 
-        result = get_user_role_data(
-            _paging(search_str="KiNgS"), [by_email_match, by_name, by_org, excluded], session
-        )
+        result = get_user_role_data(_paging(search_str="KiNgS"), [by_email_match, by_name, by_org, excluded], session)
 
         assert {u.email for u in result} == {"kingsteam@example.com", "b@example.com", "c@example.com"}
 

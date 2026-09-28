@@ -144,10 +144,7 @@ def register_user_step_function_endpoint(
             # Transient Cognito read failures (HTTP 404/503 from set_user_roles)
             # must NOT trigger the rollback — the user definitely exists, we
             # just created it. Re-raise so the caller can retry.
-            if (
-                isinstance(role_err, HTTPException)
-                and role_err.status_code in _TRANSIENT_ROLE_ASSIGNMENT_STATUSES
-            ):
+            if isinstance(role_err, HTTPException) and role_err.status_code in _TRANSIENT_ROLE_ASSIGNMENT_STATUSES:
                 logger.warning(
                     f"Role assignment for user {user_id} could not be verified "
                     f"(transient Cognito read, status={role_err.status_code}); "

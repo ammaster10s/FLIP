@@ -218,14 +218,8 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     # per-site wiring was done by the testing harness' Docker mounts.) The deployed run (LOCAL_DEV=false)
     # ignores all of this and pulls data from the trust APIs instead — see _is_local_dev / _load_dataframe.
     site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
-    images_dir = (
-        (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
-        or os.environ.get("DEV_IMAGES_DIR")
-    )
-    dataframe = (
-        (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
-        or os.environ.get("DEV_DATAFRAME")
-    )
+    images_dir = (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None) or os.environ.get("DEV_IMAGES_DIR")
+    dataframe = (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None) or os.environ.get("DEV_DATAFRAME")
     resolved_site = requested_site or "default"
     return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 

@@ -128,7 +128,7 @@ def test_dicom_node_port_pin_is_scoped_to_nodeport_type_only() -> None:
     dicom = _service_blocks()["xnat-web-dicom"]
 
     pin_guard = re.compile(
-        r'\{\{-\s*if and \.Values\.xnat\.web\.dicomNodePort'
+        r"\{\{-\s*if and \.Values\.xnat\.web\.dicomNodePort"
         r' \(eq \.Values\.xnat\.web\.dicomService\.type "NodePort"\)\s*\}\}'
     )
     assert pin_guard.search(dicom), (
@@ -160,9 +160,7 @@ def test_validate_pacs_reachable_uses_dicom_service_type() -> None:
     reachability_conditions = [
         line
         for line in body.splitlines()
-        if line.lstrip().startswith("{{- if")
-        and ("ClusterIP" in line or "NodePort" in line)
-        and "dicomService" in line
+        if line.lstrip().startswith("{{- if") and ("ClusterIP" in line or "NodePort" in line) and "dicomService" in line
     ]
     assert reachability_conditions, (
         "no reachability condition keys off dicomService.type — the guard is checking the wrong "
@@ -215,7 +213,7 @@ def test_validate_pacs_reachable_rejects_wide_open_ingress_cidr() -> None:
         "the 0.0.0.0/0 comparison is not followed by a fail — a guard that computes a verdict and "
         "renders anyway is decorative"
     )
-    fail_message = tail[tail.index("{{- fail (printf"):]
+    fail_message = tail[tail.index("{{- fail (printf") :]
     assert "allowedIngressCIDRsWithPorts contains 0.0.0.0/0" in fail_message, (
         "the fail that follows the 0.0.0.0/0 comparison does not name it — an operator cannot act "
         "on a refusal that does not say what was refused"

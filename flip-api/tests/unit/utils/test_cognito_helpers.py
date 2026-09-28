@@ -995,9 +995,7 @@ class TestGetCognitoUsers:
         assert "page=" in log_msg
         assert "collected=" in log_msg
 
-    def test_client_error_mid_pagination_logs_page_index(
-        self, mock_boto3_client, mock_get_settings, mock_logger
-    ):
+    def test_client_error_mid_pagination_logs_page_index(self, mock_boto3_client, mock_get_settings, mock_logger):
         """A ClientError on page 3 of 10 must log page=3 and collected count.
 
         Without this, operators investigating a list_users 500 cannot tell whether
@@ -1312,9 +1310,7 @@ class TestResetUserMfa:
             UserPoolId=user_pool_id,
             Username=username,
         )
-        mock_logger.info.assert_called_once_with(
-            f"Successfully reset MFA and revoked sessions for user: {username}"
-        )
+        mock_logger.info.assert_called_once_with(f"Successfully reset MFA and revoked sessions for user: {username}")
 
     def test_client_error_raises_http_500(self, mock_boto3_client, mock_settings, mock_logger):
         """A boto3 ClientError on either sub-call surfaces as HTTP 500."""
@@ -1392,9 +1388,7 @@ class TestIsMfaEnabled:
         }
 
         assert is_mfa_enabled("user@example.com", "pool-id") is True
-        mock_client_instance.admin_get_user.assert_called_once_with(
-            UserPoolId="pool-id", Username="user@example.com"
-        )
+        mock_client_instance.admin_get_user.assert_called_once_with(UserPoolId="pool-id", Username="user@example.com")
 
     def test_empty_mfa_list_returns_false(self, mock_boto3_client, mock_settings):
         mock_client_instance = mock_boto3_client.return_value
@@ -1547,9 +1541,7 @@ class TestGetUsername:
             result = get_username(str(user1), USER_POOL_ID)
 
             assert result == "first@example.com"
-            mock_logger.warning.assert_any_call(
-                f"Multiple users found for ID {user1}, returning the first one"
-            )
+            mock_logger.warning.assert_any_call(f"Multiple users found for ID {user1}, returning the first one")
 
     @pytest.mark.parametrize(
         "bad_user_id",
@@ -1661,9 +1653,7 @@ class TestDeleteCognitoUser:
         mock_boto3_client.return_value.admin_delete_user.assert_called_once_with(
             UserPoolId="pool-id", Username="user@example.com"
         )
-        mock_logger.info.assert_called_once_with(
-            "Successfully deleted user: user@example.com"
-        )
+        mock_logger.info.assert_called_once_with("Successfully deleted user: user@example.com")
 
     def test_client_error_raises_http_500(self, mock_boto3_client, mock_settings, mock_logger):
         """A boto3 failure during delete surfaces as HTTP 500 with a

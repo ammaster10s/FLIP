@@ -152,8 +152,7 @@ def _load_task_status_trust_ids(
         tuple[list[UUID], list[UUID]]: ``(pending_trust_ids, cancelled_trust_ids)``.
     """
     rows = session.exec(
-        select(TrustTask.trust_id, TrustTask.status)
-        .where(
+        select(TrustTask.trust_id, TrustTask.status).where(
             TrustTask.query_id == query_id,
             col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
         )
@@ -703,10 +702,7 @@ def record_trust_decisions(
     # populate_existing: the caller may already hold this row (the endpoint checks it is STAGED), and a stale
     # copy would hide a concurrent approval that committed while this call waited for the lock.
     project = db.exec(
-        select(Projects)
-        .where(Projects.id == project_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
+        select(Projects).where(Projects.id == project_id).with_for_update().execution_options(populate_existing=True)
     ).first()
     if not project or project.deleted:
         raise ValueError(f"Project {project_id} does not exist or is deleted, cannot record trust decisions.")
