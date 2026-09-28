@@ -168,11 +168,13 @@ beforeEach(() => {
 });
 
 describe("My Trust", () => {
-    it("heads the page with the Trust Admin's own trust card", async () => {
+    it("ends the page with the Trust Admin's own trust card, after the decisions", async () => {
         const wrapper = mountPage();
         await nextTick();
 
         expect(wrapper.find("[data-test='trust-card']").text()).toBe("Decision Trust A");
+        const html = wrapper.html();
+        expect(html.indexOf("data-test=\"trust-card\"")).toBeGreaterThan(html.indexOf("data-test=\"decided-list\""));
     });
 
     it("sends anyone who is not a Trust Admin back to Projects", async () => {
