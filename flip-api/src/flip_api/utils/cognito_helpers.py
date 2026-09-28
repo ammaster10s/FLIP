@@ -138,9 +138,7 @@ def get_cognito_users(params: dict[str, Any] | None = None) -> list[CognitoUser]
         # full error server-side (with page+collected so operators can
         # distinguish a mid-walk throttle from a page-1 hard failure),
         # return a generic message.
-        logger.exception(
-            f"Error getting Cognito users (page={page_index + 1}, collected={len(users)})"
-        )
+        logger.exception(f"Error getting Cognito users (page={page_index + 1}, collected={len(users)})")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get Cognito users"
         ) from e
@@ -160,13 +158,9 @@ def _safe_email_for_cognito_filter(email: str) -> str:
     try:
         validated = _EMAIL_VALIDATOR.validate_python(email)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format") from exc
     if '"' in validated or "\\" in validated:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format")
     return validated
 
 
@@ -182,14 +176,10 @@ def _safe_uuid_for_cognito_filter(user_id: str | UUID) -> str:
     try:
         return str(UUID(user_id))
     except (ValueError, AttributeError, TypeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID format"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID format") from exc
 
 
-def get_user_by_email_or_id(
-    user_pool_id: str, email: str | None = None, user_id: UUID | None = None
-) -> CognitoUser:
+def get_user_by_email_or_id(user_pool_id: str, email: str | None = None, user_id: UUID | None = None) -> CognitoUser:
     """
     Get a user from Cognito by email or ID.
 
@@ -305,9 +295,7 @@ def update_user(username: str, user_pool_id: str, disabled: bool) -> Disabled:
         return Disabled(disabled=disabled)
     except ClientError as e:
         logger.exception("Error updating user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user") from e
 
 
 def delete_cognito_user(username: str, user_pool_id: str) -> None:
@@ -334,9 +322,7 @@ def delete_cognito_user(username: str, user_pool_id: str) -> None:
         logger.info(f"Successfully deleted user: {username}")
     except ClientError as e:
         logger.exception("Error deleting user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user") from e
 
 
 def reset_user_mfa(username: str, user_pool_id: str) -> None:
@@ -479,9 +465,7 @@ def revoke_token(refresh_token: str, client_id: str) -> None:
         logger.info("Successfully revoked refresh token")
     except ClientError as e:
         logger.exception("Error revoking token")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token") from e
 
 
 def create_cognito_user(email: str, user_pool_id: str) -> UUID:

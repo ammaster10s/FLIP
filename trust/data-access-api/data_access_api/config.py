@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 # The shipped disclosure floor. Referenced by both the field default and the empty-string
 # coercion validator below, so the two cannot drift apart.
@@ -102,11 +103,20 @@ class Settings(BaseSettings):
         """Construct the database URL for the OMOP database.
 
         Returns:
-            SecretStr: A ``postgresql://`` URL wrapped as a SecretStr to avoid leaking the password
-            in logs or error messages.
+            SecretStr: A ``postgresql+psycopg2://`` URL wrapped as a SecretStr to avoid leaking
+            the password in logs or error messages.
         """
+        # The driver is named because a bare ``postgresql://`` lets SQLAlchemy pick one, and
+        # this service ships psycopg2 only. URL.create escapes @, / and : in the credentials.
         return SecretStr(
-            f"postgresql://{self.DATA_ACCESS_POSTGRES_USER}:{self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value()}@{self.OMOP_DB_SERVICE_NAME}:{self.OMOP_DB_PORT}/{self.OMOP_POSTGRES_DB}"
+            URL.create(
+                "postgresql+psycopg2",
+                username=self.DATA_ACCESS_POSTGRES_USER,
+                password=self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value(),
+                host=self.OMOP_DB_SERVICE_NAME,
+                port=self.OMOP_DB_PORT,
+                database=self.OMOP_POSTGRES_DB,
+            ).render_as_string(hide_password=False)
         )
 
 

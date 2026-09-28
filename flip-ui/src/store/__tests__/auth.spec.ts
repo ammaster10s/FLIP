@@ -208,10 +208,40 @@ describe("authStore", () => {
                     sub: "s",
                     email: "e@f.com"
                 },
-                permissions: ["CanManageUsers"]
+                permissions: ["CanManageUsers"],
+                trustAdminOf: null
             });
             expect(getUserPermissions).toHaveBeenCalledWith("id");
             expect(getMfaStatus).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the trust a Trust Admin administers (FLIP#1258)", async () => {
+            vi.mocked(getCurrentUser).mockResolvedValue({
+                username: "u",
+                userId: "id"
+            } as never);
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
+            vi.mocked(fetchUserAttributes).mockResolvedValue({
+                sub: "s",
+                email: "e@f.com"
+            } as never);
+            const trust = {
+                id: "dta",
+                code: "DTA",
+                name: "Decision Trust A"
+            };
+            vi.mocked(getUserPermissions).mockResolvedValue({
+                permissions: ["CanCreateProjects"],
+                trustAdminOf: trust
+            });
+
+            await store.hydrate();
+
+            expect(store.user?.trustAdminOf).toEqual(trust);
+            expect(store.trustAdminOf).toEqual(trust);
         });
 
         it("defaults permissions to empty array when backend omits them", async () => {

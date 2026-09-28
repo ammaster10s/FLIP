@@ -119,6 +119,4 @@ def delete_user(
         # private services.
         db.rollback()
         logger.exception("Error deleting user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

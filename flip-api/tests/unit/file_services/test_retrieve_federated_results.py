@@ -380,9 +380,7 @@ def test_retrieve_federated_results_redacts_url_when_get_presigned_raises(caplog
             patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3_cls,
         ):
             mock_s3 = MagicMock()
-            mock_s3.list_objects.return_value = [
-                f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin"
-            ]
+            mock_s3.list_objects.return_value = [f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin"]
             mock_s3.get_presigned_url.side_effect = Exception(_FAKE_SIGNED_URL)
             mock_s3_cls.return_value = mock_s3
 
