@@ -19,7 +19,7 @@ from fastapi import HTTPException
 
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
-from flip_api.domain.schemas.status import DecisionMaker
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.trusts_services.start_project_imaging_creation import (
     queue_imaging_creation,
@@ -88,8 +88,19 @@ def mock_get_project():
             query=query,
             owner_id=user_id,
             dicom_to_nifti=True,
+            status=ProjectStatus.APPROVED,
         )
         yield mock_get_project
+
+
+@pytest.fixture(autouse=True)
+def mock_get_approved_trusts():
+    """The trust has approved the project, as imaging requires (FLIP#1258); tests refusing it clear the list."""
+    with mock.patch(
+        "flip_api.trusts_services.start_project_imaging_creation.get_approved_trusts_for_project"
+    ) as mock_get_approved_trusts:
+        mock_get_approved_trusts.return_value = [trust_example]
+        yield mock_get_approved_trusts
 
 
 @pytest.fixture
@@ -285,6 +296,33 @@ async def test_project_without_imaging_is_refused_with_409(
             trust=trust_example,
             db=mock_get_session,
             user_id=user_id,
+        )
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("project_status", "approved_trusts"),
+    [(ProjectStatus.STAGED, [trust_example]), (ProjectStatus.APPROVED, [])],
+    ids=["project not approved", "trust not approved"],
+)
+async def test_imaging_follows_the_trusts_approval(
+    mock_request,
+    mock_get_session,
+    mock_get_project,
+    mock_get_approved_trusts,
+    project_status,
+    approved_trusts,
+):
+    """FLIP#1258: the fan-out's entry point refuses too, so no path starts imaging a trust did not approve."""
+    mock_get_project.return_value.status = project_status
+    mock_get_approved_trusts.return_value = approved_trusts
+
+    with pytest.raises(HTTPException) as excinfo:
+        await queue_imaging_creation(
+            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
         )
 
     assert excinfo.value.status_code == 409

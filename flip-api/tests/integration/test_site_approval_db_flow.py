@@ -20,17 +20,20 @@ Real Postgres via the shared session fixture, and real ``user_role`` rows: the c
 ``role_permission`` → ``permission`` with a scope predicate, which a mocked session cannot exercise.
 """
 
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
-from flip_api.db.models.main_models import ModelTrustIntersect, ProjectTrustIntersect
+from flip_api.db.models.main_models import ModelTrustIntersect, ProjectTrustIntersect, TrustTask
 from flip_api.db.models.user_models import RoleRef, UserRole
+from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus, TrustIntersectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
+from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
 
 
 @pytest.fixture
@@ -353,3 +356,62 @@ def test_decisions_on_an_unstaged_project_are_refused(session, staged_project):
     session.commit()
 
     assert _refused(session, project, _payload([staged_project["trusts"][0]]), admin_id) == 400
+
+
+@pytest.fixture
+def no_cognito(monkeypatch):
+    """The imaging route lists the project's users from Cognito; none are needed to test who may start it."""
+    module = "flip_api.trusts_services.start_project_imaging_creation"
+    monkeypatch.setattr(f"{module}.get_user_pool_id", lambda _request: "pool")
+    monkeypatch.setattr(f"{module}.get_cognito_users", lambda params: [])
+
+
+async def _start_imaging(session, project, trust, user_id):
+    return await start_project_imaging_creation(
+        request=MagicMock(), project_id=project.id, trust=ITrust(id=trust.id, name=trust.name), db=session, user_id=user_id
+    )
+
+
+def _imaging_tasks(session, trust) -> list[TrustTask]:
+    return list(session.exec(select(TrustTask).where(TrustTask.trust_id == trust.id)).all())
+
+
+@pytest.mark.asyncio
+async def test_imaging_cannot_start_before_the_project_is_approved(session, staged_project, no_cognito):
+    admin_id = uuid4()
+    _add(session, _grant(admin_id, RoleRef.ADMIN))
+    first, _second = staged_project["trusts"]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _start_imaging(session, staged_project["project"], first, admin_id)
+
+    assert exc_info.value.status_code == 409
+    assert _imaging_tasks(session, first) == []
+
+
+@pytest.mark.asyncio
+async def test_imaging_cannot_start_at_a_trust_that_declined(session, staged_project, no_cognito):
+    admin_id = uuid4()
+    _add(session, _grant(admin_id, RoleRef.ADMIN))
+    project = staged_project["project"]
+    first, second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first], declined=[second]), admin_id, session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _start_imaging(session, project, second, admin_id)
+
+    assert exc_info.value.status_code == 409
+    assert _imaging_tasks(session, second) == []
+
+
+@pytest.mark.asyncio
+async def test_imaging_starts_at_a_trust_that_approved(session, staged_project, no_cognito):
+    admin_id = uuid4()
+    _add(session, _grant(admin_id, RoleRef.ADMIN))
+    project = staged_project["project"]
+    first, _second = staged_project["trusts"]
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    await _start_imaging(session, project, first, admin_id)
+
+    assert len(_imaging_tasks(session, first)) == 1

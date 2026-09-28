@@ -50,6 +50,13 @@ def upgrade() -> None:
     op.add_column("project_trust_intersect", sa.Column("decided_as", decision_maker, nullable=True))
     # Every decision before this revision was the hub's: nobody could decide for a single trust.
     op.execute("UPDATE project_trust_intersect SET decided_as = 'HUB' WHERE status <> 'PENDING'")
+    # From here a pending trust on an approved project may still approve and join its models. One left pending
+    # before (left out when the others were approved) is closed instead: DECLINED with no decider, date or
+    # decided_as, the mark that nobody declined it. Runs after the HUB backfill, which it must not reach.
+    op.execute(
+        "UPDATE project_trust_intersect i SET status = 'DECLINED' FROM projects p "
+        "WHERE p.id = i.project_id AND p.status = 'APPROVED' AND i.status = 'PENDING'"
+    )
 
     # Its role_permission rows go with it (ondelete=CASCADE).
     op.execute(f"DELETE FROM permission WHERE id = '{_CAN_MANAGE_TRUST_OWNERS}'")
@@ -60,7 +67,13 @@ def downgrade() -> None:
 
     Postgres cannot drop an enum value, so ADMIN_ADDED / ADMIN_REMOVED stay in ``trustauditaction``; the rows that
     use them are deleted, as older code cannot read them. The older seeder re-creates CAN_MANAGE_TRUST_OWNERS.
+    The trusts closed at upgrade — the only declines with no decider, date or decided_as — reopen as PENDING.
     """
+    op.execute(
+        "UPDATE project_trust_intersect i SET status = 'PENDING' FROM projects p "
+        "WHERE p.id = i.project_id AND p.status = 'APPROVED' AND i.status = 'DECLINED' "
+        "AND i.decided_by IS NULL AND i.decided_at IS NULL AND i.decided_as IS NULL"
+    )
     op.drop_column("project_trust_intersect", "decided_as")
     op.execute("DROP TYPE IF EXISTS decisionmaker")
     op.execute("DELETE FROM trusts_audit WHERE action IN ('ADMIN_ADDED', 'ADMIN_REMOVED')")
