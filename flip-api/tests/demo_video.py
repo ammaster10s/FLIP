@@ -112,12 +112,10 @@ APPS: dict[str, dict[str, Any]] = {
         "backends": {
             "nvflare": {
                 "app_dir": (
-                    "fl-tutorials/nvflare/image_evaluation/"
-                    "idc_pathology_nuclei_detection_evaluation/app_files"
+                    "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/app_files"
                 ),
                 "query_file": (
-                    "fl-tutorials/nvflare/image_evaluation/"
-                    "idc_pathology_nuclei_detection_evaluation/query.sql"
+                    "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/query.sql"
                 ),
                 "label": "NVFLARE",
             },
@@ -131,9 +129,7 @@ APPS: dict[str, dict[str, Any]] = {
         #
         # This tutorial scores an existing detector; it never trains one, so the closing line of
         # segment 6 must not say "trained". The default is written for the training apps.
-        "closing_caption": (
-            "A detector scored at every hospital — while the slides never left any of them"
-        ),
+        "closing_caption": ("A detector scored at every hospital — while the slides never left any of them"),
         "enrichment": {
             "cwd": "fl-tutorials/datasets",
             "make_target": "upload-idc-pathology-annotations",
@@ -574,10 +570,7 @@ def _resolve_enrichment(args: argparse.Namespace, profile: dict[str, Any]) -> tu
         return None, None
 
     cwd = str(REPO_ROOT / enrichment["cwd"])
-    cmd = (
-        f"make {enrichment['make_target']} "
-        f'FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="{args.xnat_urls}"'
-    )
+    cmd = f'make {enrichment["make_target"]} FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="{args.xnat_urls}"'
     return cwd, cmd
 
 

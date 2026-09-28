@@ -60,20 +60,41 @@ seed_slides = load_script(SEEDER, "seed_slides", stub=("requests",))
 build_omop_project = load_script(BUILDER, "build_omop_project")
 
 MANIFEST_COLUMNS = [
-    "accession_id", "site", "tss", "patient_id", "slide_study_uid", "slide_series_uid",
-    "slide_sop_instance_uid", "annotation_series_uid", "total_pixel_columns", "total_pixel_rows",
-    "pixel_spacing_mm", "study_date", "slide_instance_mb", "annotation_series_mb", "idc_index_version",
+    "accession_id",
+    "site",
+    "tss",
+    "patient_id",
+    "slide_study_uid",
+    "slide_series_uid",
+    "slide_sop_instance_uid",
+    "annotation_series_uid",
+    "total_pixel_columns",
+    "total_pixel_rows",
+    "pixel_spacing_mm",
+    "study_date",
+    "slide_instance_mb",
+    "annotation_series_mb",
+    "idc_index_version",
 ]
 
 
 def manifest_row(accession: str, site: str, study_date: str = "2024-02-17") -> dict[str, str]:
     tss = accession.split("-")[1]
     return {
-        "accession_id": accession, "site": site, "tss": tss, "patient_id": accession,
-        "slide_study_uid": f"2.25.{abs(hash(accession)) % 10**12}", "slide_series_uid": f"1.3.6.1.{tss}.1",
-        "slide_sop_instance_uid": f"1.3.6.1.{tss}.8", "annotation_series_uid": f"1.2.826.{tss}",
-        "total_pixel_columns": "35584", "total_pixel_rows": "42752", "pixel_spacing_mm": "0.0002325",
-        "study_date": study_date, "slide_instance_mb": "139.8", "annotation_series_mb": "29.8",
+        "accession_id": accession,
+        "site": site,
+        "tss": tss,
+        "patient_id": accession,
+        "slide_study_uid": f"2.25.{abs(hash(accession)) % 10**12}",
+        "slide_series_uid": f"1.3.6.1.{tss}.1",
+        "slide_sop_instance_uid": f"1.3.6.1.{tss}.8",
+        "annotation_series_uid": f"1.2.826.{tss}",
+        "total_pixel_columns": "35584",
+        "total_pixel_rows": "42752",
+        "pixel_spacing_mm": "0.0002325",
+        "study_date": study_date,
+        "slide_instance_mb": "139.8",
+        "annotation_series_mb": "29.8",
         "idc_index_version": "24.2.2",
     }
 
@@ -151,7 +172,9 @@ def test_builder_partitions_by_the_manifest_site(tmp_path: Path, manifest_rows: 
 
     assert set(tables) == {"person", "visit_occurrence", "procedure_occurrence", "image_occurrence"}
     assert tables["image_occurrence"].set_index("accession_id")["source_trust"].to_dict() == {
-        "TCGA-A8-AAA1": 1, "TCGA-A8-AAA2": 1, "TCGA-A7-BBB1": 2,
+        "TCGA-A8-AAA1": 1,
+        "TCGA-A8-AAA2": 1,
+        "TCGA-A7-BBB1": 2,
     }
     for name, frame in tables.items():
         assert list(frame["source_trust"]) == [1, 1, 2], name
@@ -215,8 +238,10 @@ def test_recorder_knows_the_digipath_tutorial() -> None:
     source = DEMO_VIDEO.read_text()
 
     assert '"digipath": {' in source
-    for fragment in ("idc_pathology_nuclei_detection_evaluation/app_files",
-                     "idc_pathology_nuclei_detection_evaluation/query.sql"):
+    for fragment in (
+        "idc_pathology_nuclei_detection_evaluation/app_files",
+        "idc_pathology_nuclei_detection_evaluation/query.sql",
+    ):
         assert fragment.split("/")[-1] in source
     tutorial = REPO_ROOT / "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation"
     assert (tutorial / "app_files").is_dir()
@@ -236,8 +261,13 @@ def load_data_utils():
     """Import app_files/data_utils.py, stubbing the flip package the FL client provides at runtime."""
     for name, attrs in (
         ("flip", {}),
-        ("flip.constants", {"FlipConstants": type("FlipConstants", (), {"LOCAL_DEV": False}),
-                            "ResourceType": type("ResourceType", (), {"DICOM": "DICOM"})}),
+        (
+            "flip.constants",
+            {
+                "FlipConstants": type("FlipConstants", (), {"LOCAL_DEV": False}),
+                "ResourceType": type("ResourceType", (), {"DICOM": "DICOM"}),
+            },
+        ),
     ):
         module = sys.modules.setdefault(name, type(sys)(name))
         for attr, value in attrs.items():
@@ -406,7 +436,7 @@ def test_recorder_carries_the_enrichment_step_for_digipath() -> None:
     defines -- a rename on either side would otherwise surface only as a failed recording.
     """
     source = DEMO_VIDEO.read_text()
-    digipath = source[source.index('"digipath": {'):source.index('"spleen": {')]
+    digipath = source[source.index('"digipath": {') : source.index('"spleen": {')]
 
     assert '"enrichment"' in digipath, "the digipath profile must carry its own enrichment step"
     # The exact quoted value, not a substring: a suffix typo in the target name still contains
@@ -439,8 +469,7 @@ def test_finds_both_objects_in_the_nested_tree_a_trust_returns(tmp_path: Path) -
     data_utils = load_data_utils()
     files = tmp_path / "scans" / "1-FFPE_HE_TP_DX1" / "resources" / "DICOM" / "files"
     files.mkdir(parents=True)
-    write_min_dicom(files / "2.25.180569379270056488293474013124856658992-1-1-irteys.dcm",
-                    data_utils.SLIDE_SOP_CLASS)
+    write_min_dicom(files / "2.25.180569379270056488293474013124856658992-1-1-irteys.dcm", data_utils.SLIDE_SOP_CLASS)
     write_min_dicom(files / "annotation.dcm", data_utils.ANNOTATION_SOP_CLASS)
 
     slide = data_utils._find_by_sop_class(tmp_path, data_utils.SLIDE_SOP_CLASS, "slide.dcm")

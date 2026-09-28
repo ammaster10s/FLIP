@@ -76,8 +76,7 @@ class SlideReader:
         sop_class = str(getattr(dataset, "SOPClassUID", ""))
         if sop_class != _SM_SOP_CLASS_UID:
             raise ValueError(
-                f"{self.path}: SOPClassUID {sop_class!r} is not VL Whole Slide Microscopy Image "
-                f"({_SM_SOP_CLASS_UID})."
+                f"{self.path}: SOPClassUID {sop_class!r} is not VL Whole Slide Microscopy Image ({_SM_SOP_CLASS_UID})."
             )
         organization = str(getattr(dataset, "DimensionOrganizationType", ""))
         if organization != _SUPPORTED_DIMENSION_ORGANIZATION:

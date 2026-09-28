@@ -82,9 +82,7 @@ def parameters_from_broadcast(received: dict | None) -> tuple[DetectorParameters
     """
     if received:
         values = {
-            name: float(np.asarray(received[name]).reshape(-1)[0])
-            for name in PARAMETER_NAMES
-            if name in received
+            name: float(np.asarray(received[name]).reshape(-1)[0]) for name in PARAMETER_NAMES if name in received
         }
         missing = [name for name in PARAMETER_NAMES if name not in values]
         if not missing:
@@ -182,8 +180,13 @@ def main() -> None:
             per_patient[case.patient_id] = per_patient.get(case.patient_id, MatchCounts()) + counts
             tiles_scored += tiles
             logger.info(
-                "%s: %s tp=%d fp=%d fn=%d over %d tile(s)", site_name, case.accession_id, counts.tp,
-                counts.fp, counts.fn, tiles,
+                "%s: %s tp=%d fp=%d fn=%d over %d tile(s)",
+                site_name,
+                case.accession_id,
+                counts.tp,
+                counts.fp,
+                counts.fn,
+                tiles,
             )
 
         metrics = detection_metrics(site_counts)

@@ -149,8 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     accession_dir = args.images_dir / args.accession
     if not (accession_dir / "slide.dcm").exists():
         raise SystemExit(
-            f"No slide at {accession_dir}. Fetch the data with:\n"
-            "  make -C fl-tutorials download-idc-pathology-data"
+            f"No slide at {accession_dir}. Fetch the data with:\n  make -C fl-tutorials download-idc-pathology-data"
         )
 
     config = load_config()
@@ -173,8 +172,15 @@ def main(argv: list[str] | None = None) -> int:
         pairs = assign_points(predictions, references, radius_px)
         frames += 1
         render_tile(tile, reference, predictions, pairs, args.accession, frames, args.out / f"tile_{frames:03d}.png")
-        logger.info("  tile %d at (%d, %d): %d prediction(s), %d reference(s), %d matched",
-                    frames, tile.x, tile.y, len(predictions), len(references), len(pairs))
+        logger.info(
+            "  tile %d at (%d, %d): %d prediction(s), %d reference(s), %d matched",
+            frames,
+            tile.x,
+            tile.y,
+            len(predictions),
+            len(references),
+            len(pairs),
+        )
 
     logger.info("Wrote %d frame(s) to %s", frames, args.out)
 
@@ -182,9 +188,19 @@ def main(argv: list[str] | None = None) -> int:
         video = args.out / f"{args.accession}_nuclei.mp4"
         # yuv420p and the even-dimension scale filter keep the result playable in browsers and QuickTime.
         command = [
-            "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(args.fps),
-            "-i", str(args.out / "tile_%03d.png"),
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-pix_fmt", "yuv420p", str(video),
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-framerate",
+            str(args.fps),
+            "-i",
+            str(args.out / "tile_%03d.png"),
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
         ]
         subprocess.run(command, check=True)
         logger.info("Wrote %s", video)

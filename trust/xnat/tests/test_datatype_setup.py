@@ -223,9 +223,7 @@ def test_shellcheck_clean_if_available() -> None:
 # are "XNAT is configured wrong in a way nothing reports".
 
 CONFIGURE_XNAT = CONFIG_DIR / "configure-xnat.sh"
-K8S_INIT_JOB = (
-    Path(__file__).resolve().parents[3] / "trust" / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
-)
+K8S_INIT_JOB = Path(__file__).resolve().parents[3] / "trust" / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 
 
 def test_site_url_is_browser_reachable_not_the_docker_internal_host() -> None:
