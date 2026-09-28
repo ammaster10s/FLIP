@@ -330,7 +330,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
-| xnat-dcm2niix | `root` | Deliberately keeps the base image's root default, matching the output-file ownership the previous `xnat/dcm2niix` image produced on the Container Service's build mount (XNAT reads the converted NIfTIs back off that mount). Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
+| xnat-dcm2niix | `1001:1001` (numeric; no named user in the image) | `USER 1001:1001` in the dcm2niix Dockerfile — xnat-web's uid, so the NIfTIs it writes onto the Container Service's build mount carry the one owner everything else under `xnat-data` has (XNAT reads them back off that mount), and a service the Container Service can hand arbitrary host mounts does not run as root. Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -357,9 +357,11 @@ storage directory to uid 999 before the first start (through a throwaway alpine 
 caller is not root), so a developer needs no `sudo` to seed it.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
-`trust/xnat/xnat-data-trust<N>/` under `sudo` and chowns it to UID 1001, so on a host whose developer
-is not themselves UID 1001 that tree is readable but not writable: deleting it, or running
-`git clean -fdx` over the checkout, needs `sudo`. Ownership is the whole of the fix here — it is
+`trust/xnat/xnat-data-trust<N>/` owned by UID 1001 — unprivileged when the invoking developer is
+themselves UID 1001 with its GID (the GitHub runner is too) and already owns every directory in the
+tree, under `sudo` otherwise — so on a host whose developer is not UID 1001 that tree is readable
+but not writable: deleting it, or running `git clean -fdx` over the checkout, needs `sudo`.
+Ownership is the whole of the fix here — it is
 what makes XNAT able to ingest at all — and the modes are left at their defaults rather than
 widened to buy back the convenience.
 
