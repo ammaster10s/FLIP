@@ -50,6 +50,7 @@ from flip_api.domain.schemas.projects import (
 from flip_api.domain.schemas.status import (
     ProjectStatus,
     TaskStatus,
+    TrustApprovalStatus,
     XNATImageStatus,
 )
 from flip_api.model_services.services.model_service import delete_models
@@ -427,7 +428,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
         select(Trust.id, Trust.name)
         .join(ProjectTrustIntersect, col(ProjectTrustIntersect.trust_id) == Trust.id)
         .where(col(ProjectTrustIntersect.project_id) == project_id)
-        .where(ProjectTrustIntersect.approved)
+        .where(col(ProjectTrustIntersect.status) == TrustApprovalStatus.APPROVED)
     )
     results = session.exec(stmt).all()
     if not results:
@@ -478,21 +479,26 @@ def get_trusts_approval_status_for_projects(
     if not project_ids:
         return {}
 
+    # LEFT JOIN UserProfile: a decider with no profile row (or no decider — PENDING, or an approval
+    # predating FLIP#1318) still lists the trust, with no name.
     rows = session.exec(
         select(  # type: ignore[call-overload]
             ProjectTrustIntersect.project_id,
             Trust.id,
             Trust.name,
             Trust.code,
-            ProjectTrustIntersect.approved,
-            ProjectTrustIntersect.approved_at,
+            ProjectTrustIntersect.status,
+            ProjectTrustIntersect.decided_by,
+            UserProfile.name,
+            ProjectTrustIntersect.decided_at,
         )
         .join(Trust, col(Trust.id) == col(ProjectTrustIntersect.trust_id))
+        .join(UserProfile, col(UserProfile.user_id) == col(ProjectTrustIntersect.decided_by), isouter=True)
         .where(col(ProjectTrustIntersect.project_id).in_(project_ids))
     ).all()
 
     by_project: dict[UUID, list[IApprovedTrust]] = {}
-    for project_id, trust_id, trust_name, trust_code, approved, approved_at in rows:
+    for project_id, trust_id, trust_name, trust_code, status, decided_by, decider_name, decided_at in rows:
         if project_id is None or trust_id is None:
             continue
         by_project.setdefault(project_id, []).append(
@@ -500,8 +506,10 @@ def get_trusts_approval_status_for_projects(
                 id=trust_id,
                 name=trust_name,
                 code=trust_code,
-                approved=approved if approved is not None else False,
-                approved_at=approved_at.isoformat(timespec="milliseconds") if approved_at else None,
+                status=status,
+                decided_by=decided_by,
+                decided_by_name=decider_name or None,
+                decided_at=decided_at.isoformat(timespec="milliseconds") if decided_at else None,
             )  # type: ignore[call-arg]
         )
 
@@ -619,49 +627,83 @@ def update_project_status(
         ) from e
 
 
-def approve_project(
+def record_trust_decisions(
     db: Session,
     project_approval: IProjectApproval,
     user_id: UUID,
-) -> bool:
+) -> ProjectStatus | None:
     """
-    Approves a project for specified trusts.
+    Records per-trust decisions on a staged project, and approves the project once every trust is decided.
+
+    Each trust named in ``trust_ids`` is approved and each in ``declined_trust_ids`` declined; trusts named in
+    neither keep their current decision. A decision that changes a trust's status is recorded as a new decision
+    — the caller as decider, now as the date — with a project audit entry naming the trust. A decision re-sent
+    unchanged is not re-recorded, so it keeps its original decider and date.
+
+    Once no trust is PENDING the project moves on: to APPROVED if at least one trust approved, cancelling any
+    cohort-query task still PENDING; if every trust declined it stays STAGED, to be unstaged and reconsidered.
 
     Args:
         db (Session): SQLModel session for database operations.
-        project_approval (IProjectApproval): Contains project_id and trust_ids to approve.
-        user_id (UUID): The ID of the user performing the approval action.
+        project_approval (IProjectApproval): The project and the trusts to approve and to decline.
+        user_id (UUID): The ID of the user making the decisions.
 
     Returns:
-        bool: True if the approval was successful, False otherwise.
+        ProjectStatus | None: The project's status after the decisions, or None — with nothing written — when a
+        trust is not one the project was staged for, or is both approved and declined.
+
+    Raises:
+        ValueError: If the project does not exist or is deleted.
     """
-    logger.debug("Attempting to update which trusts have been approved...")
-
-    #
     project_id = project_approval.project_id
-    trust_ids = project_approval.trust_ids
+    approve_ids = set(project_approval.trust_ids)
+    decline_ids = set(project_approval.declined_trust_ids)
 
-    # Check if project exists and is not deleted
     project = db.get(Projects, project_id)
     if not project or project.deleted:
-        raise ValueError(f"Project {project_id} does not exist or is deleted, cannot approve.")
+        raise ValueError(f"Project {project_id} does not exist or is deleted, cannot record trust decisions.")
 
-    for trust_id in trust_ids:
-        stmt = select(ProjectTrustIntersect).where(
-            ProjectTrustIntersect.project_id == project_id, ProjectTrustIntersect.trust_id == trust_id
+    if approve_ids & decline_ids:
+        logger.warning(f"Trusts {approve_ids & decline_ids} are both approved and declined for project {project_id}")
+        return None
+
+    intersects = db.exec(select(ProjectTrustIntersect).where(ProjectTrustIntersect.project_id == project_id)).all()
+    by_trust = {row.trust_id: row for row in intersects}
+    unknown = (approve_ids | decline_ids) - by_trust.keys()
+    if unknown:
+        logger.warning(f"Trusts {unknown} were not staged for project {project_id}")
+        return None
+
+    decided_at = datetime.now(timezone.utc)
+    decisions = [(trust_id, TrustApprovalStatus.APPROVED) for trust_id in approve_ids] + [
+        (trust_id, TrustApprovalStatus.DECLINED) for trust_id in decline_ids
+    ]
+    for trust_id, decision in decisions:
+        row = by_trust[trust_id]
+        if row.status == decision:
+            continue
+        row.status = decision
+        row.decided_by = user_id
+        row.decided_at = decided_at
+        db.add(row)
+        audit_project_action(
+            project_id=project_id,
+            action=(
+                ProjectAuditAction.APPROVE_TRUST
+                if decision == TrustApprovalStatus.APPROVED
+                else ProjectAuditAction.DECLINE_TRUST
+            ),
+            user_id=user_id,
+            session=db,
+            trust_id=trust_id,
         )
-        result = db.exec(stmt).one_or_none()
+    logger.info(f"Recorded trust decisions for project {project_id}: {decisions}")
 
-        if not result:
-            logger.warning(f"Trust {trust_id} not found for project {project_id}")
-            db.rollback()
-            return False
-
-        result.approved = True
-        result.approved_at = datetime.now(timezone.utc)
-        db.add(result)  # Mark for update
-
-    logger.info("Updated the trusts that have been selected for approval")
+    statuses = {row.status for row in intersects}
+    if TrustApprovalStatus.PENDING in statuses or TrustApprovalStatus.APPROVED not in statuses:
+        db.commit()
+        logger.info(f"Project {project_id} stays STAGED (trust decisions: {sorted(statuses)})")
+        return ProjectStatus.STAGED
 
     # Cancel any orphan PENDING cohort-query tasks: the project is moving
     # on without these trusts (likely because they never replied), so
@@ -702,13 +744,13 @@ def approve_project(
     )
 
     logger.info(f"Audit response: {audit_response}")
-    logger.info(f"Successfully approved project {project_id} for trusts: {trust_ids}")
+    logger.info(f"Successfully approved project {project_id}")
 
     logger.info("Attempting to commit the changes...")
     db.commit()
     logger.info("Changes committed successfully.")
 
-    return True
+    return ProjectStatus.APPROVED
 
 
 def stage_project_service(
@@ -718,7 +760,7 @@ def stage_project_service(
     session: Session,
 ) -> None:
     """
-    Stages a project by creating entries in ProjectTrustIntersect (unapproved).
+    Stages a project by creating entries in ProjectTrustIntersect, every trust PENDING.
 
     Args:
         project_id (UUID): The ID of the project to stage.
@@ -747,7 +789,7 @@ def stage_project_service(
     session.flush()
 
     # Create new ProjectTrustIntersect entries for each trust
-    entries = [ProjectTrustIntersect(project_id=project_id, trust_id=tid, approved=False) for tid in trust_ids]
+    entries = [ProjectTrustIntersect(project_id=project_id, trust_id=tid) for tid in trust_ids]
     session.add_all(entries)
     session.flush()  # Ensure entries are written
 

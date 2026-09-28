@@ -19,6 +19,9 @@ class ProjectAuditAction(StrEnum):
     APPROVE = "APPROVE"
     STAGE = "STAGE"
     UNSTAGE = "UNSTAGE"
+    # Per-trust decisions on a staged project; the audit row's trust_id names the trust.
+    APPROVE_TRUST = "APPROVE_TRUST"
+    DECLINE_TRUST = "DECLINE_TRUST"
 
 
 class ModelAuditAction(StrEnum):

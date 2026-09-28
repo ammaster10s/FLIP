@@ -35,6 +35,7 @@ from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import (
     ModelStatus,
     ProjectStatus,
+    TrustApprovalStatus,
     TrustIntersectStatus,
 )
 from flip_api.model_services.save_model import save_model
@@ -53,9 +54,9 @@ def approved_project_with_trusts(
     trust_factory,
     project_trust_intersect_factory,
 ):
-    """Approved project owned by ``user`` with two approved trusts and one un-approved trust.
+    """Approved project owned by ``user`` with two approved trusts and one declined trust.
 
-    Returns a dict so tests can pull just the bit they care about — the un-approved trust is
+    Returns a dict so tests can pull just the bit they care about — the declined trust is
     only relevant for the fan-out test, the rest only need ``user`` / ``project``.
     """
     user = user_factory()
@@ -74,11 +75,13 @@ def approved_project_with_trusts(
 
     for t in approved_trusts:
         session.add(
-            project_trust_intersect_factory.build(project_id=project.id, trust_id=t.id, approved=True)
+            project_trust_intersect_factory.build(
+                project_id=project.id, trust_id=t.id, status=TrustApprovalStatus.APPROVED
+            )
         )
     session.add(
         project_trust_intersect_factory.build(
-            project_id=project.id, trust_id=unapproved_trust.id, approved=False
+            project_id=project.id, trust_id=unapproved_trust.id, status=TrustApprovalStatus.DECLINED
         )
     )
     session.commit()
@@ -162,7 +165,11 @@ def test_save_model_400_when_project_not_approved(
     trust = trust_factory.build()
     session.add_all([project, trust])
     session.flush()
-    session.add(project_trust_intersect_factory.build(project_id=project.id, trust_id=trust.id, approved=True))
+    session.add(
+        project_trust_intersect_factory.build(
+            project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.APPROVED
+        )
+    )
     session.commit()
 
     payload = ISaveModel(name="x", description="d", projectId=project.id)
@@ -176,14 +183,16 @@ def test_save_model_400_when_project_not_approved(
 def test_save_model_400_when_no_approved_trusts(
     session, user_factory, project_factory, trust_factory, project_trust_intersect_factory
 ):
-    """A project with only un-approved trust intersects has nothing to fan out to."""
+    """A project whose only trust declined has nothing to fan out to."""
     user = user_factory()
     project = project_factory.build(owner_id=user.id, status=ProjectStatus.APPROVED, deleted=False)
     trust = trust_factory.build()
     session.add_all([project, trust])
     session.flush()
     session.add(
-        project_trust_intersect_factory.build(project_id=project.id, trust_id=trust.id, approved=False)
+        project_trust_intersect_factory.build(
+            project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.DECLINED
+        )
     )
     session.commit()
 

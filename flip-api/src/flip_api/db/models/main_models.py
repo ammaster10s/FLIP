@@ -28,6 +28,7 @@ from flip_api.domain.schemas.status import (
     ProjectStatus,
     TaskStatus,
     TaskType,
+    TrustApprovalStatus,
     TrustIntersectStatus,
     XNATImageStatus,
 )
@@ -180,8 +181,11 @@ class ProjectTrustIntersect(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
-    approved: bool = Field()
-    approved_at: datetime | None = Field(default=None)
+    status: TrustApprovalStatus = Field(default=TrustApprovalStatus.PENDING)
+    # Who made the current decision, and when. Both NULL while PENDING. `decided_by` is also NULL on
+    # approvals made before decisions were attributed (FLIP#1318): the approver was never recorded.
+    decided_by: UUID | None = Field(default=None)
+    decided_at: datetime | None = Field(default=None)
 
 
 class Projects(SQLModel, table=True):
@@ -205,6 +209,9 @@ class ProjectsAudit(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
+    # The trust a per-trust decision (APPROVE_TRUST / DECLINE_TRUST) was made for; NULL on
+    # project-wide actions. No foreign key, so the record outlives a deleted trust.
+    trust_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 

@@ -162,12 +162,13 @@ def test_approve_project_unexpected_exception_returns_generic_detail(
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
-def test_approve_project_with_empty_trusts(
+def test_approve_project_that_stays_staged_dispatches_no_imaging(
     mock_approve_project,
     project_id,
     request_body,
     mock_trusts,
 ):
+    """No trusts back from the decision step → the project is still STAGED, and no imaging is started."""
     mock_approve_project.return_value = []
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
@@ -175,7 +176,8 @@ def test_approve_project_with_empty_trusts(
     assert response.status_code == 200
     data = response.json()
 
-    assert data["message"] == "Project approved but no trusts to process"
+    assert data["message"] == "Trust decisions recorded; the project stays staged"
+    assert data["projectStatus"] == "STAGED"
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")

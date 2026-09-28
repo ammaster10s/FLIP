@@ -19,8 +19,8 @@ from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.domain.schemas.private import ProjectApprovalBody
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
+from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
 from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
 from flip_api.utils.logger import logger
@@ -59,38 +59,36 @@ async def process_trust(request: Request, project_id: UUID, trust: Any, db: Sess
 @router.post("/project/{project_id}/approve", response_model=dict[str, Any])
 async def approve_project_step_function_endpoint(
     project_id: UUID,
-    body: ProjectApprovalBody,
+    body: ApproveProjectBodyPayload,
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> dict[str, Any]:
     """
-    Approves a project and starts image creation on all connected trusts — unless the project was
-    created without imaging (``has_imaging=False``, FLIP#1071), in which case the imaging stage is skipped.
+    Records trust decisions on a staged project and, once that approves it, starts image creation on every
+    approved trust — unless the project was created without imaging (``has_imaging=False``, FLIP#1071), in
+    which case the imaging stage is skipped. While a trust is still pending, or if every trust declined, the
+    project stays STAGED and nothing is dispatched.
 
     This mimics the AWS Step Functions workflow defined in approveProject.yml
 
     Args:
         project_id (UUID): The ID of the project to approve.
-        body (ProjectApprovalBody): The body containing trust IDs to process.
+        body (ApproveProjectBodyPayload): The trust IDs that approve the project and those that decline it.
         request (Request): The FastAPI request object.
         db (Session): The database session.
         user_id (UUID): The ID of the current user.
 
     Returns:
-        dict[str, Any]: A dictionary containing the result of the approval and imaging creation process.
+        dict[str, Any]: The project's status after the decisions and the result of the imaging creation process.
 
     Raises:
         HTTPException: If an error occurs during the approval or imaging creation process.
     """
     try:
-        trust_ids = body.trusts
-
-        # Prepare the payload for approve_project
-        payload = ApproveProjectBodyPayload(
-            trusts=trust_ids,
+        logger.debug(
+            f"Recording trust decisions for project {project_id}: approve {body.trusts}, decline {body.declined}"
         )
-        logger.debug(f"Starting approval for project {project_id} with trusts: {trust_ids}")
 
         # FLIP#1071: read the project's kind before approval commits, so the fan-out decision below
         # needs no post-commit round-trip (a DB blip there would report "failed to approve" on a
@@ -104,13 +102,18 @@ async def approve_project_step_function_endpoint(
 
         # Step 1: Approve Project
         logger.info(f"Approving project with ID: {project_id}")
-        trusts = approve_project_endpoint(project_id=project_id, payload=payload, user_id=user_id, db=db)
+        trusts = approve_project_endpoint(project_id=project_id, payload=body, user_id=user_id, db=db)
         logger.debug(f"Trusts returned from approve_project: {trusts}")
 
-        # Step 2: Format Trusts
+        # Step 2: No trusts back means the project is still STAGED — a trust is still pending, or every trust
+        # declined — so there is nothing to dispatch.
         if not trusts:
-            logger.warning("No trusts found for project")
-            return {"message": "Project approved but no trusts to process"}
+            logger.info(f"Project {project_id} stays staged after the trust decisions")
+            return {
+                "message": "Trust decisions recorded; the project stays staged",
+                "projectId": project_id,
+                "projectStatus": ProjectStatus.STAGED,
+            }
 
         # Step 3: For Each Trust — unless the project has no imaging. FLIP#1071: this is the only
         # place the hub decides what it dispatches for a tabular-only project. The project is
@@ -137,6 +140,7 @@ async def approve_project_step_function_endpoint(
         return {
             "message": message,
             "projectId": project_id,
+            "projectStatus": ProjectStatus.APPROVED,
             "successful": len(failures) == 0,
             "trusts": {"processed": processed, "succeeded": processed - len(failures), "failed": len(failures)},
             "details": start_image_results,

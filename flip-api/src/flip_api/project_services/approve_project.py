@@ -24,7 +24,10 @@ from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import ProjectStatus
-from flip_api.project_services.services.project_services import approve_project
+from flip_api.project_services.services.project_services import (
+    get_approved_trusts_for_project,
+    record_trust_decisions,
+)
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
@@ -34,30 +37,33 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 # TODO [#114] This endpoint was not defined in the old repo. It was used as a step of a 'approveProject' step function.
 @router.post(
     "/{project_id}/approve",
-    summary="Approve a staged project for specified trusts.",
+    summary="Record trust decisions on a staged project, approving it once every trust is decided.",
     response_model=list[ITrust],
     status_code=status.HTTP_200_OK,
 )
 def approve_project_endpoint(
     project_id: UUID = Path(..., description="The ID of the project to approve."),
     payload: ApproveProjectBodyPayload = Body(
-        ..., description="Payload containing trust IDs to approve the project for."
+        ..., description="Payload containing the trust IDs to approve the project for and those that decline it."
     ),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
 ) -> list[ITrust]:
     """
-    Approves a project that is currently in the 'STAGED' status.
-    The approval is specific to the list of trust IDs provided in the request body.
+    Records trust decisions on a project that is currently in the 'STAGED' status.
+    The trusts in ``trusts`` approve the project and those in ``declined`` decline it; any trust named in neither
+    keeps its current decision. The project is approved once no trust is pending and at least one approved; if
+    every trust declined it stays STAGED.
 
     Args:
-        project_id (UUID): The ID of the project to approve.
-        payload (ApproveProjectBodyPayload): The payload containing trust IDs to approve the project for.
+        project_id (UUID): The ID of the project to decide on.
+        payload (ApproveProjectBodyPayload): The trust IDs that approve the project and those that decline it.
         user_id (UUID): The ID of the user making the request.
         db (Session): The database session.
 
     Returns:
-        list[ITrust]: A list of trusts that the project has been approved for.
+        list[ITrust]: Every approved trust if this call approved the project, otherwise an empty list (the project
+        is still STAGED).
 
     Raises:
         HTTPException: If the user does not have permission to approve projects, if the project does not exist,
@@ -79,6 +85,7 @@ def approve_project_endpoint(
     project_approval = IProjectApproval(
         project_id=project_id,
         trust_ids=trust_ids,
+        declined_trust_ids=payload.declined,
     )
 
     # 2. Check if project exists
@@ -99,17 +106,24 @@ def approve_project_endpoint(
         )
 
     try:
-        if not approve_project(db, project_approval, user_id):
-            logger.error(f"Failed to approve project {project_id} for trusts: {trust_ids}")
+        new_status = record_trust_decisions(db, project_approval, user_id)
+        if new_status is None:
+            decided_ids = [*trust_ids, *payload.declined]
+            logger.error(f"Failed to record trust decisions on project {project_id} for trusts: {decided_ids}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{trust_ids} is not a subset of the trusts selected during the staging process",
+                detail=f"{decided_ids} is not a subset of the trusts selected during the staging process",
             )
 
-        logger.debug(f"Fetching endpoints for trusts: {trust_ids} for project {project_id}")
+        if new_status != ProjectStatus.APPROVED:
+            logger.info(f"Project {project_id} stays {new_status}: a trust is still pending, or every trust declined")
+            return []
 
-        # Fetch trust endpoints based on the provided trust IDs
-        trust_endpoints = get_trusts(db, ids=trust_ids)
+        approved_ids = [trust.id for trust in get_approved_trusts_for_project(project_id, db)]
+        logger.debug(f"Fetching endpoints for approved trusts: {approved_ids} for project {project_id}")
+
+        # Fetch trust endpoints for every approved trust, including any approved by an earlier call
+        trust_endpoints = get_trusts(db, ids=approved_ids)
 
         return trust_endpoints
 
