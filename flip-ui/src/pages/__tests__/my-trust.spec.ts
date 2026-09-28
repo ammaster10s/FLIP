@@ -129,6 +129,7 @@ const stubs = {
         template: `<div v-if="dialog" data-test="confirm-modal">
             <p data-test="confirm-text">{{ confirmationText }}</p>
             <button data-test="confirm-modal-btn" @click="continueAction">{{ continueButtonText }}</button>
+            <button data-test="cancel-modal-btn" @click="$emit('close-modal')">Cancel</button>
         </div>`
     }
 };
@@ -326,6 +327,32 @@ describe("My Trust", () => {
         });
         expect(mutateDecisions).toHaveBeenCalled();
         expect(mockSnackbarSuccess).toHaveBeenCalled();
+    });
+
+    it("records nothing when the confirmation is cancelled", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        await wrapper.find("[data-test='approve-btn']").trigger("click");
+        await wrapper.find("[data-test='cancel-modal-btn']").trigger("click");
+
+        expect(wrapper.find("[data-test='confirm-modal']").exists()).toBe(false);
+        expect(mockApproveProject).not.toHaveBeenCalled();
+    });
+
+    it("says the decision was not saved when the request fails, and closes the confirmation", async () => {
+        mockApproveProject.mockRejectedValue(new Error("Network Error"));
+        const wrapper = mountPage();
+        await nextTick();
+
+        await wrapper.find("[data-test='decline-btn']").trigger("click");
+        await wrapper.find("[data-test='confirm-modal-btn']").trigger("click");
+        await flushPromises();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Decision not saved" }));
+        expect(mockSnackbarSuccess).not.toHaveBeenCalled();
+        expect(mutateDecisions).not.toHaveBeenCalled();
+        expect(wrapper.find("[data-test='confirm-modal']").exists()).toBe(false);
     });
 
     it("declines only for this trust after confirming", async () => {
