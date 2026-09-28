@@ -18,10 +18,12 @@ Postgres rather than mocking the session. Unit tests for the same code mock
 relationships, default mismatches, etc.); these do.
 """
 
+import re
+import threading
 from uuid import UUID, uuid4
 
 import pytest
-from sqlmodel import col, select
+from sqlmodel import Session, col, create_engine, select
 
 from flip_api.db.models.main_models import (
     Projects,
@@ -38,6 +40,9 @@ from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus, XNATImageStatus
 from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
+    InvalidTrustDecisionsError,
+    ProjectNotStagedError,
+    TrustDecisionOutcome,
     create_project,
     delete_project,
     get_approved_trusts_for_project,
@@ -169,7 +174,7 @@ def staged_project_with_trusts(session, user_factory, project_factory, trust_fac
     return {"user": user, "project": project, "trusts": trusts}
 
 
-def _decide(session, ctx, approve=(), decline=(), user_id: UUID | None = None) -> ProjectStatus | None:
+def _decide(session, ctx, approve=(), decline=(), user_id: UUID | None = None) -> TrustDecisionOutcome:
     payload = IProjectApproval(
         project_id=ctx["project"].id,
         trust_ids=[t.id for t in approve],
@@ -195,7 +200,7 @@ def test_approving_every_trust_approves_the_project_and_attributes_each_decision
     ctx = staged_project_with_trusts
     a, b = ctx["trusts"]
 
-    assert _decide(session, ctx, approve=[a, b]) == ProjectStatus.APPROVED
+    assert _decide(session, ctx, approve=[a, b]).project_status == ProjectStatus.APPROVED
 
     assert session.get(Projects, ctx["project"].id).status == ProjectStatus.APPROVED
     for row in _intersects(session, ctx["project"].id).values():
@@ -217,7 +222,7 @@ def test_declining_a_trust_records_the_refusal_against_that_trust(session, stage
     ctx = staged_project_with_trusts
     chosen, refused = ctx["trusts"]
 
-    assert _decide(session, ctx, approve=[chosen], decline=[refused]) == ProjectStatus.APPROVED
+    assert _decide(session, ctx, approve=[chosen], decline=[refused]).project_status == ProjectStatus.APPROVED
 
     rows = _intersects(session, ctx["project"].id)
     assert rows[chosen.id].status == TrustApprovalStatus.APPROVED
@@ -236,7 +241,7 @@ def test_a_trust_left_undecided_keeps_the_project_staged(session, staged_project
     ctx = staged_project_with_trusts
     chosen, undecided = ctx["trusts"]
 
-    assert _decide(session, ctx, approve=[chosen]) == ProjectStatus.STAGED
+    assert _decide(session, ctx, approve=[chosen]).project_status == ProjectStatus.STAGED
 
     assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
     rows = _intersects(session, ctx["project"].id)
@@ -251,7 +256,7 @@ def test_declining_every_trust_keeps_the_project_staged(session, staged_project_
     ctx = staged_project_with_trusts
     a, b = ctx["trusts"]
 
-    assert _decide(session, ctx, decline=[a, b]) == ProjectStatus.STAGED
+    assert _decide(session, ctx, decline=[a, b]).project_status == ProjectStatus.STAGED
 
     assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
     assert {row.status for row in _intersects(session, ctx["project"].id).values()} == {TrustApprovalStatus.DECLINED}
@@ -266,10 +271,12 @@ def test_changing_a_decision_while_staged_records_a_new_decision(session, staged
     reversed_trust, kept = ctx["trusts"]
     first, second = ctx["user"].id, user_factory().id
 
-    assert _decide(session, ctx, decline=[reversed_trust, kept], user_id=first) == ProjectStatus.STAGED
+    first_outcome = _decide(session, ctx, decline=[reversed_trust, kept], user_id=first)
+    assert first_outcome.project_status == ProjectStatus.STAGED
     kept_decided_at = _intersects(session, ctx["project"].id)[kept.id].decided_at
 
-    assert _decide(session, ctx, approve=[reversed_trust], decline=[kept], user_id=second) == ProjectStatus.APPROVED
+    second_outcome = _decide(session, ctx, approve=[reversed_trust], decline=[kept], user_id=second)
+    assert second_outcome.project_status == ProjectStatus.APPROVED
 
     rows = _intersects(session, ctx["project"].id)
     assert rows[reversed_trust.id].status == TrustApprovalStatus.APPROVED
@@ -286,14 +293,18 @@ def test_changing_a_decision_while_staged_records_a_new_decision(session, staged
 
 
 def test_rejects_a_trust_outside_the_staging_set_and_writes_nothing(session, staged_project_with_trusts):
-    """A trust id with no intersect for the project → None, and no decision is written for any trust."""
+    """A trust id with no intersect for the project is refused, naming it, and no decision is written for any
+    trust."""
     ctx = staged_project_with_trusts
+    stranger = uuid4()
     payload = IProjectApproval(
         project_id=ctx["project"].id,
-        trust_ids=[ctx["trusts"][0].id, uuid4()],
+        trust_ids=[ctx["trusts"][0].id, stranger],
     )
 
-    assert record_trust_decisions(session, payload, ctx["user"].id) is None
+    with pytest.raises(InvalidTrustDecisionsError, match=str(stranger)):
+        record_trust_decisions(session, payload, ctx["user"].id)
+    session.rollback()
 
     assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
     assert {row.status for row in _intersects(session, ctx["project"].id).values()} == {TrustApprovalStatus.PENDING}
@@ -304,8 +315,83 @@ def test_rejects_a_trust_both_approved_and_declined(session, staged_project_with
     ctx = staged_project_with_trusts
     a, _ = ctx["trusts"]
 
-    assert _decide(session, ctx, approve=[a], decline=[a]) is None
+    with pytest.raises(InvalidTrustDecisionsError, match="both approved and declined"):
+        _decide(session, ctx, approve=[a], decline=[a])
+    session.rollback()
     assert _audits(session, ctx["project"].id) == []
+
+
+def test_outcome_lists_every_approved_trust_including_earlier_calls(session, staged_project_with_trusts):
+    """The call that approves the project returns every approved trust, not just the ones it named, so the
+    imaging fan-out reaches a trust approved by an earlier, partial call."""
+    ctx = staged_project_with_trusts
+    early, late = ctx["trusts"]
+
+    staged = _decide(session, ctx, approve=[early])
+    approved = _decide(session, ctx, decline=[late])
+
+    assert (staged.project_status, staged.approved_trust_ids) == (ProjectStatus.STAGED, [])
+    assert (approved.project_status, approved.approved_trust_ids) == (ProjectStatus.APPROVED, [early.id])
+
+
+def test_refuses_decisions_once_the_project_has_left_staged(session, staged_project_with_trusts):
+    """Checked under the project lock, so a save that lost a race to another approver's approval is refused
+    rather than rewriting the decisions of an approved project."""
+    ctx = staged_project_with_trusts
+    a, b = ctx["trusts"]
+    _decide(session, ctx, approve=[a, b])
+
+    with pytest.raises(ProjectNotStagedError):
+        _decide(session, ctx, decline=[a])
+    session.rollback()
+
+    assert _intersects(session, ctx["project"].id)[a.id].status == TrustApprovalStatus.APPROVED
+    assert ProjectAuditAction.DECLINE_TRUST not in {action for action, _ in _audits(session, ctx["project"].id)}
+
+
+def test_concurrent_saves_are_serialised_on_the_project_lock(
+    pg_container, session, staged_project_with_trusts, user_factory
+):
+    """Two approvers deciding the last two pending trusts at once must not each see the other's trust as still
+    pending — both would leave the project STAGED with every trust decided. The second save waits for the
+    project lock, then reads the first's committed decision and approves the project."""
+    ctx = staged_project_with_trusts
+    project_id = ctx["project"].id
+    first, second = ctx["trusts"]
+    engine = create_engine(pg_container.get_connection_url())
+    outcome: dict[str, TrustDecisionOutcome] = {}
+
+    def second_approver() -> None:
+        with Session(engine) as other:
+            payload = IProjectApproval(project_id=project_id, trust_ids=[second.id])
+            outcome["second"] = record_trust_decisions(other, payload, user_factory().id)
+
+    try:
+        with Session(engine) as holder:
+            # The first approver's save, mid-flight: project locked, its trust decided but not yet committed.
+            holder.exec(select(Projects).where(Projects.id == project_id).with_for_update()).one()
+            row = holder.exec(
+                select(ProjectTrustIntersect).where(
+                    ProjectTrustIntersect.project_id == project_id, ProjectTrustIntersect.trust_id == first.id
+                )
+            ).one()
+            row.status = TrustApprovalStatus.APPROVED
+            holder.add(row)
+            holder.flush()
+
+            racer = threading.Thread(target=second_approver)
+            racer.start()
+            racer.join(timeout=1.0)
+            assert racer.is_alive(), "the second save must wait for the first to release the project lock"
+
+            holder.commit()
+            racer.join(timeout=10.0)
+            assert not racer.is_alive()
+    finally:
+        engine.dispose()
+
+    assert outcome["second"].project_status == ProjectStatus.APPROVED
+    assert set(outcome["second"].approved_trust_ids) == {first.id, second.id}
 
 
 def test_record_trust_decisions_raises_for_missing_project(session, user_factory):
@@ -360,6 +446,28 @@ def test_trust_approval_status_reports_each_decision_and_its_decider(session, st
         assert trust.decided_by == ctx["user"].id
         assert trust.decided_by_name == "Ada Approver"
         assert trust.decided_at is not None
+
+
+def test_trust_approval_status_lists_undecided_trusts_and_deciders_without_a_profile(
+    session, staged_project_with_trusts, user_factory
+):
+    """The decider join is an outer join: a freshly staged trust (no decider) and a decider with no
+    UserProfile row must both still list the trust, or the approval card has nothing to decide."""
+    ctx = staged_project_with_trusts
+    pending, decided = ctx["trusts"]
+    no_profile = user_factory().id
+    _decide(session, ctx, decline=[decided], user_id=no_profile)
+
+    by_id = {t.id: t for t in get_trusts_approval_status_for_project(ctx["project"].id, session)}
+
+    assert (by_id[pending.id].status, by_id[pending.id].decided_by, by_id[pending.id].decided_at) == (
+        TrustApprovalStatus.PENDING,
+        None,
+        None,
+    )
+    assert (by_id[decided.id].decided_by, by_id[decided.id].decided_by_name) == (no_profile, None)
+    # Exactly one UTC marker: the browser reads `…+00:00Z` as an invalid date.
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", by_id[decided.id].decided_at)
 
 
 def test_approved_trusts_exclude_declined_and_undecided_trusts(

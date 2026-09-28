@@ -25,7 +25,8 @@ from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.services.project_services import (
-    get_approved_trusts_for_project,
+    InvalidTrustDecisionsError,
+    ProjectNotStagedError,
     record_trust_decisions,
 )
 from flip_api.trusts_services.services.trust import get_trusts
@@ -37,12 +38,12 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 # TODO [#114] This endpoint was not defined in the old repo. It was used as a step of a 'approveProject' step function.
 @router.post(
     "/{project_id}/approve",
-    summary="Record trust decisions on a staged project, approving it once every trust is decided.",
+    summary="Record trust decisions on a staged project, approving it once every trust is decided and one approved.",
     response_model=list[ITrust],
     status_code=status.HTTP_200_OK,
 )
 def approve_project_endpoint(
-    project_id: UUID = Path(..., description="The ID of the project to approve."),
+    project_id: UUID = Path(..., description="The ID of the project to decide on."),
     payload: ApproveProjectBodyPayload = Body(
         ..., description="Payload containing the trust IDs to approve the project for and those that decline it."
     ),
@@ -106,26 +107,26 @@ def approve_project_endpoint(
         )
 
     try:
-        new_status = record_trust_decisions(db, project_approval, user_id)
-        if new_status is None:
-            decided_ids = [*trust_ids, *payload.declined]
-            logger.error(f"Failed to record trust decisions on project {project_id} for trusts: {decided_ids}")
+        try:
+            outcome = record_trust_decisions(db, project_approval, user_id)
+        except ProjectNotStagedError:
+            # Another approver approved the project between the check above and taking the project lock.
+            logger.error(f"Project {project_id} left STAGED before its trust decisions were recorded.")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{decided_ids} is not a subset of the trusts selected during the staging process",
+                detail="Unable to approve the project as it has not been staged",
             )
+        except InvalidTrustDecisionsError as e:
+            logger.error(f"Rejected trust decisions on project {project_id}: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-        if new_status != ProjectStatus.APPROVED:
-            logger.info(f"Project {project_id} stays {new_status}: a trust is still pending, or every trust declined")
+        # get_trusts with no ids returns every trust, so an empty list must never reach it.
+        if outcome.project_status != ProjectStatus.APPROVED or not outcome.approved_trust_ids:
+            logger.info(f"Project {project_id} stays STAGED: a trust is still pending, or every trust declined")
             return []
 
-        approved_ids = [trust.id for trust in get_approved_trusts_for_project(project_id, db)]
-        logger.debug(f"Fetching endpoints for approved trusts: {approved_ids} for project {project_id}")
-
-        # Fetch trust endpoints for every approved trust, including any approved by an earlier call
-        trust_endpoints = get_trusts(db, ids=approved_ids)
-
-        return trust_endpoints
+        logger.debug(f"Fetching endpoints for approved trusts: {outcome.approved_trust_ids} for project {project_id}")
+        return get_trusts(db, ids=outcome.approved_trust_ids)
 
     except HTTPException as http_exc:
         raise http_exc

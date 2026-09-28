@@ -22,6 +22,11 @@ from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
+from flip_api.project_services.services.project_services import (
+    InvalidTrustDecisionsError,
+    ProjectNotStagedError,
+    TrustDecisionOutcome,
+)
 
 # Imports from the module to be tested
 # Assuming sqlmodel.Session is used for type hinting or spec
@@ -31,6 +36,10 @@ from flip_api.project_services.approve_project import approve_project_endpoint
 TEST_PROJECT_ID = str(uuid.uuid4())
 TEST_USER_ID = str(uuid.uuid4())
 TEST_TRUST_IDS = [str(uuid.uuid4()), str(uuid.uuid4())]
+DECLINED_TRUST_ID = str(uuid.uuid4())
+# An approved trust that is not in the payload: approved by an earlier, partial call.
+APPROVED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=[uuid.uuid4()])
+STAGED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.STAGED, approved_trust_ids=[])
 
 
 @pytest.fixture
@@ -51,22 +60,22 @@ def mock_staged_project():
 
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
-@patch("flip_api.project_services.approve_project.get_approved_trusts_for_project")
-@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=ProjectStatus.APPROVED)
+@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=APPROVED_OUTCOME)
 @patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_success(
     mock_has_permissions,
     mock_record_trust_decisions,
-    mock_get_approved_trusts,
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,
     mock_db_session,  # Fixture
     mock_payload,  # Fixture
     mock_staged_project,  # Fixture
 ):
+    """The trusts returned are the outcome's approved trusts — which can include one approved by an earlier call
+    and so absent from this payload — and the payload's declined trusts reach the service."""
     # Arrange
     mock_db_session.get.return_value = mock_staged_project
-    mock_get_approved_trusts.return_value = [Trust(id=uuid.UUID(tid), name=tid) for tid in TEST_TRUST_IDS]
+    mock_payload.declined = [DECLINED_TRUST_ID]
 
     mock_trust_list = [MagicMock(spec=Trust), MagicMock(spec=Trust)]
     mock_get_trusts.return_value = mock_trust_list
@@ -83,14 +92,16 @@ def test_approve_project_endpoint_success(
     mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_APPROVE_PROJECTS], mock_db_session)
 
     mock_db_session.get.assert_called_once_with(Projects, TEST_PROJECT_ID)
-    mock_record_trust_decisions.assert_called_once()
-    mock_get_trusts.assert_called_once_with(mock_db_session, ids=[uuid.UUID(tid) for tid in TEST_TRUST_IDS])
+    decisions = mock_record_trust_decisions.call_args.args[1]
+    assert decisions.trust_ids == [uuid.UUID(tid) for tid in TEST_TRUST_IDS]
+    assert decisions.declined_trust_ids == [uuid.UUID(DECLINED_TRUST_ID)]
+    mock_get_trusts.assert_called_once_with(mock_db_session, ids=APPROVED_OUTCOME.approved_trust_ids)
 
     assert result == mock_trust_list
 
 
 @patch("flip_api.project_services.approve_project.get_trusts")
-@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=ProjectStatus.STAGED)
+@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=STAGED_OUTCOME)
 @patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_returns_no_trusts_while_the_project_stays_staged(
     mock_has_permissions,
@@ -114,18 +125,37 @@ def test_approve_project_endpoint_returns_no_trusts_while_the_project_stays_stag
     mock_get_trusts.assert_not_called()
 
 
-@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=None)
+@pytest.mark.parametrize(
+    ("error", "detail"),
+    [
+        (
+            InvalidTrustDecisionsError("Trusts ['x'] were not selected during the staging process."),
+            "Trusts ['x'] were not selected during the staging process.",
+        ),
+        # Lost a race: another approver approved the project after the endpoint's own STAGED check.
+        (
+            ProjectNotStagedError("Project p is APPROVED, not STAGED."),
+            "Unable to approve the project as it has not been staged",
+        ),
+    ],
+)
+@patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
-def test_approve_project_endpoint_rejects_trusts_outside_the_staging_set(
+def test_approve_project_endpoint_maps_refused_decisions_to_400(
     mock_has_permissions,
-    mock_record_trust_decisions,
+    mock_get_trusts,
     mock_db_session,
     mock_payload,
     mock_staged_project,
+    error,
+    detail,
 ):
     mock_db_session.get.return_value = mock_staged_project
 
-    with pytest.raises(HTTPException) as exc_info:
+    with (
+        patch("flip_api.project_services.approve_project.record_trust_decisions", side_effect=error),
+        pytest.raises(HTTPException) as exc_info,
+    ):
         approve_project_endpoint(
             project_id=TEST_PROJECT_ID,
             payload=mock_payload,
@@ -134,7 +164,36 @@ def test_approve_project_endpoint_rejects_trusts_outside_the_staging_set(
         )
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-    assert "not a subset of the trusts selected during the staging process" in exc_info.value.detail
+    assert exc_info.value.detail == detail
+    mock_get_trusts.assert_not_called()
+
+
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch(
+    "flip_api.project_services.approve_project.record_trust_decisions",
+    return_value=TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=[]),
+)
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
+def test_approve_project_endpoint_never_asks_get_trusts_for_an_empty_list(
+    mock_has_permissions,
+    mock_record_trust_decisions,
+    mock_get_trusts,
+    mock_db_session,
+    mock_payload,
+    mock_staged_project,
+):
+    """``get_trusts`` with no ids returns every trust on the hub, which would dispatch imaging to all of them."""
+    mock_db_session.get.return_value = mock_staged_project
+
+    result = approve_project_endpoint(
+        project_id=TEST_PROJECT_ID,
+        payload=mock_payload,
+        user_id=TEST_USER_ID,
+        db=mock_db_session,
+    )
+
+    assert result == []
+    mock_get_trusts.assert_not_called()
 
 
 def test_approve_payload_rejects_a_trust_both_approved_and_declined():
@@ -259,7 +318,7 @@ def test_approve_project_endpoint_commit_status_fails(
 
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
-@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=ProjectStatus.APPROVED)
+@patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=APPROVED_OUTCOME)
 @patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_fetch_trusts_exec_fails(
     mock_has_permissions,
