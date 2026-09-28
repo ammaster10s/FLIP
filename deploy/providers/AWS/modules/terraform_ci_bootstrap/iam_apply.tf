@@ -58,45 +58,72 @@ resource "aws_iam_role" "terraform_apply" {
   tags                 = var.tags
 }
 
-# PowerUserAccess rather than AdministratorAccess (which the LZA template uses):
-# everything the FLIP root manages except IAM, and the IAM it genuinely needs is
-# granted explicitly below. The difference that matters is that a power user
-# cannot rewrite the account's identity boundary.
-resource "aws_iam_role_policy_attachment" "apply_power_user" {
-  role       = aws_iam_role.terraform_apply.name
-  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/PowerUserAccess"
+# The AWS services the FLIP root uses, and nothing else: an allowlist in place of
+# a managed policy such as PowerUserAccess, which would grant every non-IAM
+# service in the account (secrets the pipeline has no business reading, services
+# FLIP never touches, any region the account allows). Limited to the account's
+# region plus us-east-1 (local.apply_regions). A resource-level scope inside each
+# service would mean tracking every FLIP resource name here as well; the service
+# and region bound is the one kept exact, by a test that derives the list from
+# the FLIP root's resource types.
+data "aws_iam_policy_document" "apply_services" {
+  # checkov:skip=CKV_AWS_356:the FLIP root creates resources whose ARNs do not exist until it runs; the bound is the service allowlist and the region condition
+  # checkov:skip=CKV_AWS_111:writes are the purpose of an apply role; they are limited to the services the FLIP root declares resources in (var.apply_service_prefixes), in its regions
+  # checkov:skip=CKV_AWS_108:the apply refreshes and writes the FLIP root's secrets, parameters and objects; no Allow outside its services
+  # checkov:skip=CKV_AWS_109:no IAM service in the allowlist (a variable validation refuses it); resource policies on S3, KMS, SNS, SQS and Secrets Manager are FLIP root resources
+  # checkov:skip=CKV_AWS_107:credential exposure is bounded by the service allowlist; IAM, STS and Organizations are refused by a variable validation
+  # checkov:skip=CKV_AWS_110:no IAM action is granted here; the IAM grant is apply_iam, scoped to the named roles
+  # checkov:skip=CKV2_AWS_40:no IAM action is granted here; the IAM grant is apply_iam, scoped to the named roles
+  statement {
+    sid       = "TheServicesTheFlipRootUses"
+    effect    = "Allow"
+    actions   = [for prefix in var.apply_service_prefixes : "${prefix}:*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = local.apply_regions
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "apply_services" {
+  name   = "flip-terraform-apply-services"
+  role   = aws_iam_role.terraform_apply.id
+  policy = data.aws_iam_policy_document.apply_services.json
 }
 
 # The FLIP root owns the ECS task and execution roles in iam_ecs.tf, so the apply
 # role needs IAM write. What keeps that from being AdministratorAccess by another
-# name is not one Deny but four separate limits:
+# name is a set of separate limits:
 #
-#   * a role can only be created, or given an inline policy, if it carries the
-#     permissions boundary above — so a minted role is capped at what the apply
-#     role itself holds, and cannot be given IAM write;
+#   * every role-writing verb — create, change, tag, delete, pass, re-trust — is
+#     scoped to the roles the FLIP root owns, by literal name
+#     (var.managed_role_names), and instance profiles likewise; the apply cannot
+#     create a role of any other name, or touch any other role in the account;
+#   * a role can only be created, or given a policy, if it carries the
+#     permissions boundary — so a role the apply manages cannot be given IAM
+#     write, and cannot mint anything more powerful than itself;
 #   * only three named AWS-managed policies may be attached to anything, so
 #     `AttachRolePolicy AdministratorAccess` is denied outright;
-#   * iam:PassRole and iam:UpdateAssumeRolePolicy — the two verbs that turn a
-#     role into a usable identity for someone else — are scoped to the eight
-#     roles the FLIP root owns, all of which have literal names;
 #   * an explicit Deny on both CI roles and on the boundary policy, so an apply
 #     cannot re-trust itself or raise its own ceiling.
 #
-# What this still does not prevent, stated plainly rather than claimed away: an
-# apply can create a role that trusts an external principal and hand it
-# everything under the boundary — roughly PowerUser. It cannot exceed itself, but
-# it can lend itself out. The control for that is the same one that authorises
-# the apply at all: review on the environment's branch, and the trust policy
-# pinning job_workflow_ref to terraform_apply.yml at that branch.
+# What remains, stated plainly rather than claimed away: an apply can change the
+# trust policy of one of FLIP's named roles, and so hand what that role holds to
+# another principal. The control for that is the one that authorises the apply
+# at all: review on the environment's branch, and the trust policy pinning
+# job_workflow_ref to terraform_apply.yml at that branch.
 data "aws_iam_policy_document" "apply_iam" {
-  # checkov:skip=CKV_AWS_109:IAM write is the point of this document — the FLIP root owns the ECS task/execution, RDS proxy, Lambda and EC2 roles, so an apply cannot run without it; the containment is the boundary condition plus the two Denies, not a narrower Allow
-  # checkov:skip=CKV_AWS_110:the role-mutation verbs are escalation primitives by nature; every one of them is either gated on iam:PermissionsBoundary or scoped to the eight literally-named roles in var.managed_role_names
-  # PowerUserAccess withholds *all* of iam: except CreateServiceLinkedRole,
-  # DeleteServiceLinkedRole and ListRoles — the read verbs included. Terraform
-  # refreshes every aws_iam_role, aws_iam_role_policy, role-policy attachment and
-  # instance profile in the FLIP root on each run, so without these an apply dies
-  # during refresh, before it has a plan to gate. Read-only, and no wider than
-  # what the plan role already holds through ReadOnlyAccess.
+  # checkov:skip=CKV_AWS_109:IAM write is the point of this document — the FLIP root owns the ECS task/execution, RDS proxy, Lambda and EC2 roles, so an apply cannot run without it; every write verb is scoped to those roles by name
+  # checkov:skip=CKV_AWS_110:the role-mutation verbs are escalation primitives by nature; every one of them is scoped to the literally-named roles in var.managed_role_names, and the granting ones also to the boundary
+  # checkov:skip=CKV_AWS_356:the "*" statements are IAM reads for refresh and service-linked-role creation; every write is scoped to named roles or instance profiles
+  # No managed policy grants the IAM read verbs any more. Terraform refreshes
+  # every aws_iam_role, aws_iam_role_policy, role-policy attachment and instance
+  # profile in the FLIP root on each run, so without these an apply dies during
+  # refresh, before it has a plan to gate. Read-only, and no wider than what the
+  # plan role already holds through ReadOnlyAccess.
   statement {
     sid    = "ReadIamToRefresh"
     effect = "Allow"
@@ -107,6 +134,8 @@ data "aws_iam_policy_document" "apply_iam" {
     resources = ["*"]
   }
 
+  # IAM evaluates CreateRole against the ARN of the role being created, so it
+  # can be scoped by name like any other role verb.
   statement {
     sid    = "CreateAndGrantOnlyInsideTheBoundary"
     effect = "Allow"
@@ -114,11 +143,7 @@ data "aws_iam_policy_document" "apply_iam" {
       "iam:CreateRole",
       "iam:PutRolePolicy",
     ]
-    # The resource cannot be enumerated: iam:CreateRole is evaluated against the
-    # role being created, which by definition does not exist yet. The boundary
-    # condition is the bound instead, and it is a tighter one than an ARN list
-    # would be — it constrains what the new role can *do*, not just its name.
-    resources = ["*"]
+    resources = local.managed_role_arns
 
     condition {
       test     = "StringEquals"
@@ -135,7 +160,7 @@ data "aws_iam_policy_document" "apply_iam" {
     sid       = "AttachOnlyTheManagedPoliciesThisRootUses"
     effect    = "Allow"
     actions   = ["iam:AttachRolePolicy"]
-    resources = ["*"]
+    resources = local.managed_role_arns
 
     condition {
       test     = "StringEquals"
@@ -150,14 +175,14 @@ data "aws_iam_policy_document" "apply_iam" {
     }
   }
 
-  # Needed to put the boundary onto a role that predates it (the first apply
-  # after FLIP#962) and to restore it if someone strips it by hand. The condition
-  # means this can only ever set *our* boundary, never a weaker one.
+  # Needed to put the boundary onto a role that predates it and to restore it if
+  # someone strips it by hand. The condition means this can only ever set *this*
+  # boundary, never a weaker one.
   statement {
     sid       = "SetTheBoundaryItself"
     effect    = "Allow"
     actions   = ["iam:PutRolePermissionsBoundary"]
-    resources = ["*"]
+    resources = local.managed_role_arns
 
     condition {
       test     = "StringEquals"
@@ -166,9 +191,8 @@ data "aws_iam_policy_document" "apply_iam" {
     }
   }
 
-  # Verbs that can only remove permissions or edit metadata. Left on "*" because
-  # iam:TagRole is required by CreateRole when the provider's default_tags apply,
-  # and a role being created has no ARN to enumerate.
+  # Verbs that remove permissions or edit metadata. iam:TagRole is also required
+  # by CreateRole whenever tags are set (the provider's default_tags).
   statement {
     sid    = "MaintainRoles"
     effect = "Allow"
@@ -181,11 +205,10 @@ data "aws_iam_policy_document" "apply_iam" {
       "iam:UpdateRole",
       "iam:UpdateRoleDescription",
     ]
-    resources = ["*"]
+    resources = local.managed_role_arns
   }
 
-  # The two verbs that make a role usable by something else. Scoped, because
-  # every role this pipeline manages has a literal name.
+  # The two verbs that make a role usable by something else.
   statement {
     sid    = "PassAndRetrustOnlyTheKnownRoles"
     effect = "Allow"
@@ -196,6 +219,8 @@ data "aws_iam_policy_document" "apply_iam" {
     resources = local.managed_role_arns
   }
 
+  # AddRoleToInstanceProfile is evaluated against the profile; putting a role in
+  # one also needs iam:PassRole on that role, which is scoped above.
   statement {
     sid    = "InstanceProfiles"
     effect = "Allow"
@@ -207,12 +232,12 @@ data "aws_iam_policy_document" "apply_iam" {
       "iam:TagInstanceProfile",
       "iam:UntagInstanceProfile",
     ]
-    # An instance profile is only reachable by an EC2 instance the apply also
-    # launches, and launching one requires iam:PassRole on the role inside it —
-    # which is scoped above.
-    resources = ["*"]
+    resources = local.managed_instance_profile_arns
   }
 
+  # Services create their own linked roles through the calling principal (ECS,
+  # RDS, load balancing, CloudFront VPC origins). A service-linked role's
+  # permissions are fixed by AWS, so creating one grants nothing to anyone else.
   statement {
     sid       = "ServiceLinkedRoles"
     effect    = "Allow"
@@ -220,6 +245,9 @@ data "aws_iam_policy_document" "apply_iam" {
     resources = ["*"]
   }
 
+  # Belt and braces now that every Allow above is scoped to named roles that
+  # never include these two: an operator widening managed_role_names by mistake
+  # must still not hand the pipeline its own identity.
   statement {
     sid    = "NoSelfEscalation"
     effect = "Deny"
@@ -241,10 +269,10 @@ data "aws_iam_policy_document" "apply_iam" {
     ]
   }
 
-  # A boundary an apply can rewrite is not a boundary. PowerUserAccess withholds
-  # every IAM write, and none of the Allows above name a policy resource, so this
-  # is belt and braces — but it is the one object whose integrity the rest of
-  # this document depends on.
+  # A boundary an apply can rewrite is not a boundary. None of the Allows above
+  # names a policy resource, so this is belt and braces — but it is the one object
+  # whose integrity the rest of this document depends on, whether this module or
+  # the platform declares it.
   statement {
     sid    = "NoBoundaryTampering"
     effect = "Deny"
@@ -264,10 +292,9 @@ resource "aws_iam_role_policy" "apply_iam" {
   policy = data.aws_iam_policy_document.apply_iam.json
 }
 
-# State access. PowerUserAccess already covers S3, so this is documentation as
-# much as grant — it records exactly which objects the pipeline writes, and the
-# lock object is spelled out because a role that can write state but not the
-# lock fails after the changes are made, not before.
+# State access, spelled out: s3 is in the service allowlist only in the account's
+# regions, and the lock object is named because a role that can write state but
+# not the lock fails after the changes are made, not before.
 data "aws_iam_policy_document" "apply_state" {
   statement {
     sid       = "ListStateBucket"

@@ -49,12 +49,30 @@ IAM_ADDRESSES = {
     ("aws_iam_role", "terraform_plan"),
     ("aws_iam_role", "terraform_apply"),
     ("aws_iam_role_policy_attachment", "plan_read_only"),
-    ("aws_iam_role_policy_attachment", "apply_power_user"),
     ("aws_iam_role_policy", "plan_deny_state_writes"),
+    ("aws_iam_role_policy", "plan_deny_data_reads"),
     ("aws_iam_role_policy", "plan_read_flip_api_secret"),
+    ("aws_iam_role_policy", "apply_services"),
     ("aws_iam_role_policy", "apply_iam"),
     ("aws_iam_role_policy", "apply_state"),
     ("aws_iam_policy", "apply_boundary"),
+}
+
+# What the old ci/ root declared directly, which the wrapper's moved blocks re-address. Its
+# PowerUserAccess attachment is deliberately absent: the first apply after upgrading removes it.
+OLD_CI_ADDRESSES = [
+    "aws_iam_role.terraform_plan",
+    "aws_iam_role_policy_attachment.plan_read_only",
+    "aws_iam_role_policy.plan_deny_state_writes",
+    "aws_iam_role_policy.plan_read_flip_api_secret",
+    "aws_iam_role.terraform_apply",
+    "aws_iam_role_policy.apply_iam",
+    "aws_iam_role_policy.apply_state",
+    "aws_iam_policy.apply_boundary",
+]
+# The boundary became optional (count), so it moves to its first instance.
+OLD_CI_TARGETS = {address: address for address in OLD_CI_ADDRESSES} | {
+    "aws_iam_policy.apply_boundary": "aws_iam_policy.apply_boundary[0]"
 }
 
 STATE_BUCKET_TYPES = {
@@ -252,7 +270,7 @@ def _conditions(statement: str) -> list[dict[str, str]]:
 
 
 def test_the_iam_addresses_are_the_ones_imports_and_moves_target() -> None:
-    """Exactly the nine IAM objects, at the names ci/ used — no rename, no extra, no missing one."""
+    """Exactly these IAM objects, the old ones at the names ci/ used — no rename, no extra, no missing one."""
     iam = {address for address in _resource_addresses() if address[0].startswith("aws_iam_")}
     assert iam == IAM_ADDRESSES
 
@@ -283,11 +301,20 @@ def test_the_role_strings_match_the_live_roles() -> None:
     assert apply["max_session_duration"] == "3600"
     inline = {
         name: _arguments(_module_block(f'resource "aws_iam_role_policy" "{name}"'))["name"]
-        for name in ("plan_deny_state_writes", "plan_read_flip_api_secret", "apply_iam", "apply_state")
+        for name in (
+            "plan_deny_state_writes",
+            "plan_deny_data_reads",
+            "plan_read_flip_api_secret",
+            "apply_services",
+            "apply_iam",
+            "apply_state",
+        )
     }
     assert inline == {
         "plan_deny_state_writes": '"deny-terraform-state-writes"',
+        "plan_deny_data_reads": '"deny-data-reads"',
         "plan_read_flip_api_secret": '"flip-terraform-plan-read-secret"',
+        "apply_services": '"flip-terraform-apply-services"',
         "apply_iam": '"flip-terraform-apply-iam"',
         "apply_state": '"flip-terraform-apply-state"',
     }
@@ -501,14 +528,253 @@ def test_the_plan_role_cannot_write_state() -> None:
     assert _module_locals()["state_all_objects_arn"] == '"${local.state_arn}/*"'
 
 
+def test_the_boundary_is_optional_and_always_referenced_by_name() -> None:
+    """A platform that deploys its own boundary (the LZA's) passes ``create_permissions_boundary = false``.
+
+    Nothing may then read the resource: every grant, Deny and output uses the composed ARN, which names the
+    platform's policy as well as the module's own.
+    """
+    boundary = _arguments(_module_block('resource "aws_iam_policy" "apply_boundary"'))
+    assert boundary["count"] == _normalise("var.create_permissions_boundary ? 1 : 0")
+    assert _arguments(_module_block('variable "create_permissions_boundary"'))["default"] == "true"
+    for name, source in _module_files().items():
+        assert "aws_iam_policy.apply_boundary" not in source, f"{name} reads the optional boundary resource"
+
+
+# Statement sid -> the resources its role-writing verbs may touch.
+SCOPED_ROLE_WRITES = {
+    "CreateAndGrantOnlyInsideTheBoundary": "local.managed_role_arns",
+    "AttachOnlyTheManagedPoliciesThisRootUses": "local.managed_role_arns",
+    "SetTheBoundaryItself": "local.managed_role_arns",
+    "MaintainRoles": "local.managed_role_arns",
+    "PassAndRetrustOnlyTheKnownRoles": "local.managed_role_arns",
+    "InstanceProfiles": "local.managed_instance_profile_arns",
+}
+
+
+def test_every_iam_write_is_scoped_to_the_flip_roots_own_roles() -> None:
+    """No role or instance profile outside the FLIP root's named ones can be created, changed or deleted.
+
+    The only ``"*"`` Allows left are the refresh reads and service-linked-role creation.
+    """
+    document = _module_block('data "aws_iam_policy_document" "apply_iam"')
+    for sid, resources in SCOPED_ROLE_WRITES.items():
+        assert _arguments(_statement('data "aws_iam_policy_document" "apply_iam"', sid))["resources"] == resources, sid
+    wildcard = {
+        _arguments(body)["sid"]: _arguments(body)["actions"]
+        for body in _blocks(document, "statement")
+        if _arguments(body).get("effect") == '"Allow"' and _arguments(body)["resources"] == '["*"]'
+    }
+    assert wildcard == {
+        '"ReadIamToRefresh"': '["iam:Get*","iam:List*"]',
+        '"ServiceLinkedRoles"': '["iam:CreateServiceLinkedRole"]',
+    }
+    prefix = '"arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}'
+    locals_ = _module_locals()
+    assert locals_["managed_role_arns"] == _normalise(
+        "[for name in var.managed_role_names : " + prefix + ':role/${name}"]'
+    )
+    assert locals_["managed_instance_profile_arns"] == _normalise(
+        "[for name in var.managed_instance_profile_names : " + prefix + ':instance-profile/${name}"]'
+    )
+
+
+def test_the_apply_role_holds_no_managed_policy() -> None:
+    """Its rights are the three inline documents; a managed policy such as PowerUserAccess would bypass them."""
+    for header, body in _module_blocks():
+        if header.startswith('resource "aws_iam_role_policy_attachment"'):
+            assert _arguments(body)["role"] != "aws_iam_role.terraform_apply.name", header
+    apply_inline = {
+        header
+        for header, body in _module_blocks()
+        if header.startswith('resource "aws_iam_role_policy"')
+        and _arguments(body)["role"] == "aws_iam_role.terraform_apply.id"
+    }
+    assert apply_inline == {
+        'resource "aws_iam_role_policy" "apply_services"',
+        'resource "aws_iam_role_policy" "apply_iam"',
+        'resource "aws_iam_role_policy" "apply_state"',
+    }
+
+
+def test_the_apply_services_are_the_allowlist_in_the_accounts_regions() -> None:
+    statement = _statement('data "aws_iam_policy_document" "apply_services"', "TheServicesTheFlipRootUses")
+    arguments = _arguments(statement)
+    assert arguments["effect"] == '"Allow"'
+    assert arguments["actions"] == _normalise('[for prefix in var.apply_service_prefixes : "${prefix}:*"]')
+    assert _conditions(statement) == [
+        {"test": '"StringEquals"', "variable": '"aws:RequestedRegion"', "values": "local.apply_regions"}
+    ]
+    assert _module_locals()["apply_regions"] == _normalise('distinct([data.aws_region.current.region, "us-east-1"])')
+    validation = _arguments(_block(_module_block('variable "apply_service_prefixes"'), "validation"))
+    for refused in ("iam", "sts", "organizations"):
+        assert f'!contains(var.apply_service_prefixes,"{refused}")' in validation["condition"], refused
+
+
+# Terraform resource/data type prefix -> the IAM service prefix an apply needs for it. Ordered: the first
+# match wins. None means no service call worth granting (IAM is granted by apply_iam; the rest are
+# provider built-ins that need no permission).
+RESOURCE_SERVICES = [
+    (r"aws_iam_", None),
+    (r"aws_(caller_identity|partition|region)$", None),
+    (r"aws_(security_group|vpc|subnet|instance$|key_pair|ec2_|availability_zones)", "ec2"),
+    (r"aws_lb", "elasticloadbalancing"),
+    (r"aws_ecs_", "ecs"),
+    (r"aws_db_", "rds"),
+    (r"aws_secretsmanager_", "secretsmanager"),
+    (r"aws_kms_", "kms"),
+    (r"aws_cloudwatch_log_", "logs"),
+    (r"aws_cloudwatch_metric_alarm$", "cloudwatch"),
+    (r"aws_cloudwatch_event_", "events"),
+    (r"aws_lambda_", "lambda"),
+    (r"aws_(s3_|canonical_user_id$)", "s3"),
+    (r"aws_ssm_", "ssm"),
+    (r"aws_route53_", "route53"),
+    (r"aws_acm_", "acm"),
+    (r"aws_cloudfront_", "cloudfront"),
+    (r"aws_wafv2_", "wafv2"),
+    (r"aws_cognito_", "cognito-idp"),
+    (r"aws_ses_", "ses"),
+    (r"aws_sns_", "sns"),
+    (r"aws_sqs_", "sqs"),
+    (r"aws_service_discovery_", "servicediscovery"),
+    (r"aws_efs_", "elasticfilesystem"),
+]
+
+# Registry modules the FLIP root calls, by source, and the service each one's resources need.
+REGISTRY_MODULE_SERVICES = {
+    "terraform-aws-modules/vpc/aws": "ec2",
+    "terraform-aws-modules/alb/aws": "elasticloadbalancing",
+    "terraform-aws-modules/rds/aws": "rds",
+    "terraform-aws-modules/secrets-manager/aws": "secretsmanager",
+    "terraform-aws-modules/iam/aws//modules/iam-assumable-role": None,
+}
+
+
+def _flip_root_sources() -> list[tuple[str, str]]:
+    """Every .tf file the FLIP root plans: the root itself and its local modules, not this bootstrap."""
+    paths = sorted(AWS_PROVIDER_DIR.glob("*.tf")) + sorted(
+        path for path in (AWS_PROVIDER_DIR / "modules").glob("*/*.tf") if path.parent != MODULE_DIR.resolve()
+    )
+    paths = [path for path in paths if path.parent.name != "terraform_ci_bootstrap"]
+    return [(str(path.relative_to(AWS_PROVIDER_DIR)), strip_comments(path.read_text())) for path in paths]
+
+
+def _services_the_flip_root_needs() -> set[str]:
+    services: set[str] = set()
+    for name, source in _flip_root_sources():
+        for kind, resource_type in re.findall(r'^\s*(resource|data)\s+"(aws_\w+)"', source, re.M):
+            matches = [service for pattern, service in RESOURCE_SERVICES if re.match(pattern, resource_type)]
+            assert matches, (
+                f"{name}: {kind} {resource_type} has no entry in RESOURCE_SERVICES. Add the IAM service it needs, "
+                "and add that service to apply_service_prefixes in the bootstrap module."
+            )
+            if matches[0]:
+                services.add(matches[0])
+        for header, body in _parse(source)[1]:
+            module_source = _arguments(body).get("source", "").strip('"') if header.startswith("module ") else ""
+            if not module_source or module_source.startswith("."):
+                continue  # local modules are scanned as files above
+            assert module_source in REGISTRY_MODULE_SERVICES, (
+                f"{name}: registry module {module_source} has no entry in REGISTRY_MODULE_SERVICES"
+            )
+            if REGISTRY_MODULE_SERVICES[module_source]:
+                services.add(REGISTRY_MODULE_SERVICES[module_source])
+    return services
+
+
+def _string_list_default(variable: str) -> list[str]:
+    return [item.strip('"') for item in _list(_arguments(_module_block(f'variable "{variable}"'))["default"])]
+
+
+def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
+    """Both directions: a new service in the root fails until allowed, a dropped one fails until removed.
+
+    Least privilege for the apply role is this equality. The platform applies the module before FLIP can
+    use a new service, so the failure is the reminder to change the module in the same PR.
+    """
+    allowed = _string_list_default("apply_service_prefixes")
+    assert allowed == sorted(allowed), "keep apply_service_prefixes sorted"
+    needed = _services_the_flip_root_needs()
+    assert set(allowed) == needed, (
+        f"missing from apply_service_prefixes: {sorted(needed - set(allowed))}; "
+        f"allowed but unused by the FLIP root: {sorted(set(allowed) - needed)}"
+    )
+
+
+def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> None:
+    """An unlisted role or profile would be denied at apply; a stale one would be a standing grant."""
+    roles, profiles = set(), set()
+    for _, source in _flip_root_sources():
+        for header, body in _parse(source)[1]:
+            arguments = _arguments(body)
+            if header.startswith('resource "aws_iam_role" '):
+                roles.add(arguments["name"].strip('"'))
+            elif header.startswith('resource "aws_iam_instance_profile" '):
+                profiles.add(arguments["name"].strip('"'))
+            elif header.startswith("module ") and arguments.get("source", "").startswith(
+                '"terraform-aws-modules/iam/aws//modules/iam-assumable-role'
+            ):
+                roles.add(arguments["role_name"].strip('"'))
+    assert set(_string_list_default("managed_role_names")) == roles
+    assert set(_string_list_default("managed_instance_profile_names")) == profiles
+
+
+def test_the_plan_role_cannot_read_the_accounts_data() -> None:
+    """Configuration yes, contents no: objects outside state, other parameters, logs, messages, items."""
+    document = 'data "aws_iam_policy_document" "plan_deny_data_reads"'
+    objects = _arguments(_statement(document, "NoObjectReadsOutsideState"))
+    assert objects == {
+        "sid": '"NoObjectReadsOutsideState"',
+        "effect": '"Deny"',
+        "actions": '["s3:GetObject*"]',
+        "not_resources": "[local.state_all_objects_arn]",
+    }
+    parameters = _arguments(_statement(document, "NoParameterValuesOutsideFlip"))
+    assert parameters["effect"] == '"Deny"'
+    assert parameters["not_resources"] == "local.plan_readable_parameter_arns"
+    assert set(_list(parameters["actions"])) == {
+        '"ssm:GetParameter"',
+        '"ssm:GetParameterHistory"',
+        '"ssm:GetParameters"',
+        '"ssm:GetParametersByPath"',
+    }
+    account = "${data.aws_partition.current.partition}:ssm:*:${data.aws_caller_identity.current.account_id}"
+    assert _module_locals()["plan_readable_parameter_arns"] == _normalise(
+        f'["arn:{account}:parameter${{var.ssm_parameter_prefix}}/*",'
+        ' "arn:${data.aws_partition.current.partition}:ssm:*:*:parameter/aws/service/*"]'
+    )
+    data_plane = _arguments(_statement(document, "NoDataPlaneReads"))
+    assert data_plane["effect"] == '"Deny"'
+    assert data_plane["resources"] == '["*"]'
+    for action in ("logs:GetLogEvents", "logs:FilterLogEvents", "logs:StartQuery", "sqs:ReceiveMessage"):
+        assert f'"{action}"' in _list(data_plane["actions"]), action
+
+
+def test_the_plan_role_reads_the_ssm_prefix_the_flip_root_writes() -> None:
+    """Every parameter the root declares sits under ssm_parameter_prefix, or its refresh would be denied."""
+    prefix = _arguments(_module_block('variable "ssm_parameter_prefix"'))["default"].strip('"')
+    names = []
+    for _, source in _flip_root_sources():
+        for header, body in _parse(source)[1]:
+            if header.startswith('resource "aws_ssm_parameter" '):
+                names.append(_arguments(body)["name"].strip('"'))
+    assert names
+    for name in names:
+        assert name.startswith((f"{prefix}/", "${local.ssm_prefix}/")), name
+    locals_ = {}
+    for _, source in _flip_root_sources():
+        for header, body in _parse(source)[1]:
+            if header == "locals":
+                locals_.update(_arguments(body))
+    assert locals_["ssm_prefix"] == f'"{prefix}"'
+
+
 # --- the ci/ wrapper -----------------------------------------------------------------------------
 
 
 def _ci(name: str) -> str:
     return strip_comments((CI_DIR / name).read_text())
-
-
-LEGACY_ADDRESSES = sorted(f"{resource_type}.{name}" for resource_type, name in IAM_ADDRESSES)
 
 
 def test_the_wrapper_has_no_ai_centre_mode_table() -> None:
@@ -533,9 +799,12 @@ def test_the_wrapper_commits_no_backend() -> None:
 
 
 def test_the_wrapper_moves_every_legacy_address_into_the_module() -> None:
-    """Someone who applied the old root, which declared these directly, stays at zero diff."""
+    """Someone who applied the old root, which declared these directly, keeps every object but one.
+
+    The exception is the PowerUserAccess attachment, left unmoved so the first apply removes it.
+    """
     moves = sorted(tuple(_arguments(body).values()) for body in _blocks(_ci("main.tf"), "moved"))
-    assert moves == [(address, f"module.terraform_ci.{address}") for address in LEGACY_ADDRESSES]
+    assert moves == sorted((old, f"module.terraform_ci.{new}") for old, new in OLD_CI_TARGETS.items())
 
 
 def test_the_wrapper_guards_the_account() -> None:

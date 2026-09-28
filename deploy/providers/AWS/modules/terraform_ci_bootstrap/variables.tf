@@ -129,10 +129,11 @@ variable "flip_api_secret_name" {
 #
 # Adding a role to the FLIP root therefore means adding it here, and the platform
 # repositories bumping their pinned SHA and applying, BEFORE the FLIP change that
-# creates the role — or the apply that creates it cannot pass or re-trust it. That coupling is deliberate: it puts a human in the loop on every
-# new principal the pipeline can hand to a service.
+# creates the role — or the apply that creates it is denied. That coupling is
+# deliberate: it puts a human in the loop on every new principal the pipeline can
+# hand to a service.
 variable "managed_role_names" {
-  description = "Names of the IAM roles the FLIP root owns, which an apply may pass and re-trust."
+  description = "Names of the IAM roles the FLIP root owns: the only roles an apply may create, change, delete, pass or re-trust."
   type        = list(string)
   default = [
     # iam_ecs.tf
@@ -150,6 +151,16 @@ variable "managed_role_names" {
   ]
 }
 
+# The instance profiles the FLIP root owns (main.tf), scoped the same way.
+variable "managed_instance_profile_names" {
+  description = "Names of the IAM instance profiles the FLIP root owns: the only ones an apply may create, change or delete."
+  type        = list(string)
+  default = [
+    "ec2-role-profile",
+    "trust-ec2-role-profile",
+  ]
+}
+
 # The only AWS-managed policies the FLIP root attaches to anything. Bound to
 # iam:AttachRolePolicy as an iam:PolicyARN condition, so an apply cannot attach
 # AdministratorAccess (or anything else) to a role it has just created.
@@ -163,13 +174,76 @@ variable "attachable_managed_policies" {
   ]
 }
 
-# The permissions boundary every role an apply creates must carry. Declared by
-# this module and referenced by name from the FLIP root, which sets it on each of
-# its roles — see `iam_permissions_boundary_name` there.
+# The permissions boundary every role an apply creates must carry, referenced by
+# name from the FLIP root, which sets it on each of its roles — see
+# `iam_permissions_boundary_name` there. Declared by this module unless the
+# account's platform already provides one: on an AWS Landing Zone Accelerator
+# estate the accelerator deploys its own boundary to every workload account and an
+# SCP requires it on every role (londonaicentre/lza#51), so a second, FLIP-owned
+# one would be both redundant and unusable. Such a caller sets
+# create_permissions_boundary = false and names the platform's policy here.
 variable "permissions_boundary_name" {
   description = "Name of the managed policy used as the permissions boundary on roles the pipeline creates."
   type        = string
   default     = "AICentre-FLIPTerraformBoundary"
+}
+
+variable "create_permissions_boundary" {
+  description = "Declare the boundary policy named by permissions_boundary_name. False references an existing policy of that name in the account (a platform-owned boundary) instead."
+  type        = bool
+  default     = true
+}
+
+# The AWS services an apply may call, as IAM service prefixes; each becomes
+# `<prefix>:*` in the apply role's inline policy, limited to this region plus
+# us-east-1 (CloudFront's certificate and WAF live there). The list is the FLIP
+# root's own, derived from the resource types it declares, and
+# tests/test_terraform_ci_bootstrap.py holds the two equal in both directions: a
+# FLIP change that starts using a new service fails CI until the service is added
+# here, and a service the root stops using fails it until it is removed. IAM is
+# absent on purpose — the apply role's IAM rights are the scoped apply_iam
+# document, never a service-wide grant.
+variable "apply_service_prefixes" {
+  description = "IAM service prefixes the apply role may use (each granted as <prefix>:* in this region and us-east-1). IAM is granted separately and must not appear."
+  type        = list(string)
+  default = [
+    "acm",
+    "cloudfront",
+    "cloudwatch",
+    "cognito-idp",
+    "ec2",
+    "ecs",
+    "elasticfilesystem",
+    "elasticloadbalancing",
+    "events",
+    "kms",
+    "lambda",
+    "logs",
+    "rds",
+    "route53",
+    "s3",
+    "secretsmanager",
+    "servicediscovery",
+    "ses",
+    "sns",
+    "sqs",
+    "ssm",
+    "wafv2",
+  ]
+
+  validation {
+    condition     = !contains(var.apply_service_prefixes, "iam") && !contains(var.apply_service_prefixes, "sts") && !contains(var.apply_service_prefixes, "organizations")
+    error_message = "apply_service_prefixes must not include iam, sts or organizations: the apply role's IAM rights are the scoped apply_iam document."
+  }
+}
+
+# The SSM parameter path the FLIP root writes (parameter_store.tf,
+# fl_ingress_lza.tf). The plan role may read parameter values under it, and
+# AWS's public parameters (the Ubuntu AMI lookup), but no other parameter.
+variable "ssm_parameter_prefix" {
+  description = "SSM parameter path the FLIP root manages, without a trailing slash. The plan role may read values only under it and under AWS's public /aws/service/ parameters."
+  type        = string
+  default     = "/flip"
 }
 
 variable "tags" {

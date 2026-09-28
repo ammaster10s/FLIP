@@ -54,11 +54,14 @@ resource "aws_iam_role" "terraform_plan" {
   tags                 = var.tags
 }
 
-# ReadOnlyAccess is broad, and that is a real cost worth naming: it lets the plan
-# role read every S3 object in the account, including the state file's sensitive
-# values. That is not incidental — `terraform plan` cannot run without reading
-# state, and state holds AES_KEY_BASE64 and the DB credentials either way. The
-# containment is that this role cannot *write* anything, and that plan output
+# ReadOnlyAccess covers every describe/get/list call a refresh makes, across all
+# the services the FLIP root uses, and keeping a hand-written read list in step
+# with the AWS provider's calls would be a maintenance burden with no security
+# gain. What it also grants — reading the *data* in the account, not just its
+# configuration — is taken back by plan_deny_data_reads below. The state file is
+# the exception that cannot be taken back: `terraform plan` cannot run without
+# reading it, and it holds AES_KEY_BASE64 and the DB credentials in clear. The
+# containment there is that this role cannot write anything, and that plan output
 # renders sensitive values as `(sensitive value)`.
 resource "aws_iam_role_policy_attachment" "plan_read_only" {
   role       = aws_iam_role.terraform_plan.name
@@ -99,6 +102,72 @@ resource "aws_iam_role_policy" "plan_deny_state_writes" {
   name   = "deny-terraform-state-writes"
   role   = aws_iam_role.terraform_plan.id
   policy = data.aws_iam_policy_document.plan_deny_state_writes.json
+}
+
+# Data, not configuration. A plan refreshes resources' configuration, never their
+# contents, yet ReadOnlyAccess would let this role read every S3 object (model
+# uploads, FL results, app bundles), every log line, every parameter value,
+# message and database log in the account. The staging plan role is reachable
+# from any pull-request branch in the repository — the PR can edit the plan
+# workflow — so what it can read is what a contributor can read. Denied
+# explicitly, so no later Allow restores it:
+#
+#   * S3 object reads, except the state bucket (the plan reads its state);
+#   * SSM parameter values, except the FLIP root's own path and AWS's public
+#     parameters (the refresh reads both);
+#   * log contents, queue messages, table items, instance console output, RDS log
+#     files, and the Cognito user listing (a refresh reads the two users it
+#     manages by name, never the list).
+data "aws_iam_policy_document" "plan_deny_data_reads" {
+  statement {
+    sid           = "NoObjectReadsOutsideState"
+    effect        = "Deny"
+    actions       = ["s3:GetObject*"]
+    not_resources = [local.state_all_objects_arn]
+  }
+
+  statement {
+    sid    = "NoParameterValuesOutsideFlip"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameterHistory",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+    ]
+    not_resources = local.plan_readable_parameter_arns
+  }
+
+  statement {
+    sid    = "NoDataPlaneReads"
+    effect = "Deny"
+    actions = [
+      "cognito-idp:ListUsers",
+      "cognito-idp:ListUsersInGroup",
+      "dynamodb:BatchGetItem",
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "ec2:GetConsoleOutput",
+      "ec2:GetConsoleScreenshot",
+      "logs:FilterLogEvents",
+      "logs:GetLogEvents",
+      "logs:GetLogRecord",
+      "logs:StartLiveTail",
+      "logs:StartQuery",
+      "logs:Unmask",
+      "rds:DownloadCompleteDBLogFile",
+      "rds:DownloadDBLogFilePortion",
+      "sqs:ReceiveMessage",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_deny_data_reads" {
+  name   = "deny-data-reads"
+  role   = aws_iam_role.terraform_plan.id
+  policy = data.aws_iam_policy_document.plan_deny_data_reads.json
 }
 
 # ReadOnlyAccess deliberately withholds secretsmanager:GetSecretValue — AWS

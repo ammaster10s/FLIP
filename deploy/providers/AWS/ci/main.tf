@@ -69,18 +69,22 @@ module "terraform_ci" {
   apply_branch       = var.apply_branch
   state_bucket_name  = var.state_bucket_name
 
-  drift_branch                = var.drift_branch
-  state_key                   = var.state_key
-  plan_workflow_file          = var.plan_workflow_file
-  apply_workflow_file         = var.apply_workflow_file
-  drift_workflow_file         = var.drift_workflow_file
-  flip_api_secret_name        = var.flip_api_secret_name
-  managed_role_names          = var.managed_role_names
-  attachable_managed_policies = var.attachable_managed_policies
-  permissions_boundary_name   = var.permissions_boundary_name
-  plan_role_name              = var.plan_role_name
-  apply_role_name             = var.apply_role_name
-  tags                        = var.tags
+  drift_branch                   = var.drift_branch
+  state_key                      = var.state_key
+  plan_workflow_file             = var.plan_workflow_file
+  apply_workflow_file            = var.apply_workflow_file
+  drift_workflow_file            = var.drift_workflow_file
+  flip_api_secret_name           = var.flip_api_secret_name
+  managed_role_names             = var.managed_role_names
+  managed_instance_profile_names = var.managed_instance_profile_names
+  attachable_managed_policies    = var.attachable_managed_policies
+  permissions_boundary_name      = var.permissions_boundary_name
+  create_permissions_boundary    = var.create_permissions_boundary
+  apply_service_prefixes         = var.apply_service_prefixes
+  ssm_parameter_prefix           = var.ssm_parameter_prefix
+  plan_role_name                 = var.plan_role_name
+  apply_role_name                = var.apply_role_name
+  tags                           = var.tags
 
   manage_state_bucket                = var.manage_state_bucket
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm
@@ -93,7 +97,10 @@ module "terraform_ci" {
 # These resources used to be declared directly in this root. The moves keep a
 # state written by that layout at zero diff: Terraform re-addresses each object
 # into the module instead of destroying and re-creating it. They cost nothing on a
-# fresh state, where there is nothing to move.
+# fresh state, where there is nothing to move. One object is deliberately not
+# moved: the old root's PowerUserAccess attachment on the apply role, which the
+# first apply after upgrading removes — the module grants a service allowlist
+# (apply_services) in its place.
 moved {
   from = aws_iam_role.terraform_plan
   to   = module.terraform_ci.aws_iam_role.terraform_plan
@@ -120,11 +127,6 @@ moved {
 }
 
 moved {
-  from = aws_iam_role_policy_attachment.apply_power_user
-  to   = module.terraform_ci.aws_iam_role_policy_attachment.apply_power_user
-}
-
-moved {
   from = aws_iam_role_policy.apply_iam
   to   = module.terraform_ci.aws_iam_role_policy.apply_iam
 }
@@ -136,5 +138,5 @@ moved {
 
 moved {
   from = aws_iam_policy.apply_boundary
-  to   = module.terraform_ci.aws_iam_policy.apply_boundary
+  to   = module.terraform_ci.aws_iam_policy.apply_boundary[0]
 }

@@ -22,10 +22,9 @@
 # what bounds a role the pipeline mints to no more than the pipeline itself has.
 #
 # It is deliberately generous: allow everything, then deny identity management.
-# That is PowerUserAccess's own shape, and PowerUserAccess is what the apply role
-# holds — so a role created by an apply can be at most as powerful as the apply
-# that created it, and no FLIP workload loses a runtime permission (none of the
-# roles it applies to make an IAM, Organizations or Account call).
+# No FLIP workload loses a runtime permission (none of the roles it applies to
+# make an IAM, Organizations or Account call), and a role an apply creates cannot
+# manage identity, so it cannot mint anything more powerful than itself.
 data "aws_iam_policy_document" "apply_boundary" {
   # Every broad-policy check fires on this document, and all of them are reading
   # it as a grant. It is not one. A permissions boundary is evaluated as an
@@ -37,8 +36,8 @@ data "aws_iam_policy_document" "apply_boundary" {
   # Secrets Manager, KMS and CloudWatch at runtime.
   #
   # The security property is in the Deny below (no identity management, no
-  # Organizations, no Account) plus the fact that the roles this bounds hold
-  # PowerUserAccess at most. Narrowing the Allow to satisfy a linter would break
+  # Organizations, no Account) plus each bounded role's own scoped identity
+  # policy. Narrowing the Allow to satisfy a linter would break
   # the platform without changing the boundary's effect.
   # checkov:skip=CKV_AWS_1:a permissions boundary is a ceiling, not a grant; Allow "*" is what makes it a ceiling rather than a deny-list that permits nothing
   # checkov:skip=CKV_AWS_49:same — the wildcard action set is the intersection ceiling, and every role carrying it is separately capped by its own identity policy
@@ -95,7 +94,12 @@ data "aws_iam_policy_document" "apply_boundary" {
   }
 }
 
+# Not declared where the platform provides the boundary
+# (create_permissions_boundary = false): the policy is then referenced by name
+# through local.permissions_boundary_arn, exactly as when declared here.
 resource "aws_iam_policy" "apply_boundary" {
+  count = var.create_permissions_boundary ? 1 : 0
+
   name        = var.permissions_boundary_name
   description = "Permissions boundary for roles the FLIP Terraform pipeline creates (FLIP#962)"
   policy      = data.aws_iam_policy_document.apply_boundary.json

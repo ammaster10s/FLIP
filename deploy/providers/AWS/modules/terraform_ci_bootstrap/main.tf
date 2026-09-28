@@ -18,13 +18,15 @@
 #                                    nightly drift run. Cannot write state.
 #   AICentre-FLIPTerraformApplyRole  assumed only by a push-triggered apply on
 #                                    the environment's branch.
-#   AICentre-FLIPTerraformBoundary   the ceiling on every role an apply creates.
+#   AICentre-FLIPTerraformBoundary   the ceiling on every role an apply creates;
+#                                    optional (create_permissions_boundary) where
+#                                    the platform provides its own.
 #   the Terraform state bucket       optional (manage_state_bucket).
 #
 # A PUBLISHED INTERFACE, not a private module of the FLIP root. It is consumed by
-# the platform repositories — aicentre-iac for the self-contained accounts,
-# aicentre-lza-iac for the LZA ones — pinned to a FLIP commit SHA, and by ../../ci
-# for anyone bootstrapping their own account. The point of that arrangement is
+# a platform repository — aicentre-lza-iac, for AI Centre's LZA accounts — pinned
+# to a FLIP commit SHA, and by ../../ci for anyone bootstrapping their own
+# account. The point of that arrangement is
 # separation of duties: this is the ceiling on FLIP's own pipeline, so a FLIP merge
 # can only *propose* a change to it; nothing reaches an AI Centre account until a
 # platform repository bumps the pinned SHA and its reviewers approve the plan.
@@ -106,6 +108,24 @@ locals {
   managed_role_arns = [
     for name in var.managed_role_names :
     "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${name}"
+  ]
+
+  managed_instance_profile_arns = [
+    for name in var.managed_instance_profile_names :
+    "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${name}"
+  ]
+
+  # The regions an apply may act in: the account's own, plus us-east-1, where
+  # CloudFront's certificate and WAF must live. Global services (CloudFront,
+  # Route 53) report us-east-1 as the requested region too.
+  apply_regions = distinct([data.aws_region.current.region, "us-east-1"])
+
+  # The plan role may read these parameter values and no others: the FLIP root's
+  # own path, and AWS's public parameters (the AMI lookup), whose ARNs carry no
+  # account ID — `*` matches that empty field.
+  plan_readable_parameter_arns = [
+    "arn:${data.aws_partition.current.partition}:ssm:*:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_parameter_prefix}/*",
+    "arn:${data.aws_partition.current.partition}:ssm:*:*:parameter/aws/service/*",
   ]
 
   attachable_policy_arns = [

@@ -99,7 +99,7 @@ variable "flip_api_secret_name" {
 }
 
 variable "managed_role_names" {
-  description = "Names of the IAM roles the FLIP root owns, which an apply may pass and re-trust."
+  description = "Names of the IAM roles the FLIP root owns: the only roles an apply may create, change, delete, pass or re-trust."
   type        = list(string)
   default = [
     "ecs-task-execution-role",
@@ -127,6 +127,61 @@ variable "permissions_boundary_name" {
   description = "Name of the permissions-boundary policy. The FLIP root's iam_permissions_boundary_name must match it."
   type        = string
   default     = "AICentre-FLIPTerraformBoundary"
+}
+
+variable "create_permissions_boundary" {
+  description = "Declare the boundary policy named by permissions_boundary_name. False references an existing policy of that name in the account (a platform-owned boundary) instead."
+  type        = bool
+  default     = true
+}
+
+variable "managed_instance_profile_names" {
+  description = "Names of the IAM instance profiles the FLIP root owns: the only ones an apply may create, change or delete."
+  type        = list(string)
+  default = [
+    "ec2-role-profile",
+    "trust-ec2-role-profile",
+  ]
+}
+
+variable "apply_service_prefixes" {
+  description = "IAM service prefixes the apply role may use (each granted as <prefix>:* in this region and us-east-1). IAM is granted separately and must not appear."
+  type        = list(string)
+  default = [
+    "acm",
+    "cloudfront",
+    "cloudwatch",
+    "cognito-idp",
+    "ec2",
+    "ecs",
+    "elasticfilesystem",
+    "elasticloadbalancing",
+    "events",
+    "kms",
+    "lambda",
+    "logs",
+    "rds",
+    "route53",
+    "s3",
+    "secretsmanager",
+    "servicediscovery",
+    "ses",
+    "sns",
+    "sqs",
+    "ssm",
+    "wafv2",
+  ]
+
+  validation {
+    condition     = !contains(var.apply_service_prefixes, "iam") && !contains(var.apply_service_prefixes, "sts") && !contains(var.apply_service_prefixes, "organizations")
+    error_message = "apply_service_prefixes must not include iam, sts or organizations: the apply role's IAM rights are the scoped apply_iam document."
+  }
+}
+
+variable "ssm_parameter_prefix" {
+  description = "SSM parameter path the FLIP root manages, without a trailing slash. The plan role may read values only under it and under AWS's public /aws/service/ parameters."
+  type        = string
+  default     = "/flip"
 }
 
 variable "plan_role_name" {

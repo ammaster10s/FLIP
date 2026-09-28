@@ -47,7 +47,7 @@ output "expected_oidc_sub" {
 # `local.iam_permissions_boundary_arn`, every apply that creates a role fails.
 output "permissions_boundary_arn" {
   description = "Permissions boundary every role the FLIP root creates must carry."
-  value       = aws_iam_policy.apply_boundary.arn
+  value       = local.permissions_boundary_arn
 }
 
 output "expected_drift_job_workflow_ref" {
@@ -72,7 +72,7 @@ output "apply_role_name" {
 
 output "permissions_boundary_name" {
   description = "Name of the permissions-boundary policy."
-  value       = aws_iam_policy.apply_boundary.name
+  value       = var.permissions_boundary_name
 }
 
 output "plan_job_workflow_refs" {

@@ -18,9 +18,9 @@ Everything FLIP's Terraform CI needs to exist in an AWS account before it can ru
 the **Terraform state bucket**. FLIP#962 introduced the roles; FLIP#1199 moved their ownership here.
 
 > [!IMPORTANT]
-> **This is a published interface, not a private module of the FLIP root.** It is instantiated by the platform
-> repositories — `aicentre-iac` (self-contained accounts) and `aicentre-lza-iac` (LZA accounts) — pinned to a FLIP
-> commit SHA, and by [`../../ci`](../../ci) for anyone bootstrapping their own account. Renaming an input, changing a
+> **This is a published interface, not a private module of the FLIP root.** It is instantiated by a platform
+> repository — `aicentre-lza-iac`, for AI Centre's LZA accounts — pinned to a FLIP commit SHA, and by
+> [`../../ci`](../../ci) for anyone bootstrapping their own account. Renaming an input, changing a
 > default, or changing a description on the roles or the boundary is a change for those callers. The boundary's
 > description in particular must never change: `aws_iam_policy.description` forces replacement, and the policy is in
 > use as a boundary on every FLIP role.
@@ -50,6 +50,11 @@ module "flip_stag_terraform_ci" {
   apply_branch       = "develop"
   state_bucket_name  = "flip-terraform-state-lza-stag"
 
+  # The LZA deploys its own boundary to every workload account and requires it on
+  # every role (londonaicentre/lza#51), so use it rather than declaring FLIP's.
+  create_permissions_boundary = false
+  permissions_boundary_name   = "AICentre-WorkloadRoleBoundary"
+
   state_noncurrent_versions_retained = 20
 }
 ```
@@ -59,7 +64,29 @@ module "flip_stag_terraform_ci" {
 - **`github_org` / `github_repo`** have no defaults on purpose. A default of `londonaicentre/FLIP` would make a
   stranger's roles trust AI Centre's workflows.
 - **`environment`** — `stag` or `prod`. Only staging's plan role accepts pull-request merge refs.
-- Everything else defaults to the values in use in every AI Centre account; see [`variables.tf`](variables.tf).
+- **`create_permissions_boundary` / `permissions_boundary_name`** — by default the module declares
+  `AICentre-FLIPTerraformBoundary`. Where the platform already deploys a boundary and requires it on every role, as an
+  AWS Landing Zone Accelerator estate does, set `create_permissions_boundary = false` and name that policy instead: the
+  apply role's grants and Denies then refer to it, and the FLIP root's `iam_permissions_boundary_name` must name it
+  too.
+- Everything else defaults to what the FLIP root needs; see [`variables.tf`](variables.tf).
+
+## What the roles may do
+
+Least privilege, with each grant explained where it is declared:
+
+- **Plan role** ([`iam_plan.tf`](iam_plan.tf)): `ReadOnlyAccess` for configuration, and explicit Denies taking back
+  what a plan never reads — S3 objects outside the state bucket, SSM parameter values outside `ssm_parameter_prefix`
+  and AWS's public parameters, log contents, queue messages, table items, console output, RDS log files, the Cognito
+  user listing — and every write to the state bucket. Plus a read grant on the one secret a refresh reads.
+- **Apply role** ([`iam_apply.tf`](iam_apply.tf)): no managed policy. `<service>:*` for the AWS services the FLIP root
+  uses (`apply_service_prefixes`), in the account's region and `us-east-1` only; IAM write only on the FLIP root's
+  roles and instance profiles, by name (`managed_role_names`, `managed_instance_profile_names`), under the boundary and
+  a three-policy attach allowlist; Denies on the CI roles and the boundary; the state object and its lock.
+- **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
+
+`tests/test_terraform_ci_bootstrap.py` holds `apply_service_prefixes` equal to the services the FLIP root's resource
+types need, so the list can neither fall behind the root nor keep a service it no longer uses.
 
 ## Changing it
 
@@ -67,8 +94,9 @@ module "flip_stag_terraform_ci" {
 2. Each platform repository opens a PR moving its pinned SHA (every module block that pins it). Its plan shows the
    IAM diff; that plan is what gets reviewed.
 3. **Order matters when FLIP depends on the change.** A new role in the FLIP root must be added to
-   `managed_role_names` here and applied by the platform repositories *before* the FLIP change that creates the role,
-   or the CI apply cannot pass or re-trust it.
+   `managed_role_names`, and a resource from an AWS service the root does not use yet needs its service in
+   `apply_service_prefixes`; both are applied by the platform repository *before* the FLIP change that needs them, or
+   the CI apply is denied.
 
 ## The state bucket
 
@@ -85,8 +113,11 @@ a branch keep working; production lists a break-glass role only. SSO patterns ne
 
 ## Taking over an existing bootstrap
 
-The resource addresses are the ones [`../../ci`](../../ci) used, so existing roles, policies and buckets import with
-plain `import` blocks. A correct import plan shows **no change** to any role, inline policy, attachment or the
-boundary — only bucket-side additions (tags, lifecycle, the bucket policy) and whatever `default_tags` the caller's
-provider stamps. Anything touching a trust policy, a permission policy or a description means the module and the live
-objects disagree: stop and find out why.
+The resource addresses are the ones [`../../ci`](../../ci) used (the boundary now at `aws_iam_policy.apply_boundary[0]`),
+so existing roles, policies and buckets import with plain `import` blocks. Three differences from a bootstrap made by an
+older `ci/` are expected: the apply role's `PowerUserAccess` attachment is removed in favour of the `apply_services`
+allowlist, `flip-terraform-apply-iam` scopes its role-writing verbs to the named roles, and the plan role gains
+`deny-data-reads`. Beyond those, a correct import plan shows **no change** to any
+role, inline policy, attachment or the boundary — only bucket-side additions (tags, lifecycle, the bucket policy) and
+whatever `default_tags` the caller's provider stamps. Anything else touching a trust policy, a permission policy or a
+description means the module and the live objects disagree: stop and find out why.

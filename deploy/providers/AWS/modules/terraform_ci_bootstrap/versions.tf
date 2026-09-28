@@ -17,7 +17,7 @@
 # its own. >= 6.22 because blocked_encryption_types (state_bucket.tf) first appears
 # there (data.aws_region's `region` needs 6.0); < 7.0
 # because a major version is a deliberate bump, not something a platform init
-# should pick up unannounced. Spans aicentre-iac's lock (6.39) and FLIP's (6.66).
+# should pick up unannounced. Spans aicentre-lza-iac's lock (6.62) and FLIP's (6.66).
 terraform {
   required_version = ">= 1.13.1"
 
