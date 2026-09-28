@@ -324,6 +324,23 @@ def test_keycloak_settings_tolerate_empty_strings():
     assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
 
 
+@pytest.mark.parametrize(
+    ("raw", "enforced"),
+    [("false", False), (" Off ", False), ("true", True), ("", True), ("ture", True)],
+)
+def test_keycloak_backend_parses_enforce_mfa_fail_closed(raw, enforced, caplog):
+    """The Keycloak backend takes ENFORCE_MFA through the same fail-closed parser as Cognito.
+
+    Only an explicit "off" spelling opens the gate. Anything else keeps it on, a typo included, and the
+    Keycloak-specific warning then says why browser sign-in will lock out.
+    """
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        settings = DevSettings(AUTH_BACKEND="keycloak", ENFORCE_MFA=raw)
+
+    assert settings.ENFORCE_MFA is enforced
+    assert ("cannot complete TOTP over the password grant" in caplog.text) is enforced
+
+
 # --- the Cognito ids: required by the cognito backend only ---------------------------------
 
 
