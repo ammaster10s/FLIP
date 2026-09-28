@@ -110,6 +110,7 @@ interface MountOptions {
     project?: IProject | null;
     permissions?: string[];
     userId?: string;
+    trustAdminOf?: { id: string; code: string; name: string } | null;
 }
 
 const baseProject = (): IProject => ({
@@ -127,7 +128,8 @@ const baseProject = (): IProject => ({
 function mountProjectPage({
     project = baseProject(),
     permissions = ["CanCreateProjects", "CanUnstageProjects"],
-    userId = "owner-1"
+    userId = "owner-1",
+    trustAdminOf = null
 }: MountOptions = {}) {
     return mount(ProjectPage, {
         global: {
@@ -139,7 +141,8 @@ function mountProjectPage({
                     auth: {
                         user: {
                             userId,
-                            permissions
+                            permissions,
+                            trustAdminOf
                         }
                     }
                 }
@@ -580,6 +583,23 @@ describe("Project page (/project/[id]/index.vue)", () => {
             expect(actions?.className).toContain("items-center");
             expect(actions?.className).toContain("shrink-0");
             expect(actions?.className).not.toContain("flex-col");
+        });
+
+        test("offers no Edit Project to a Trust Admin reading a project they are not on (FLIP#1258)", () => {
+            const staged = baseProject();
+            staged.status = "STAGED";
+            const wrapper = mountProjectPage({
+                project: staged,
+                permissions: ["CanCreateProjects"],
+                userId: "trust-admin-1",
+                trustAdminOf: {
+                    id: "t1",
+                    code: "KCH",
+                    name: "KCH"
+                }
+            });
+
+            expect(wrapper.find("[data-test=edit-project-btn]").exists()).toBe(false);
         });
 
         test("hides the Edit Project label below lg and keeps an aria-label", () => {

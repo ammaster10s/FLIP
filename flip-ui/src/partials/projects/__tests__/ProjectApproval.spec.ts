@@ -511,6 +511,23 @@ describe("ProjectApproval", () => {
             }]]);
         });
 
+        test("shows a trust closed at upgrade as not approved, with no decision recorded (FLIP#1258)", async () => {
+            // Left out of a project approved before per-trust decisions: DECLINED with no decider or date.
+            const wrapper = mountProjectApproval({
+                projectApproved: true,
+                approvedTrusts: [{
+                    id: "t1",
+                    name: "UCLH",
+                    code: "UCH",
+                    status: "DECLINED"
+                }]
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test=trust-status-chip-0]").text()).toBe("Not approved");
+            expect(wrapper.find("[data-test=trust-decision-0]").text()).toBe("No decision recorded");
+        });
+
         test("says the project stays staged once every trust declined", async () => {
             const wrapper = mountProjectApproval({
                 permissions: [],
@@ -550,13 +567,22 @@ describe("ProjectApproval", () => {
                     id: "t2",
                     name: "Kings College Hospital",
                     code: "KCH",
+                    status: "DECLINED",
+                    decidedByName: "Ada Admin",
+                    decidedAt: "2026-09-01T12:00:00.000Z"
+                },
+                // Closed at upgrade, not declined: left out of the count.
+                {
+                    id: "t3",
+                    name: "Guy's and St Thomas'",
+                    code: "GST",
                     status: "DECLINED"
                 }
             ]
         });
         await flushPromises();
 
-        expect(wrapper.find("[data-test=trust-approval-count]").text()).toBe("1 of 2 approved · 1 declined");
+        expect(wrapper.find("[data-test=trust-approval-count]").text()).toBe("1 of 3 approved · 1 declined");
     });
 
     test("leaves declined out of the eyebrow when no trust declined", async () => {

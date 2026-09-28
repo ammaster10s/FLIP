@@ -81,7 +81,12 @@
                                 />
                             </template>
                         </AiGuard>
-                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
+                        <!-- A Trust Admin reading a project staged at their trust (FLIP#1258) cannot edit it. -->
+                        <AiGuard
+                            v-if="!readsOnlyAsTrustAdmin(project)"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess() || isViewer"
+                        >
                             <AiButton
                                 light
                                 data-test="edit-project-btn"
@@ -280,7 +285,7 @@ const { project } = storeToRefs(projectStore);
 // Admin-only and bypasses the per-project check on the server.
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const { isViewer, canCreateProjects } = usePermissions();
+const { isViewer, canCreateProjects, readsOnlyAsTrustAdmin } = usePermissions();
 
 // Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
 const hasImaging = computed(() => projectHasImaging(project.value));

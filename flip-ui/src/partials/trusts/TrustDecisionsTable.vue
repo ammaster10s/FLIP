@@ -43,7 +43,7 @@
                 :aria-expanded="isOpen(decision)"
                 @click="toggle(decision)"
             >
-                <span data-test="decision-rail" class="w-[3px] shrink-0" :class="TONES[decision.status].rail" aria-hidden="true" />
+                <span data-test="decision-rail" class="w-[3px] shrink-0" :class="toneOf(decision).rail" aria-hidden="true" />
                 <span :class="GRID_CLASS" class="grid flex-1 items-center gap-4 px-6 py-3.5">
                     <span class="min-w-0">
                         <span class="block text-sm font-bold truncate text-primary-600 dark:text-primary-200">
@@ -61,10 +61,10 @@
                         <span
                             data-test="decision-pill"
                             class="inline-flex items-center gap-1.5 px-2.5 py-[3px] text-xs font-medium rounded-full"
-                            :class="TONES[decision.status].pill"
+                            :class="toneOf(decision).pill"
                         >
-                            <span class="w-1.5 h-1.5 rounded-full" :class="TONES[decision.status].rail" aria-hidden="true" />
-                            {{ TONES[decision.status].label }}
+                            <span class="w-1.5 h-1.5 rounded-full" :class="toneOf(decision).rail" aria-hidden="true" />
+                            {{ toneOf(decision).label }}
                         </span>
                         <span class="block mt-1 text-[11.5px] text-gray-500 dark:text-gray-300">
                             {{ decidedBy(decision) }}
@@ -102,14 +102,15 @@
 import { ref } from "vue";
 
 import type { ITrustDecision } from "@/services/trust-service";
-import { cohortSummary, shortDate } from "@/utils/trust-decisions";
+import { closedWithoutDecision, cohortSummary, shortDate } from "@/utils/trust-decisions";
 
 defineProps<{ decisions: ITrustDecision[] }>();
 
 const GRID_CLASS = "grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.1fr)_28px]";
 
-// The Models page's status tones (model-service.ts): emerald approved, red declined.
-const TONES: Record<ITrustDecision["status"], { label: string; pill: string; rail: string }> = {
+// The Models page's status tones (model-service.ts): emerald approved, red declined, grey for a trust closed at
+// upgrade, which nobody declined.
+const TONES: Record<ITrustDecision["status"] | "CLOSED", { label: string; pill: string; rail: string }> = {
     APPROVED: {
         label: "Approved",
         pill: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
@@ -124,8 +125,14 @@ const TONES: Record<ITrustDecision["status"], { label: string; pill: string; rai
         label: "Awaiting decision",
         pill: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
         rail: "bg-amber-500"
+    },
+    CLOSED: {
+        label: "Not approved",
+        pill: "bg-gray-100 text-gray-700 dark:bg-gray-800/60 dark:text-gray-200",
+        rail: "bg-gray-400"
     }
 };
+const toneOf = (decision: ITrustDecision) => TONES[closedWithoutDecision(decision) ? "CLOSED" : decision.status];
 
 const open = ref<Set<string>>(new Set());
 const isOpen = (decision: ITrustDecision) => open.value.has(decision.projectId);
@@ -138,6 +145,7 @@ const toggle = (decision: ITrustDecision) => {
 
 // "Ada Admin · 2 Sep 2026", marked "(hub)" when the hub decided before the trust had a Trust Admin.
 const decidedBy = (decision: ITrustDecision): string => {
+    if (closedWithoutDecision(decision)) return "No decision recorded";
     const who = decision.decidedByName ? `${decision.decidedByName}${decision.decidedAs === "HUB" ? " (hub)" : ""}` : "";
 
     return [who, decision.decidedAt ? shortDate(decision.decidedAt) : ""].filter(Boolean).join(" · ");

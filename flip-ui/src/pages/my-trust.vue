@@ -52,7 +52,21 @@
                                 <span data-test="pending-count" class="font-medium text-gray-400 dark:text-gray-300">{{ pending.length }}</span>
                             </h2>
                             <div
-                                v-if="!pending.length"
+                                v-if="decisionsError"
+                                data-test="decisions-error"
+                                class="px-6 py-5 text-sm text-red-700 bg-white border border-red-200 rounded-xl dark:bg-dark-canvas dark:border-red-800 dark:text-red-300"
+                            >
+                                This Trust's project requests could not be loaded. Reload the page to try again.
+                            </div>
+                            <div
+                                v-else-if="!decisions"
+                                data-test="decisions-loading"
+                                class="py-10 bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
+                            >
+                                <AiLoader />
+                            </div>
+                            <div
+                                v-else-if="!pending.length"
                                 data-test="nothing-pending"
                                 class="flex flex-col items-center justify-center gap-2.5 px-6 py-10 text-center bg-white border border-dashed border-gray-300 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
                             >
@@ -81,12 +95,12 @@
                                 <span data-test="decided-count" class="font-medium text-gray-400 dark:text-gray-300">{{ decided.length }}</span>
                             </h2>
                             <p
-                                v-if="!decided.length"
+                                v-if="decisions && !decided.length"
                                 class="px-6 py-5 text-sm text-gray-500 bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border dark:text-gray-300"
                             >
                                 No decisions yet.
                             </p>
-                            <TrustDecisionsTable v-else :decisions="decided" />
+                            <TrustDecisionsTable v-else-if="decided.length" :decisions="decided" />
                         </section>
                     </div>
 
@@ -165,7 +179,7 @@ const derivedTrust = computed(() => {
 const trustName = computed(() => trustAdminOf.value?.name ?? "your trust");
 
 // The header's pending badge uses this key too, so a decision here updates it.
-const { data: decisions, mutate: refreshDecisions } = useSWRV<ITrustDecision[]>(
+const { data: decisions, error: decisionsError, mutate: refreshDecisions } = useSWRV<ITrustDecision[]>(
     () => (trustAdminOf.value ? `/trust/${trustAdminOf.value.id}/decisions` : null),
     () => getTrustDecisions(trustAdminOf.value!.id),
     {
@@ -205,14 +219,25 @@ const confirmDecision = async () => {
     const trustId = trustAdminOf.value.id;
     submitting.value = true;
     try {
-        await approveProject(`/step/project/${decision.projectId}/approve`, {
+        const response = await approveProject(`/step/project/${decision.projectId}/approve`, {
             approved: approve ? [trustId] : [],
             declined: approve ? [] : [trustId]
         });
-        Snackbar.success({
-            title: approve ? "Project approved" : "Project declined",
-            text: `${decision.projectName} was ${approve ? "approved" : "declined"} for ${trustName.value}.`
-        });
+        // The approval is committed even when imaging could not be started, so this is a warning, not an error.
+        const failed = (response?.details ?? []).filter(d => !d.success).map(d => d.trust);
+        if (approve && response?.successful === false && failed.length) {
+            Snackbar.warning({
+                title: "Project approved, imaging not started",
+                text: `${decision.projectName} was approved for ${trustName.value}, but imaging could not be started. `
+                    + "Ask a FLIP administrator to check the trust's connection."
+            });
+        }
+        else {
+            Snackbar.success({
+                title: approve ? "Project approved" : "Project declined",
+                text: `${decision.projectName} was ${approve ? "approved" : "declined"} for ${trustName.value}.`
+            });
+        }
         await refreshDecisions();
     } catch (e) {
         Snackbar.error({

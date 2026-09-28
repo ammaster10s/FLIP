@@ -18,7 +18,7 @@
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Models
                 </h2>
-                <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
+                <div v-if="!isViewer && !readsOnlyAsTrustAdmin(projectStore.project) && projectStore.project?.status === 'APPROVED'">
                     <AiButton
                         primary
                         data-test="add-model-btn"
@@ -146,7 +146,7 @@ const modalStore = useModalsStore();
 const projectStore = useProjectStore();
 const route = useRoute();
 
-const { isViewer } = usePermissions();
+const { isViewer, readsOnlyAsTrustAdmin } = usePermissions();
 
 const { data, error } = useSWRV(
     () => {

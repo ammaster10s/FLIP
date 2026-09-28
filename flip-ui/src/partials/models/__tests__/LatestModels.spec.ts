@@ -68,11 +68,14 @@ function setData(v: unknown) {
 interface MountOptions {
     isViewer?: boolean;
     projectStatus?: string;
+    // A Trust Admin reading a project staged at their trust that they neither own nor belong to (FLIP#1258).
+    trustAdminReader?: boolean;
 }
 
 function mountLatestModels({
     isViewer = false,
-    projectStatus = "APPROVED"
+    projectStatus = "APPROVED",
+    trustAdminReader = false
 }: MountOptions = {}) {
     return mount(LatestModels, {
         global: {
@@ -93,7 +96,14 @@ function mountLatestModels({
                                     sub: "s",
                                     email: "u@e.com"
                                 },
-                                permissions: isViewer ? [] : ["CanCreateProjects"]
+                                permissions: isViewer ? [] : ["CanCreateProjects"],
+                                trustAdminOf: trustAdminReader
+                                    ? {
+                                        id: "trust-a",
+                                        code: "DTA",
+                                        name: "Decision Trust A"
+                                    }
+                                    : null
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,
@@ -103,7 +113,11 @@ function mountLatestModels({
                             project: {
                                 id: "project-1",
                                 name: "Test",
-                                status: projectStatus
+                                status: projectStatus,
+                                ...(trustAdminReader ? {
+                                    ownerId: "someone-else",
+                                    users: []
+                                } : {})
                             }
                         }
                     }
@@ -280,6 +294,21 @@ describe("LatestModels — defensive data access", () => {
         await wrapper.find("[data-test=add-model-btn]").trigger("click");
         await flushPromises();
         expect(wrapper.exists()).toBe(true);
+    });
+
+    test("hides Create Model from a Trust Admin reading a project they are not on (FLIP#1258)", async () => {
+        // The API refuses them (can_contribute_to_project); the button must not promise otherwise.
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ trustAdminReader: true });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
     test("shows the header Create-Model button for a Researcher (CanCreateProjects only)", async () => {

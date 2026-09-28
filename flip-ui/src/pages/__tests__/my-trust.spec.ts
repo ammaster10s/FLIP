@@ -22,6 +22,7 @@ import MyTrustPage from "../my-trust.vue";
 
 const trustsRef = ref<unknown[] | undefined>(undefined);
 const decisionsRef = ref<ITrustDecision[] | undefined>(undefined);
+const decisionsErrorRef = ref<unknown>(null);
 const mutateDecisions = vi.fn();
 
 vi.mock("swrv", () => ({
@@ -39,7 +40,7 @@ vi.mock("swrv", () => ({
             return {
                 data: decisionsRef,
                 mutate: mutateDecisions,
-                error: ref(null)
+                error: decisionsErrorRef
             };
         }
         if (key === "hub-health") {
@@ -70,12 +71,13 @@ vi.mock("@/services/project-service", async (importOriginal) => {
 
 const mockSnackbarSuccess = vi.fn();
 const mockSnackbarError = vi.fn();
+const mockSnackbarWarning = vi.fn();
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
         success: (...args: unknown[]) => mockSnackbarSuccess(...args),
         error: (...args: unknown[]) => mockSnackbarError(...args),
         show: vi.fn(),
-        warning: vi.fn()
+        warning: (...args: unknown[]) => mockSnackbarWarning(...args)
     }
 }));
 
@@ -153,6 +155,7 @@ function mountPage(trustAdminOf: typeof TRUST_ADMIN_OF | null = TRUST_ADMIN_OF) 
 
 beforeEach(() => {
     vi.clearAllMocks();
+    decisionsErrorRef.value = null;
     trustsRef.value = [
         {
             id: "dta",
@@ -279,6 +282,21 @@ describe("My Trust", () => {
         expect(row.text()).toContain("Ada Admin");
     });
 
+    it("shows a trust closed at upgrade as not approved rather than declined", async () => {
+        decisionsRef.value = [pending({
+            projectId: "p9",
+            projectName: "Legacy project",
+            status: "DECLINED",
+            projectStatus: "APPROVED"
+        })];
+        const wrapper = mountPage();
+        await nextTick();
+
+        const row = wrapper.find("[data-test='decision-row']");
+        expect(row.find("[data-test='decision-pill']").text()).toBe("Not approved");
+        expect(row.text()).toContain("No decision recorded");
+    });
+
     it("expands a decided row to its description and a link to the query", async () => {
         const wrapper = mountPage();
         await nextTick();
@@ -335,5 +353,45 @@ describe("My Trust", () => {
         expect(empty.text()).toContain("New project requests for this Trust will appear here.");
         expect(wrapper.find("[data-test='pending-list']").exists()).toBe(false);
         expect(wrapper.find("[data-test='pending-count']").text()).toBe("0");
+    });
+
+    it("does not claim an empty queue while the decisions are still loading", async () => {
+        decisionsRef.value = undefined;
+        const wrapper = mountPage();
+        await nextTick();
+
+        expect(wrapper.find("[data-test='nothing-pending']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='decisions-loading']").exists()).toBe(true);
+    });
+
+    it("says the decisions could not be loaded instead of showing an empty queue", async () => {
+        decisionsRef.value = undefined;
+        decisionsErrorRef.value = new Error("403");
+        const wrapper = mountPage();
+        await nextTick();
+
+        expect(wrapper.find("[data-test='nothing-pending']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='decisions-error']").text()).toContain("could not be loaded");
+    });
+
+    it("warns when approval could not start imaging at this trust", async () => {
+        mockApproveProject.mockResolvedValue({
+            projectStatus: "APPROVED",
+            successful: false,
+            details: [{
+                trust: "Decision Trust A",
+                success: false,
+                message: "boom"
+            }]
+        });
+        const wrapper = mountPage();
+        await nextTick();
+
+        await wrapper.find("[data-test='approve-btn']").trigger("click");
+        await wrapper.find("[data-test='confirm-modal-btn']").trigger("click");
+        await flushPromises();
+
+        expect(mockSnackbarWarning).toHaveBeenCalled();
+        expect(mockSnackbarSuccess).not.toHaveBeenCalled();
     });
 });

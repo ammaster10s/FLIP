@@ -97,7 +97,7 @@
                                 :title="decisionTitle(trust)"
                             >
                                 <icon-ph-check-bold v-if="trust.status === 'APPROVED'" class="w-3.5 h-3.5" aria-hidden="true" />
-                                <icon-ph-x-bold v-else-if="trust.status === 'DECLINED'" class="w-3.5 h-3.5" aria-hidden="true" />
+                                <icon-ph-x-bold v-else-if="trust.status === 'DECLINED' && !closedWithoutDecision(trust)" class="w-3.5 h-3.5" aria-hidden="true" />
                                 {{ chipFor(trust).label }}
                             </span>
                         </div>
@@ -136,6 +136,7 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import type { IProjectTrust, ITrustDecisions, TrustApprovalStatus } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
+import { closedWithoutDecision } from "@/utils/trust-decisions";
 
 type Decision = Exclude<TrustApprovalStatus, "PENDING">;
 
@@ -161,7 +162,14 @@ const STATUS_CHIP: Record<TrustApprovalStatus, { label: string; class: string }>
     }
 };
 
-const chipFor = (trust: IProjectTrust) => STATUS_CHIP[trust.status];
+// A trust closed at upgrade was never declined (see closedWithoutDecision), so it is not shown as one.
+const NOT_APPROVED_CHIP = {
+    label: "Not approved",
+    class: "bg-gray-100 text-gray-700 dark:bg-gray-800/60 dark:text-gray-200"
+};
+
+const chipFor = (trust: IProjectTrust) =>
+    (closedWithoutDecision(trust) ? NOT_APPROVED_CHIP : STATUS_CHIP[trust.status]);
 
 const CHOICE_BASE_CLASS =
     "relative inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold border transition "
@@ -188,7 +196,7 @@ const sortedTrusts = computed(() =>
 // "did everyone approve?" without scrolling the list.
 const countLabel = computed(() => {
     const approved = props.approvedTrusts.filter(t => t.status === "APPROVED").length;
-    const declined = props.approvedTrusts.filter(t => t.status === "DECLINED").length;
+    const declined = props.approvedTrusts.filter(t => t.status === "DECLINED" && !closedWithoutDecision(t)).length;
     const label = `${approved} of ${props.approvedTrusts.length} approved`;
 
     return declined ? `${label} · ${declined} declined` : label;
@@ -272,6 +280,7 @@ const decisionLine = (trust: IProjectTrust): string => {
     if (trust.status === "PENDING") {
         return trust.hasTrustAdmin && !rowCanDecide(trust) ? `Awaiting ${label(trust)}'s Trust Admin` : "Awaiting decision";
     }
+    if (closedWithoutDecision(trust)) return "No decision recorded";
 
     const site = trust.decidedAs === "SITE" ? ` (${label(trust)}'s Trust Admin)` : "";
     const by = trust.decidedByName ? ` by ${trust.decidedByName}${site}` : "";
@@ -286,6 +295,7 @@ const decisionTitle = (trust: IProjectTrust): string => {
             ? `${trust.name} is awaiting a decision by its Trust Admin`
             : `${trust.name} is awaiting a decision`;
     }
+    if (closedWithoutDecision(trust)) return `${trust.name} was not approved; no decision was recorded`;
 
     const by = trust.decidedByName ? ` by ${trust.decidedByName}` : "";
     const on = trust.decidedAt ? ` on ${new Date(trust.decidedAt).toLocaleString()}` : "";

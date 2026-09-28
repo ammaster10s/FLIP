@@ -13,6 +13,16 @@
 
 import type { ITrustCohortCount } from "@/services/trust-service";
 
+/**
+ * A trust closed at upgrade (FLIP#1258): pending on a project approved before trusts decided for themselves,
+ * so it was closed as DECLINED with no decider and no date. Nobody declined it; it reads "Not approved".
+ */
+export const closedWithoutDecision = (decision: {
+    status: string;
+    decidedByName?: string | null;
+    decidedAt?: string | null;
+}): boolean => decision.status === "DECLINED" && !decision.decidedByName && !decision.decidedAt;
+
 /** "25 Sep 2026" — the My Trust page's date format (FLIP#1258). */
 export const shortDate = (iso: string): string =>
     new Date(iso).toLocaleDateString("en-GB", {
