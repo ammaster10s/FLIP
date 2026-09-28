@@ -281,9 +281,11 @@ Project Approval
 
 Once staged for approval, it is the responsibility of the FLIP Central Hub Admin to complete the approval process **offline** and update the FLIP platform with the outcome.
 
+The 'Trust Approval' section of the project page shows each Trust as *Pending*, *Approved* or *Declined*, with who made the decision and when.
+
 .. note::
 
-   Following approval, any Trusts which have declined to participate in the project will be unavailable and excluded from model training.
+   Trusts which have declined to participate in the project are excluded from the imaging import and from model training. If every Trust declines, the project stays staged: liaise with your FLIP administrator to un-stage it, amend it, and stage it again.
 
 Imaging Project Status
 ======================
