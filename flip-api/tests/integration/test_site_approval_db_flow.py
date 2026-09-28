@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 """Who decides a trust's participation in a project, checked against real role rows (FLIP#1258).
 
 A trust with at least one Trust Admin decides for itself: only its Trust Admins may approve or decline there, and
