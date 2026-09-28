@@ -16,11 +16,10 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_trust_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.trust_authority import decision_maker_for
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import TrustTask
-from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.trust import (
     ICreateImagingProject,
     ITrust,
@@ -65,17 +64,11 @@ async def start_project_imaging_creation(
     Returns:
         dict[str, str]: Success message indicating the task has been queued.
     """
-    # Permissions check — scoped to THIS trust (FLIP#1258).
-    #
-    # A global CAN_APPROVE_PROJECTS here would let a hub administrator create XNAT projects and
-    # queue imaging pulls at a trust that never approved the project, bypassing the site-scoped
-    # check on the approval endpoint itself. The trust is named in the body, so the authority is
-    # checked against it.
-    if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust.id, db):
-        logger.error(
-            f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}: "
-            f"CAN_APPROVE_FOR_TRUST is required at that trust, and global grants do not satisfy it"
-        )
+    # Permissions check — the same per-trust rule as the approval endpoint (FLIP#1258): a trust with a
+    # Trust Admin is decided by them, one without by the hub admin. Checked against the trust named in the
+    # body, so a caller cannot start imaging at a trust they could not have decided.
+    if decision_maker_for(user_id, trust.id, db) is None:
+        logger.error(f"User {user_id} may not start imaging creation for project {project_id} at trust {trust.id}")
         raise HTTPException(
             status_code=403,
             detail=f"User with ID: {user_id} was unable to start XNAT project creation",

@@ -37,6 +37,7 @@ from flip_api.domain.interfaces.project import (
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import (
+    DecisionMaker,
     ProjectStatus,
     TaskStatus,
     TrustApprovalStatus,
@@ -583,16 +584,27 @@ class TestGetTrustsApprovalStatusForProject:
         decided_at_a = datetime(2026, 3, 19, 10, 30, 0)
         mock_results = [
             # Joined-and-grouped by project_id; first column is project_id.
-            (project_id, trust_a, "Trust A", "TA", TrustApprovalStatus.APPROVED, decider, "Ada", decided_at_a),
+            (project_id, trust_a, "Trust A", "TA", TrustApprovalStatus.APPROVED, decider, "Ada", decided_at_a, "SITE"),
             # An approval predating FLIP#1318 has a date but no decider.
-            (project_id, trust_b, "Trust B", "TB", TrustApprovalStatus.APPROVED, None, None, decided_at_a),
+            (project_id, trust_b, "Trust B", "TB", TrustApprovalStatus.APPROVED, None, None, decided_at_a, "HUB"),
             # `code` may be None on legacy rows; a PENDING trust has no decider or date.
-            (project_id, trust_c, "Trust C", None, TrustApprovalStatus.PENDING, None, None, None),
+            (project_id, trust_c, "Trust C", None, TrustApprovalStatus.PENDING, None, None, None, None),
         ]
 
         mock_db_session.exec.return_value.all.return_value = mock_results
 
-        result = get_trusts_approval_status_for_project(project_id, mock_db_session)
+        with patch(
+            "flip_api.project_services.services.project_services.trusts_with_admin", return_value={trust_a}
+        ) as mock_trusts_with_admin:
+            result = get_trusts_approval_status_for_project(project_id, mock_db_session)
+
+        # Which trusts decide for themselves is asked once, for every trust on the page (FLIP#1258).
+        mock_trusts_with_admin.assert_called_once_with({trust_a, trust_b, trust_c}, mock_db_session)
+        assert [(t.has_trust_admin, t.decided_as) for t in result] == [
+            (True, DecisionMaker.SITE),
+            (False, DecisionMaker.HUB),
+            (False, None),
+        ]
 
         assert len(result) == 3
         assert all(isinstance(t, IApprovedTrust) for t in result)

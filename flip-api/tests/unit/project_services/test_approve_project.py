@@ -18,9 +18,8 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from flip_api.db.models.main_models import Projects, Trust
-from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
 from flip_api.project_services.services.project_services import (
     InvalidTrustDecisionsError,
@@ -42,6 +41,13 @@ APPROVED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, a
 STAGED_OUTCOME = TrustDecisionOutcome(project_status=ProjectStatus.STAGED, approved_trust_ids=[])
 
 
+@pytest.fixture(autouse=True)
+def no_trust_has_an_admin():
+    """By default every trust is hub-run; the per-trust authority itself is covered in the integration suite."""
+    with patch("flip_api.project_services.approve_project.trusts_with_admin", return_value=set()) as mock:
+        yield mock
+
+
 @pytest.fixture
 def mock_payload():
     payload = MagicMock(spec=ApproveProjectBodyPayload)
@@ -61,9 +67,9 @@ def mock_staged_project():
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=APPROVED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_success(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,
@@ -90,10 +96,9 @@ def test_approve_project_endpoint_success(
 
     # Assert
     # Authority is checked against EACH trust named in the payload, declined ones included, never once globally.
-    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == [*TEST_TRUST_IDS, DECLINED_TRUST_ID]
-    for call in mock_has_trust_permissions.call_args_list:
+    assert [call.args[1] for call in mock_decision_maker_for.call_args_list] == [*TEST_TRUST_IDS, DECLINED_TRUST_ID]
+    for call in mock_decision_maker_for.call_args_list:
         assert call.args[0] == TEST_USER_ID
-        assert call.args[1] == [PermissionRef.CAN_APPROVE_FOR_TRUST]
 
     mock_db_session.get.assert_called_once_with(Projects, TEST_PROJECT_ID)
     decisions = mock_record_trust_decisions.call_args.args[1]
@@ -106,9 +111,9 @@ def test_approve_project_endpoint_success(
 
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=STAGED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_returns_no_trusts_while_the_project_stays_staged(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,
     mock_db_session,
@@ -144,9 +149,9 @@ def test_approve_project_endpoint_returns_no_trusts_while_the_project_stays_stag
     ],
 )
 @patch("flip_api.project_services.approve_project.get_trusts")
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_maps_refused_decisions_to_400(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_get_trusts,
     mock_db_session,
     mock_payload,
@@ -177,9 +182,9 @@ def test_approve_project_endpoint_maps_refused_decisions_to_400(
     "flip_api.project_services.approve_project.record_trust_decisions",
     return_value=TrustDecisionOutcome(project_status=ProjectStatus.APPROVED, approved_trust_ids=[]),
 )
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_never_asks_get_trusts_for_an_empty_list(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,
     mock_db_session,
@@ -212,10 +217,10 @@ def test_approve_payload_declined_defaults_to_empty():
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_trust_permissions")
-def test_approve_project_endpoint_no_permission(mock_has_trust_permissions, mock_logger, mock_db_session, mock_payload):
+@patch("flip_api.project_services.approve_project.decision_maker_for")
+def test_approve_project_endpoint_no_permission(mock_decision_maker_for, mock_logger, mock_db_session, mock_payload):
     # Arrange
-    mock_has_trust_permissions.return_value = False
+    mock_decision_maker_for.return_value = None
 
     # Act & Assert
     with pytest.raises(HTTPException) as exc_info:
@@ -228,27 +233,26 @@ def test_approve_project_endpoint_no_permission(mock_has_trust_permissions, mock
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert f"User with ID: {TEST_USER_ID} was unable to approve this project" == exc_info.value.detail
-    # Every trust was checked, and every check asked for the TRUST-SCOPED permission — the
-    # global CAN_APPROVE_PROJECTS is no longer consulted anywhere on this path.
-    assert mock_has_trust_permissions.call_count == len(TEST_TRUST_IDS)
-    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == TEST_TRUST_IDS
-    for call in mock_has_trust_permissions.call_args_list:
+    # Every named trust was checked, one call each, by the per-trust rule (FLIP#1258).
+    assert mock_decision_maker_for.call_count == len(TEST_TRUST_IDS)
+    assert [call.args[1] for call in mock_decision_maker_for.call_args_list] == TEST_TRUST_IDS
+    for call in mock_decision_maker_for.call_args_list:
         assert call.args[0] == TEST_USER_ID
-        assert call.args[1] == [PermissionRef.CAN_APPROVE_FOR_TRUST]
     # The response body names no trust; which trusts the caller lacks authority over is
     # federation topology, and echoing it would make this endpoint a role-probe.
     for trust_id in TEST_TRUST_IDS:
         assert str(trust_id) not in str(exc_info.value.detail)
+    # ...but the hub's own log does, so an operator can see which trusts refused.
     mock_logger.error.assert_called_once()
-    assert "CAN_APPROVE_FOR_TRUST" in mock_logger.error.call_args.args[0]
+    assert all(str(trust_id) in mock_logger.error.call_args.args[0] for trust_id in TEST_TRUST_IDS)
 
 
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=APPROVED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions")
+@patch("flip_api.project_services.approve_project.decision_maker_for")
 def test_partial_authority_approves_nothing(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,
     mock_logger,
@@ -267,7 +271,7 @@ def test_partial_authority_approves_nothing(
     """
     mock_db_session.get.return_value = mock_staged_project
     # Authority over the first trust only.
-    mock_has_trust_permissions.side_effect = [True, False]
+    mock_decision_maker_for.side_effect = [DecisionMaker.HUB, None]
 
     with pytest.raises(HTTPException) as exc_info:
         approve_project_endpoint(
@@ -286,9 +290,9 @@ def test_partial_authority_approves_nothing(
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=STAGED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_every_named_trust_is_authorised_at_that_trust(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,
     mock_logger,
@@ -312,7 +316,7 @@ def test_every_named_trust_is_authorised_at_that_trust(
         db=mock_db_session,
     )
 
-    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == TEST_TRUST_IDS
+    assert [call.args[1] for call in mock_decision_maker_for.call_args_list] == TEST_TRUST_IDS
 
 
 @patch("flip_api.project_services.approve_project.logger")
@@ -351,9 +355,9 @@ def test_empty_trust_list_denies_rather_than_fails_open(
 
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=STAGED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=False)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=None)
 def test_declining_needs_authority_at_the_trust(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_logger,
     mock_db_session,
@@ -374,14 +378,14 @@ def test_declining_needs_authority_at_the_trust(
         )
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-    assert [call.args[2] for call in mock_has_trust_permissions.call_args_list] == [DECLINED_TRUST_ID]
+    assert [call.args[1] for call in mock_decision_maker_for.call_args_list] == [DECLINED_TRUST_ID]
     mock_record_trust_decisions.assert_not_called()
 
 
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=STAGED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_a_decline_only_call_is_not_refused_as_empty(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_db_session,
     mock_staged_project,
@@ -404,9 +408,9 @@ def test_a_decline_only_call_is_not_refused_as_empty(
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_project_not_found(
-    mock_has_trust_permissions,  # Patched with return_value=True
+    mock_decision_maker_for,  # Patched with return_value=True
     mock_logger,
     mock_db_session,
     mock_payload,
@@ -430,9 +434,9 @@ def test_approve_project_endpoint_project_not_found(
 
 
 @patch("flip_api.project_services.approve_project.logger")
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_project_not_staged(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_logger,
     mock_db_session,
     mock_payload,
@@ -459,9 +463,9 @@ def test_approve_project_endpoint_project_not_staged(
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions")
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_commit_status_fails(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,
@@ -492,9 +496,9 @@ def test_approve_project_endpoint_commit_status_fails(
 @patch("flip_api.project_services.approve_project.logger")
 @patch("flip_api.project_services.approve_project.get_trusts")
 @patch("flip_api.project_services.approve_project.record_trust_decisions", return_value=APPROVED_OUTCOME)
-@patch("flip_api.project_services.approve_project.has_trust_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.decision_maker_for", return_value=DecisionMaker.HUB)
 def test_approve_project_endpoint_fetch_trusts_exec_fails(
-    mock_has_trust_permissions,
+    mock_decision_maker_for,
     mock_record_trust_decisions,
     mock_get_trusts,  # This is the get_trusts function
     mock_logger,

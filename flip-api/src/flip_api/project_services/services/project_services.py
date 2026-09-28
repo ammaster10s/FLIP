@@ -11,7 +11,7 @@
 #
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
@@ -20,6 +20,8 @@ from fastapi import HTTPException
 from psycopg2 import DatabaseError
 from sqlalchemy import delete, desc, func
 from sqlmodel import Session, col, or_, select
+
+from flip_api.auth.trust_authority import trusts_with_admin
 
 # Assume these models and schemas are defined in your project
 from flip_api.db.models.main_models import (
@@ -49,6 +51,7 @@ from flip_api.domain.schemas.projects import (
     ProjectDetails,
 )
 from flip_api.domain.schemas.status import (
+    DecisionMaker,
     ProjectStatus,
     TaskStatus,
     TrustApprovalStatus,
@@ -477,7 +480,7 @@ def get_trusts_approval_status_for_projects(
     # LEFT JOIN UserProfile: a decider with no profile row (or no decider — PENDING, or an approval
     # predating FLIP#1318) still lists the trust, with no name.
     rows = session.exec(
-        select(  # type: ignore[call-overload]
+        select(  # type: ignore[call-overload, misc]  # nine columns exceed sqlmodel's typed overloads
             ProjectTrustIntersect.project_id,
             Trust.id,
             Trust.name,
@@ -486,14 +489,18 @@ def get_trusts_approval_status_for_projects(
             ProjectTrustIntersect.decided_by,
             UserProfile.name,
             ProjectTrustIntersect.decided_at,
+            ProjectTrustIntersect.decided_as,
         )
         .join(Trust, col(Trust.id) == col(ProjectTrustIntersect.trust_id))
         .join(UserProfile, col(UserProfile.user_id) == col(ProjectTrustIntersect.decided_by), isouter=True)
         .where(col(ProjectTrustIntersect.project_id).in_(project_ids))
     ).all()
 
+    # Which of these trusts decide for themselves (FLIP#1258), so the UI can show the hub a read-only row for them.
+    site_run = trusts_with_admin({row[1] for row in rows if row[1] is not None}, session)
+
     by_project: dict[UUID, list[IApprovedTrust]] = {}
-    for project_id, trust_id, trust_name, trust_code, status, decided_by, decider_name, decided_at in rows:
+    for project_id, trust_id, trust_name, trust_code, status, decided_by, decider_name, decided_at, decided_as in rows:
         if project_id is None or trust_id is None:
             continue
         by_project.setdefault(project_id, []).append(
@@ -506,6 +513,8 @@ def get_trusts_approval_status_for_projects(
                 decided_by_name=decider_name or None,
                 # `Z` suffix so the browser treats the naive UTC value as UTC.
                 decided_at=decided_at.isoformat(timespec="milliseconds") + "Z" if decided_at else None,
+                decided_as=decided_as,
+                has_trust_admin=trust_id in site_run,
             )  # type: ignore[call-arg]
         )
 
@@ -649,6 +658,8 @@ def record_trust_decisions(
     db: Session,
     project_approval: IProjectApproval,
     user_id: UUID,
+    *,
+    decided_as: Mapping[UUID, DecisionMaker] | None = None,
 ) -> TrustDecisionOutcome:
     """
     Records per-trust decisions on a staged project, and approves the project once every trust is decided and at
@@ -671,6 +682,8 @@ def record_trust_decisions(
         db (Session): SQLModel session for database operations.
         project_approval (IProjectApproval): The project and the trusts to approve and to decline.
         user_id (UUID): The ID of the user making the decisions.
+        decided_as (Mapping[UUID, DecisionMaker] | None): Whether the hub or the site decided each named trust
+            (FLIP#1258); a trust missing from it is recorded with no decider kind.
 
     Returns:
         TrustDecisionOutcome: The project's status after the decisions, and its approved trusts once APPROVED.
@@ -726,6 +739,7 @@ def record_trust_decisions(
         row.status = decision
         row.decided_by = user_id
         row.decided_at = decided_at
+        row.decided_as = (decided_as or {}).get(trust_id)
         db.add(row)
         audit_project_action(
             project_id=project_id,

@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.status import DecisionMaker
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.trusts_services.start_project_imaging_creation import (
     queue_imaging_creation,
@@ -58,15 +59,15 @@ def mock_get_session():
 
 @pytest.fixture
 def mock_has_permissions():
-    """The route now authorises against the trust named in the body (FLIP#1258).
+    """The route authorises the trust named in the body by the approval endpoint's per-trust rule (FLIP#1258).
 
     Fixture kept as ``has_permissions`` for the existing call sites; the seam under it is
-    the trust-scoped check, so every existing test runs against the real contract.
+    ``decision_maker_for``, patched to allow (HUB) unless a test sets it to None.
     """
     with mock.patch(
-        "flip_api.trusts_services.start_project_imaging_creation.has_trust_permissions"
+        "flip_api.trusts_services.start_project_imaging_creation.decision_maker_for"
     ) as mock_has_permissions:
-        mock_has_permissions.return_value = True
+        mock_has_permissions.return_value = DecisionMaker.HUB
         yield mock_has_permissions
 
 
@@ -124,7 +125,7 @@ def mock_get_cognito_users():
 @pytest.mark.asyncio
 async def test_permission_failure(mock_request, mock_get_session, mock_has_permissions):
     # Simulate permission denial
-    mock_has_permissions.return_value = False
+    mock_has_permissions.return_value = None
 
     with pytest.raises(HTTPException) as exc_info:
         await start_project_imaging_creation(

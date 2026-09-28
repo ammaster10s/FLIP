@@ -15,15 +15,14 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_trust_permissions
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.trust_authority import decision_maker_for, trusts_with_admin
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Projects
-from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus
 from flip_api.project_services.services.project_services import (
     InvalidTrustDecisionsError,
     ProjectNotStagedError,
@@ -67,27 +66,25 @@ def approve_project_endpoint(
         is still STAGED).
 
     Raises:
-        HTTPException: If the user does not have permission to approve projects, if the project does not exist,
-                       or if there are validation errors.
+        HTTPException: 403 if the call names no trust, or a trust the caller may not decide (the trust's Trust
+                       Admin decides a trust that has one, the hub admin one that does not); 404 if the project
+                       does not exist; 400 on validation errors.
     """
     logger.debug(f"Attempting to approve project: {project_id} by user: {user_id}")
 
     # Every trust the call decides for, approving or declining: both are the site's decision.
     trust_ids = [*payload.trusts, *payload.declined]
 
-    # 1. Check user permissions — per trust, not platform-wide (FLIP#1258).
+    # 1. Check user permissions — per trust (FLIP#1258).
     #
-    # Approval is the site's decision to expose ITS OWN patients' data to a project, so the
-    # authority has to sit with the site. This previously accepted a single global
-    # CAN_APPROVE_PROJECTS grant, which meant a Central Hub administrator could approve on
-    # behalf of every trust in the federation — the hub deciding what each site releases.
-    # A trust-scoped CAN_APPROVE_FOR_TRUST at each named trust is now required instead, and
-    # `has_trust_permissions` ignores global grants, so hub-wide Admin confers nothing here.
-    # Declining is held to the same grant: a decline is as much the site's call as an approval.
+    # A trust with a Trust Admin decides for itself: approving or declining there takes
+    # CAN_APPROVE_FOR_TRUST at that trust, and the hub admin's global grant does not satisfy it.
+    # A trust with none is decided by the hub admin (CAN_APPROVE_PROJECTS), as before site
+    # approval existed. Each decision records which of the two made it.
     #
-    # All-or-nothing: one unauthorised trust in the call refuses the whole call. A partial
+    # All-or-nothing: one trust the caller may not decide refuses the whole call. A partial
     # decision would be worse than a refusal — the caller gets a success for a request that
-    # was only partly carried out, and some sites are decided by someone with no authority
+    # was only partly carried out, and some trusts are decided by someone with no authority
     # over them. `record_trust_decisions` commits the set in a single transaction for the same reason.
     #
     # The empty case is handled explicitly because this reads as "deny if any named trust is
@@ -101,19 +98,20 @@ def approve_project_endpoint(
             detail=f"User with ID: {user_id} was unable to approve this project",
         )
 
-    unauthorised = [
-        trust_id
-        for trust_id in trust_ids
-        if not has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], trust_id, db)
-    ]
+    site_run = trusts_with_admin(trust_ids, db)
+    decided_as: dict[UUID, DecisionMaker] = {}
+    unauthorised = []
+    for trust_id in trust_ids:
+        maker = decision_maker_for(user_id, trust_id, db, has_admin=trust_id in site_run)
+        if maker is None:
+            unauthorised.append(trust_id)
+        else:
+            decided_as[trust_id] = maker
     if unauthorised:
         # The detail names no trust: which trusts a user lacks authority over is not the
         # caller's business, and echoing the list would let one probe the federation's
         # role assignments. The trusts go to the hub's log instead.
-        logger.error(
-            f"User {user_id} may not decide project {project_id} for trust(s) {unauthorised}: "
-            f"CAN_APPROVE_FOR_TRUST is required at each trust, and global grants do not satisfy it"
-        )
+        logger.error(f"User {user_id} may not decide project {project_id} for trust(s) {unauthorised}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"User with ID: {user_id} was unable to approve this project",
@@ -144,7 +142,7 @@ def approve_project_endpoint(
         )
 
     try:
-        outcome = record_trust_decisions(db, project_approval, user_id)
+        outcome = record_trust_decisions(db, project_approval, user_id, decided_as=decided_as)
 
         # get_trusts with no ids returns every trust, so an empty list must never reach it.
         if outcome.project_status != ProjectStatus.APPROVED or not outcome.approved_trust_ids:

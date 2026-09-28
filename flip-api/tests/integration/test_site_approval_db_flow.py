@@ -9,20 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+"""Who decides a trust's participation in a project, checked against real role rows (FLIP#1258).
 
-"""Approval authority is the SITE's decision, checked against real role rows (FLIP#1258).
+A trust with at least one Trust Admin decides for itself: only its Trust Admins may approve or decline there, and
+the hub admin may not. A trust with none is decided by the hub admin, as before site approval existed. Every
+recorded decision says which of the two made it (``decided_as``).
 
-The primitive (``has_trust_permissions``) is covered in ``test_auth_permissions_db_flow.py``.
-What these prove is the *wiring*: that the approval endpoint consults it per named trust, and
-that the platform-wide ``CAN_APPROVE_PROJECTS`` grant a Central Hub administrator holds no
-longer approves anything. That wiring is the whole substance of #1258 — the machinery already
-existed and the endpoint simply never used it, so a hub admin could approve on behalf of every
-trust in the federation.
-
-Real Postgres via the shared session fixture, and real ``user_role`` rows: the check walks
-``user_role`` → ``role_permission`` → ``permission`` with a scope predicate, which a mocked
-session cannot exercise. ``test_has_trust_permissions_ignores_global_admin_grant`` proves the
-predicate in isolation; these prove the endpoint reaches it.
+Real Postgres via the shared session fixture, and real ``user_role`` rows: the checks walk ``user_role`` →
+``role_permission`` → ``permission`` with a scope predicate, which a mocked session cannot exercise.
 """
 
 from uuid import uuid4
@@ -34,17 +28,13 @@ from sqlmodel import select
 from flip_api.db.models.main_models import ProjectTrustIntersect
 from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
 
 
 @pytest.fixture
 def staged_project(session, user_factory, project_factory, trust_factory, project_trust_intersect_factory):
-    """A STAGED project with two pending intersects — the precondition for approval.
-
-    Built here rather than imported from ``test_project_db_flow``, whose fixture is local to
-    that module; duplicating six lines beats coupling two files' fixtures together.
-    """
+    """A STAGED project with two pending intersects — the precondition for a decision."""
     owner = user_factory()
     project = project_factory.build(owner_id=owner.id, status=ProjectStatus.STAGED, deleted=False)
     trusts = [trust_factory.build(), trust_factory.build()]
@@ -54,9 +44,11 @@ def staged_project(session, user_factory, project_factory, trust_factory, projec
         session.add(trust)
     session.flush()
     for trust in trusts:
-        session.add(project_trust_intersect_factory.build(
+        session.add(
+            project_trust_intersect_factory.build(
                 project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.PENDING
-            ))
+            )
+        )
     session.commit()
 
     return {"project": project, "trusts": trusts}
@@ -79,183 +71,182 @@ def _grant(user_id, role, trust_id=None):
     return UserRole(user_id=user_id, role_id=role.value, trust_id=trust_id)
 
 
-def test_hub_admin_global_grant_cannot_approve(session, staged_project):
-    """The #1258 regression: a platform-wide Admin grant approves NOTHING.
-
-    Before this change the endpoint accepted ``CAN_APPROVE_PROJECTS``, which Admin holds
-    globally — so a Central Hub administrator could approve every trust's participation,
-    deciding what each site released. Admin is seeded with all *global* permissions and
-    deliberately not with the trust-scoped ones, so this must now be refused.
-    """
-    admin_id = uuid4()
-    session.add(_grant(admin_id, RoleRef.ADMIN))
+def _add(session, *rows):
+    for row in rows:
+        session.add(row)
     session.commit()
-    project = staged_project["project"]
 
+
+def _refused(session, project, payload, user_id) -> int:
     with pytest.raises(HTTPException) as exc_info:
-        approve_project_endpoint(
-            project_id=project.id,
-            payload=_payload(staged_project["trusts"]),
-            user_id=admin_id,
-            db=session,
-        )
-
-    assert exc_info.value.status_code == 403
-    # And nothing was approved: the refusal precedes the write.
-    session.refresh(project)
-    assert project.status == ProjectStatus.STAGED
+        approve_project_endpoint(project.id, payload, user_id, session)
+    return exc_info.value.status_code
 
 
-def test_trust_admin_approves_at_their_own_trust(session, staged_project):
-    """A Trust Admin may approve for the trust they own — the point of the change.
+def _all_pending(session, project) -> bool:
+    return {row.status for row in _decisions(session, project).values()} == {TrustApprovalStatus.PENDING}
 
-    The other trust is still pending, so the decision is recorded and the project stays STAGED (FLIP#1318).
-    """
-    owner_id = uuid4()
-    own_trust, other = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=own_trust.id))
-    session.commit()
+
+def test_hub_admin_decides_a_trust_with_no_trust_admin(session, staged_project):
+    admin_id = uuid4()
+    _add(session, _grant(admin_id, RoleRef.ADMIN))
+    project = staged_project["project"]
+    first, _second = staged_project["trusts"]
+
+    approve_project_endpoint(project.id, _payload([first]), admin_id, session)
+
+    row = _decisions(session, project)[first.id]
+    assert (row.status, row.decided_as, row.decided_by) == (TrustApprovalStatus.APPROVED, DecisionMaker.HUB, admin_id)
+
+
+def test_hub_admin_cannot_decide_a_trust_that_has_a_trust_admin(session, staged_project):
+    admin_id, trust_admin = uuid4(), uuid4()
+    site_trust, _other = staged_project["trusts"]
+    _add(session, _grant(admin_id, RoleRef.ADMIN), _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id))
     project = staged_project["project"]
 
-    result = approve_project_endpoint(
-        project_id=project.id,
-        payload=_payload([own_trust]),
-        user_id=owner_id,
-        db=session,
+    assert _refused(session, project, _payload([site_trust]), admin_id) == 403
+    assert _all_pending(session, project)
+
+
+def test_trust_admin_decides_their_trust_as_site(session, staged_project):
+    trust_admin = uuid4()
+    site_trust, _other = staged_project["trusts"]
+    _add(session, _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id))
+    project = staged_project["project"]
+
+    approve_project_endpoint(project.id, _payload([site_trust]), trust_admin, session)
+
+    row = _decisions(session, project)[site_trust.id]
+    assert (row.status, row.decided_as, row.decided_by) == (
+        TrustApprovalStatus.APPROVED,
+        DecisionMaker.SITE,
+        trust_admin,
     )
 
-    assert result == []
+
+def test_trust_admin_declines_their_trust_as_site(session, staged_project):
+    trust_admin = uuid4()
+    site_trust, _other = staged_project["trusts"]
+    _add(session, _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id))
+    project = staged_project["project"]
+
+    approve_project_endpoint(project.id, _payload([], declined=[site_trust]), trust_admin, session)
+
+    row = _decisions(session, project)[site_trust.id]
+    assert (row.status, row.decided_as) == (TrustApprovalStatus.DECLINED, DecisionMaker.SITE)
+
+
+def test_trust_admin_cannot_decide_a_hub_run_trust(session, staged_project):
+    trust_admin = uuid4()
+    site_trust, hub_trust = staged_project["trusts"]
+    _add(session, _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id))
+
+    assert _refused(session, staged_project["project"], _payload([hub_trust]), trust_admin) == 403
+
+
+def test_trust_admin_cannot_decide_another_trusts_decision(session, staged_project):
+    """Authority at trust A says nothing about trust B, even when B decides for itself too."""
+    admin_a, admin_b = uuid4(), uuid4()
+    a, b = staged_project["trusts"]
+    _add(
+        session,
+        _grant(admin_a, RoleRef.TRUST_ADMIN, trust_id=a.id),
+        _grant(admin_b, RoleRef.TRUST_ADMIN, trust_id=b.id),
+    )
+    project = staged_project["project"]
+
+    assert _refused(session, project, _payload([], declined=[b]), admin_a) == 403
+    assert _all_pending(session, project)
+
+
+def test_one_trust_the_caller_may_not_decide_refuses_the_whole_call(session, staged_project):
+    """All-or-nothing: a call deciding a trust the caller holds no authority over writes nothing at all."""
+    trust_admin = uuid4()
+    own, other = staged_project["trusts"]
+    _add(session, _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=own.id))
+    project = staged_project["project"]
+
+    assert _refused(session, project, _payload([own, other]), trust_admin) == 403
+    assert _all_pending(session, project), "no partial decision may have been committed"
+
+
+def test_admin_who_is_trust_admin_decides_as_site(session, staged_project):
+    """An Admin who also holds Trust Admin at A decides A as SITE and B (no Trust Admin) as HUB, in one call."""
+    admin_id = uuid4()
+    a, b = staged_project["trusts"]
+    _add(session, _grant(admin_id, RoleRef.ADMIN), _grant(admin_id, RoleRef.TRUST_ADMIN, trust_id=a.id))
+    project = staged_project["project"]
+
+    approve_project_endpoint(project.id, _payload([a], declined=[b]), admin_id, session)
+
     decisions = _decisions(session, project)
-    assert decisions[own_trust.id].status == TrustApprovalStatus.APPROVED
-    assert decisions[own_trust.id].decided_by == owner_id
-    assert decisions[other.id].status == TrustApprovalStatus.PENDING
-    session.refresh(project)
-    assert project.status == ProjectStatus.STAGED
+    assert decisions[a.id].decided_as == DecisionMaker.SITE
+    assert decisions[b.id].decided_as == DecisionMaker.HUB
+
+
+def test_removing_last_trust_admin_hands_decision_back_to_hub(session, staged_project):
+    admin_id, trust_admin = uuid4(), uuid4()
+    site_trust, _other = staged_project["trusts"]
+    grant = _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id)
+    _add(session, _grant(admin_id, RoleRef.ADMIN), grant)
+    project = staged_project["project"]
+    assert _refused(session, project, _payload([site_trust]), admin_id) == 403
+
+    session.delete(grant)
+    session.commit()
+    approve_project_endpoint(project.id, _payload([site_trust]), admin_id, session)
+
+    assert _decisions(session, project)[site_trust.id].decided_as == DecisionMaker.HUB
 
 
 def test_each_trust_admin_decides_for_their_own_trust_and_the_last_approves_the_project(session, staged_project):
-    """Two sites, two owners, two calls: the second approves the project and gets BOTH trusts back.
+    """Two sites, two Trust Admins, two calls: the second approves the project and gets BOTH trusts back.
 
-    The first trust comes back although the second owner holds no authority there — its own owner's recorded
-    approval is what authorised it, so the imaging fan-out must dispatch to it without re-checking the caller.
+    The first trust comes back although the second Trust Admin holds no authority there — its own Trust Admin's
+    recorded approval is what authorised it, so the imaging fan-out dispatches to it without re-checking.
     """
     first, second = staged_project["trusts"]
-    first_owner, second_owner = uuid4(), uuid4()
-    session.add(_grant(first_owner, RoleRef.TRUST_ADMIN, trust_id=first.id))
-    session.add(_grant(second_owner, RoleRef.TRUST_ADMIN, trust_id=second.id))
-    session.commit()
+    first_admin, second_admin = uuid4(), uuid4()
+    _add(
+        session,
+        _grant(first_admin, RoleRef.TRUST_ADMIN, trust_id=first.id),
+        _grant(second_admin, RoleRef.TRUST_ADMIN, trust_id=second.id),
+    )
     project = staged_project["project"]
 
-    assert approve_project_endpoint(project.id, _payload([first]), first_owner, session) == []
-    result = approve_project_endpoint(project.id, _payload([second]), second_owner, session)
+    assert approve_project_endpoint(project.id, _payload([first]), first_admin, session) == []
+    result = approve_project_endpoint(project.id, _payload([second]), second_admin, session)
 
     assert {trust.id for trust in result} == {first.id, second.id}
     decisions = _decisions(session, project)
-    assert decisions[first.id].decided_by == first_owner
-    assert decisions[second.id].decided_by == second_owner
+    assert decisions[first.id].decided_by == first_admin
+    assert decisions[second.id].decided_by == second_admin
     session.refresh(project)
     assert project.status == ProjectStatus.APPROVED
 
 
-def test_trust_admin_declines_at_their_own_trust(session, staged_project):
-    """Declining is the site's decision too, taken on the same grant."""
-    owner_id = uuid4()
-    own_trust, _other = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=own_trust.id))
-    session.commit()
-    project = staged_project["project"]
+def test_a_researcher_cannot_decide_a_hub_run_trust(session, staged_project):
+    researcher = uuid4()
+    _add(session, _grant(researcher, RoleRef.RESEARCHER))
+    first, _second = staged_project["trusts"]
 
-    assert approve_project_endpoint(project.id, _payload([], declined=[own_trust]), owner_id, session) == []
-
-    decisions = _decisions(session, project)
-    assert decisions[own_trust.id].status == TrustApprovalStatus.DECLINED
-    assert decisions[own_trust.id].decided_by == owner_id
-
-
-def test_trust_admin_cannot_decline_at_a_trust_they_do_not_own(session, staged_project):
-    """A decline at a trust the caller does not own is refused like an approval, and nothing is recorded."""
-    owner_id = uuid4()
-    owned, not_owned = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=owned.id))
-    session.commit()
-    project = staged_project["project"]
-
-    with pytest.raises(HTTPException) as exc_info:
-        approve_project_endpoint(project.id, _payload([owned], declined=[not_owned]), owner_id, session)
-
-    assert exc_info.value.status_code == 403
-    decisions = _decisions(session, project)
-    assert {row.status for row in decisions.values()} == {TrustApprovalStatus.PENDING}
-
-
-def test_trust_admin_cannot_approve_at_a_trust_they_do_not_own(session, staged_project):
-    """Authority at trust A says nothing about trust B — the scope predicate, through the endpoint."""
-    owner_id = uuid4()
-    owned, not_owned = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=owned.id))
-    session.commit()
-    project = staged_project["project"]
-
-    with pytest.raises(HTTPException) as exc_info:
-        approve_project_endpoint(
-            project_id=project.id,
-            payload=_payload([not_owned]),
-            user_id=owner_id,
-            db=session,
-        )
-
-    assert exc_info.value.status_code == 403
-    session.refresh(project)
-    assert project.status == ProjectStatus.STAGED
-
-
-def test_owner_of_one_trust_cannot_approve_a_list_naming_two(session, staged_project):
-    """Authority at one of two named trusts refuses the WHOLE call — no partial writes.
-
-    Approving the first trust and refusing the second would return an error after having
-    written something, which is the failure the all-or-nothing check exists to prevent.
-    """
-    owner_id = uuid4()
-    first, second = staged_project["trusts"]
-    session.add(_grant(owner_id, RoleRef.TRUST_ADMIN, trust_id=first.id))
-    session.commit()
-    project = staged_project["project"]
-
-    with pytest.raises(HTTPException) as exc_info:
-        approve_project_endpoint(
-            project_id=project.id,
-            payload=_payload([first, second]),
-            user_id=owner_id,
-            db=session,
-        )
-
-    assert exc_info.value.status_code == 403
-    session.refresh(project)
-    assert project.status == ProjectStatus.STAGED, "no partial approval may have been committed"
+    assert _refused(session, staged_project["project"], _payload([first]), researcher) == 403
 
 
 def test_trust_admin_role_granted_globally_confers_no_per_trust_authority(session, staged_project):
     """``trust_id IS NULL`` never satisfies a trust-scoped check, even for the right role.
 
-    The Trust Admin role carries ``CAN_APPROVE_FOR_TRUST``, so a row that names the role but
-    no trust is the one shape which could plausibly be misread as "may approve anywhere". It
-    must not be: authority is per trust, and a global row carries none. The seeder never
-    writes this shape and ``set_user_roles`` refuses to grant TRUST_ADMIN without a trust —
-    this pins the check itself, which is what actually stands between the two.
+    The Trust Admin role carries ``CAN_APPROVE_FOR_TRUST``, so a row naming the role but no trust is the one shape
+    that could be misread as "may approve anywhere". It must not be: authority is per trust, and a global row
+    carries none. ``set_user_roles`` never writes this shape; this pins the check itself.
     """
-    user_id = uuid4()
-    session.add(_grant(user_id, RoleRef.TRUST_ADMIN, trust_id=None))
-    session.commit()
-    project = staged_project["project"]
+    user_id, trust_admin = uuid4(), uuid4()
+    site_trust, _other = staged_project["trusts"]
+    _add(
+        session,
+        _grant(user_id, RoleRef.TRUST_ADMIN, trust_id=None),
+        _grant(trust_admin, RoleRef.TRUST_ADMIN, trust_id=site_trust.id),
+    )
 
-    with pytest.raises(HTTPException) as exc_info:
-        approve_project_endpoint(
-            project_id=project.id,
-            payload=_payload([staged_project["trusts"][0]]),
-            user_id=user_id,
-            db=session,
-        )
-
-    assert exc_info.value.status_code == 403
-    session.refresh(project)
-    assert project.status == ProjectStatus.STAGED
+    assert _refused(session, staged_project["project"], _payload([site_trust]), user_id) == 403
