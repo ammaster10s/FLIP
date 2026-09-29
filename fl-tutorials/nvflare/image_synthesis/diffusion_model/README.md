@@ -22,15 +22,20 @@ local epochs and at the end of each round (see below).
 
 ## Data
 
-The same chest X-ray cohort and loading path as
-[`xray_classification`](../../image_classification/xray_classification/): DICOM files fetched per
-accession, read through the pinned `PydicomReader` chain in `app_files/transforms.py` (copied from
-that tutorial) and resized to **256×256**. The cohort's lesion columns are ignored — a generative
-model needs only the pixels.
+**A diffusion model needs thousands of images. This tutorial trains on a large dataset by default.**
 
-```bash
-make -C fl-tutorials download-xray-data
-```
+| `DATASET` | Images | Use it for | Download |
+| --- | --- | --- | --- |
+| `arkplus` (default) | ~1.9k per site (Ark+ training splits), each site on its own folder | training | `make -C fl-tutorials download-arkplus-finetuning-data` (~6.3 GB) |
+| `mini` | 300 in total (`xrays_mini_300`), halved between the sites | testing code only | `make -C fl-tutorials download-xray-data` |
+
+> **Warning:** `DATASET=mini` leaves each site about 120 training images. That is enough to check the
+> job runs end to end, not to learn to generate X-rays: the model memorises them and the samples are
+> meaningless.
+
+The paths are in `.env.app` (`SITE{1,2}_*` for Ark+, `DEV_*` for mini). Images are DICOMs read
+through the pinned `PydicomReader` chain in `app_files/transforms.py` and resized to
+`spatial_shape`. The cohort's label columns are ignored.
 
 ## Job type: `standard`, not `diffusion_model`
 
@@ -148,8 +153,11 @@ Writes a complete NVFLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/conf
 ### Local simulation (requires a GPU + the dataset)
 
 ```bash
-make -C ../../.. download-xray-data      # once
-make run                                 # delegates to `make sim`
+make -C ../../.. download-arkplus-finetuning-data   # once
+make run                                            # delegates to `make sim`; trains on Ark+
+
+make -C ../../.. download-xray-data                 # once
+make run DATASET=mini                               # testing code only
 ```
 
 Or via the shared harness:
@@ -159,8 +167,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=diffusion_model
 ```
 
 Knobs: `NUM_ROUNDS` (default 1), `N_CLIENTS` (default 2) — override per invocation
-(`make run NUM_ROUNDS=2`) or in `.env.app`. In simulation the two sites train on different halves of
-the dev dataset; in production each trust's cohort is already its own.
+(`make run NUM_ROUNDS=2`) or in `.env.app`. In production each trust trains on its own cohort.
 
 ### Clean
 

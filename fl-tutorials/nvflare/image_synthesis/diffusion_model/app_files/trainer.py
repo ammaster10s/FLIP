@@ -39,10 +39,12 @@ import argparse
 import json
 import logging
 import math
+import os
 from pathlib import Path
 
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import pydicom
 import torch
 from flip import FLIP
@@ -192,6 +194,21 @@ def lr_at(epoch: int, config: dict) -> float:
         return start
     progress = min(epoch, decay_epochs) / decay_epochs
     return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def site_data_paths(site_name: str) -> tuple[Path, Path] | None:
+    """This simulated site's own ``(images_dir, dataframe)``, from ``SITE{N}_IMAGES_DIR`` / ``SITE{N}_DATAFRAME``.
+
+    Set only by the tutorial Makefile for a local run on per-site data ("site-1" reads ``SITE1_*``).
+    ``None`` when either is unset or blank: the site then reads the shared ``DEV_*`` dataset through
+    ``FLIP``, as it does on a trust.
+    """
+    prefix = site_name.replace("-", "").upper()
+    images_dir = os.environ.get(f"{prefix}_IMAGES_DIR", "").strip()
+    dataframe = os.environ.get(f"{prefix}_DATAFRAME", "").strip()
+    if not images_dir or not dataframe:
+        return None
+    return Path(images_dir), Path(dataframe)
 
 
 def image_noise_shape(config: dict, batch_size: int) -> list[int]:
@@ -352,17 +369,23 @@ class DiffusionTrainer:
 
         # Data loading
         self.flip = FLIP()
-        dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
+        site_paths = site_data_paths(flare.get_site_name())
+        if site_paths is not None:
+            # Local run on per-site data: this site's own folder and CSV, used whole.
+            self.images_dir, dataframe_path = site_paths
+            dataframe = pd.read_csv(dataframe_path, sep=None, engine="python")
+            logger.info(f"Reading {dataframe_path} and {self.images_dir}")
+        else:
+            self.images_dir = None
+            dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
         self.train_items, self.val_items = self.build_datalist(dataframe)
 
-        # Per-site split for local/simulator runs where every client reads the same DEV dataset;
-        # in production each trust's data-access API already scopes the cohort to its own data.
-        # The NVFLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
-        # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
+        # One shared DEV dataset in the simulator: halve it so the two sites train on different images.
+        # Production trust names never match "site1"/"site2", so real runs are unsplit.
         site_name = flare.get_site_name().replace("-", "")
-        if site_name == "site1":
+        if site_paths is None and site_name == "site1":
             self.train_items = self.train_items[: len(self.train_items) // 2]
-        elif site_name == "site2":
+        elif site_paths is None and site_name == "site2":
             self.train_items = self.train_items[len(self.train_items) // 2 :]
 
         self._train_dataset = Dataset(self.train_items, transform=get_xray_transforms())
@@ -379,17 +402,20 @@ class DiffusionTrainer:
         datalist: list[dict[str, str]] = []
 
         for accession_id in dataframe["accession_id"]:
-            try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.DICOM,
-                    ],
-                )
-            except Exception as err:
-                logger.info(f"Could not get image data folder path for {accession_id}: {err}")
-                continue
+            if self.images_dir is not None:
+                accession_folder_path = self.images_dir / str(accession_id)
+            else:
+                try:
+                    accession_folder_path = self.flip.get_by_accession_number(
+                        self.project_id,
+                        accession_id,
+                        resource_type=[
+                            ResourceType.DICOM,
+                        ],
+                    )
+                except Exception as err:
+                    logger.info(f"Could not get image data folder path for {accession_id}: {err}")
+                    continue
 
             for image in sorted(accession_folder_path.rglob("*.dcm")):
                 try:

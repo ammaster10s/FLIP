@@ -1371,3 +1371,20 @@ def test_conditioned_samples_are_keyed_by_modality_so_the_columns_are_labelled()
     assert comprehensions, "sample_and_save does not build a per-modality dict of volumes"
     keys = {ast.unparse(node.key) for node in comprehensions}
     assert keys == {"modality"}, f"expected the dict keyed by modality, got keys {keys}"
+
+
+def test_a_simulated_site_reads_its_own_data_when_the_makefile_sets_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``site-1`` reads ``SITE1_*``; unset or blank falls back to the shared ``DEV_*`` dataset (``None``)."""
+    trainer = _trainer(_DIFFUSION)
+    monkeypatch.setenv("SITE1_IMAGES_DIR", str(tmp_path / "images"))
+    monkeypatch.setenv("SITE1_DATAFRAME", str(tmp_path / "df.csv"))
+    assert trainer.site_data_paths("site-1") == (tmp_path / "images", tmp_path / "df.csv")
+
+    monkeypatch.delenv("SITE2_IMAGES_DIR", raising=False)
+    monkeypatch.delenv("SITE2_DATAFRAME", raising=False)
+    assert trainer.site_data_paths("site-2") is None
+
+    monkeypatch.setenv("SITE1_IMAGES_DIR", "")
+    assert trainer.site_data_paths("site-1") is None

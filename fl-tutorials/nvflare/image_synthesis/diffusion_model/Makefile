@@ -42,6 +42,20 @@ N_CLIENTS ?= 2
 # with LOCAL_DEV=false, so production writes nothing whatever config.json says.
 DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/diffusion_model
 
+# --- Which dataset a local run trains on ---
+# arkplus (default): the Ark+ training splits, ~1.9k X-rays per site, each site on its own folder.
+# mini: xrays_mini_300, halved between the sites. For testing code only; too small to train on.
+DATASET ?= arkplus
+ifeq ($(DATASET),mini)
+override SITE1_IMAGES_DIR :=
+override SITE1_DATAFRAME :=
+override SITE2_IMAGES_DIR :=
+override SITE2_DATAFRAME :=
+else ifneq ($(DATASET),arkplus)
+$(error DATASET must be arkplus or mini, got '$(DATASET)')
+endif
+site_path = $(if $(1),$(abspath $(1)))
+
 .PHONY: run export sim clean
 
 # --- Tutorial-harness entrypoint ---
@@ -61,10 +75,9 @@ export:
 		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference
-# dataset (run `make -C fl-tutorials download-xray-data` first).
+# Runs the job under the NVFLARE simulator. Requires a GPU and the dataset DATASET names (see above).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
-# DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
+# SITE{1,2}_* and DEV_* paths are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
 # GLOBAL_ROUNDS in app_files/config.json is a PRODUCTION setting: the FL API reads it at submit time.
 # A local run's round count is NUM_ROUNDS, which this target passes as --num_rounds. Keeping the two
@@ -80,6 +93,16 @@ sim:
 		echo "⚠️  config.json GLOBAL_ROUNDS=$$global_rounds is a production setting and is IGNORED here."; \
 		echo "    This run does $(NUM_ROUNDS) round(s). To match it locally: make run NUM_ROUNDS=$$global_rounds"; \
 	fi
+	@if [ "$(DATASET)" = arkplus ] && [ ! -f "$(SITE1_DATAFRAME)" ]; then \
+		echo "Ark+ data not found at $(SITE1_DATAFRAME)."; \
+		echo "Run: make -C $(FL_TUTORIALS) download-arkplus-finetuning-data"; \
+		echo "Or, to test code only: make run DATASET=mini"; \
+		exit 1; \
+	fi
+	SITE1_IMAGES_DIR="$(call site_path,$(SITE1_IMAGES_DIR))" \
+	SITE1_DATAFRAME="$(call site_path,$(SITE1_DATAFRAME))" \
+	SITE2_IMAGES_DIR="$(call site_path,$(SITE2_IMAGES_DIR))" \
+	SITE2_DATAFRAME="$(call site_path,$(SITE2_DATAFRAME))" \
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \
