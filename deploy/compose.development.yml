@@ -129,9 +129,11 @@ services:
 
   # The dev object store (FLIP#1291): an S3-compatible RustFS container standing in for
   # the AWS S3 buckets, so model uploads and scanning, FL app bundles, and results need no
-  # AWS account. Every service reaches it through boto3's native AWS_ENDPOINT_URL_S3 with
-  # the static keys below — the same code paths production runs against S3, nothing
-  # dev-specific in flip-api or flip-utils beyond the two S3_* settings (flip-api/AGENTS.md).
+  # AWS account. flip-api and the fl-servers reach it through boto3's native
+  # AWS_ENDPOINT_URL_S3 with the static keys below, the fl-apis through the presigned bundle
+  # URLs flip-api signs for it — the same code paths production runs against S3, nothing
+  # dev-specific in flip-api or flip-utils beyond one setting, S3_PUBLIC_ENDPOINT_URL
+  # (flip-api/AGENTS.md).
   # Its data dir is the host-owned ./object-store/ (gitignored; OBJECT_STORE_DIR): a
   # top-level directory there IS a bucket, so `make up` pre-creates one per *_BUCKET_NAME
   # (_ensure-object-store-dir, the jobs/ idiom) and no bootstrap service is needed; the
@@ -140,13 +142,16 @@ services:
   # Port 9000 is published because SigV4 signs the host: a presigned URL the browser or a
   # host-side script opens is signed for localhost:${OBJECT_STORE_PORT} (flip-api's
   # S3_PUBLIC_ENDPOINT_URL), while the fl-api fetches bundles at object-store:9000 over the
-  # docker network. The console on 9001 (loopback only; sign in with the two keys) browses
-  # objects. `make clean-object-store` empties the directory; `make down` keeps it.
+  # docker network. Both ports bind to loopback: the keys are the repo's dev placeholders
+  # and the store's root user, and docker's iptables rules sit ahead of most host firewalls
+  # — a remote dev box is reached through an SSH tunnel, like the debug ports. The console
+  # on 9001 (sign in with the two keys) browses objects. `make clean-object-store` empties
+  # the directory; `make down` keeps it.
   object-store:
     image: rustfs/rustfs:1.0.0
     user: "${UID}:${GID}"
     ports:
-      - "${OBJECT_STORE_PORT:-9000}:9000"
+      - "127.0.0.1:${OBJECT_STORE_PORT:-9000}:9000"
       - "127.0.0.1:${OBJECT_STORE_CONSOLE_PORT:-9001}:9001"
     environment:
       # Dev-only placeholders, shared with flip-api and the fl-servers as their
@@ -156,11 +161,20 @@ services:
       - RUSTFS_SECRET_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       # The browser posts presigned uploads and fetches presigned downloads straight from
       # the store, so it must answer CORS for the UI origin. RustFS sends no CORS headers
-      # unless told to (MinIO used to reflect any origin).
+      # unless told to.
       - RUSTFS_CORS_ALLOWED_ORIGINS=http://localhost:${UI_PORT:?UI_PORT must be set in the env file}
     volumes:
       # Relative to this file's directory, like the other bind mounts; make passes it absolute.
-      - ${OBJECT_STORE_DIR:-../object-store}:/data
+      # `create_host_path: false`: `make up` creates the directory host-owned
+      # (_ensure-object-store-dir); a compose command that starts the store without it —
+      # `make -C flip-api up`, `test`, `migrate`… pull it in through flip-api's depends_on —
+      # must fail here naming the path, not let docker create it root-owned, which RustFS
+      # (running as the host uid) could never write and every later `make up` would trip on.
+      - type: bind
+        source: ${OBJECT_STORE_DIR:-../object-store}
+        target: /data
+        bind:
+          create_host_path: false
     healthcheck:
       # The image ships curl; /health answers 200 once the store serves requests. (Under the
       # host uid the image's /logs is not writable — RustFS then logs to stdout, which is
@@ -270,8 +284,9 @@ services:
       # diagnostics are still visible during development.
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - DEBUG=${DEBUG}
-      # SigV4 needs a region even against RustFS, which accepts any.
-      - AWS_REGION=${AWS_REGION}
+      # SigV4 needs a region even against RustFS, which accepts any; `:?` fails at `up`
+      # rather than at the first presign (botocore InvalidRegionError → 500).
+      - AWS_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       # Object storage is the RustFS service above (FLIP#1291), reached through boto3's
       # native endpoint env — the production composes point the same variable at the
       # regional S3 endpoint. The fl-api's BUNDLE_URL_ALLOWED_ORIGINS

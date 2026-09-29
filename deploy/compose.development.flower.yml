@@ -96,9 +96,8 @@ services:
     # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
     # keys, which the app user (uid 49999) cannot. The other reason this override
     # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291), so a group_add on the kit's gid
-    # could now replace root here; that is a follow-up, not this change. Prod uses
-    # an ECS task IAM role, so the override is confined to the dev compose.
+    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
+    # so the override is confined to the dev compose.
     user: "0:0"
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
@@ -120,7 +119,7 @@ services:
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
     depends_on:
       # The store must serve before the first results upload (FLIP#1291).
       object-store:
@@ -195,9 +194,8 @@ services:
     # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
     # keys, which the app user (uid 49999) cannot. The other reason this override
     # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291), so a group_add on the kit's gid
-    # could now replace root here; that is a follow-up, not this change. Prod uses
-    # an ECS task IAM role, so the override is confined to the dev compose.
+    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
+    # so the override is confined to the dev compose.
     user: "0:0"
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
@@ -219,7 +217,7 @@ services:
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
     depends_on:
       # The store must serve before the first results upload (FLIP#1291).
       object-store:

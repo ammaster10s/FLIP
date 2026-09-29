@@ -248,9 +248,9 @@ For the full local stack, replace every placeholder in these minimum groups befo
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
 top-level directory there is a bucket, so `make up` pre-creates one per bucket name before the store starts, the way
-it pre-creates `jobs/`. flip-api, both fl-servers and the fl-apis reach it through boto3's native
-`AWS_ENDPOINT_URL_S3` with static dev keys, so model uploads and scanning, FL app bundles, training and results
-download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
+it pre-creates `jobs/`. flip-api and both fl-servers reach it through boto3's native `AWS_ENDPOINT_URL_S3` with
+static dev keys, and the fl-apis through the presigned bundle URLs flip-api signs for it, so model uploads and
+scanning, FL app bundles, training and results download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
 (each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
 `deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
 `OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
@@ -329,9 +329,11 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 ### Setting up AWS access
 
-Some services (e.g. `flip-api`) interact with AWS via `boto3` — in development that is S3 (model-file uploads,
-FL results, app bundles), which `make up` needs credentials for. Signing in does not: the hub alone boots and
-authenticates against the local Keycloak with no AWS account (`make central-hub`).
+Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
+of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for the two
+example Trusts' XNAT-artifact and OMOP-vocabulary fetches, FL kit uploads and the `deploy/providers/AWS`
+targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
 
@@ -685,7 +687,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak and flip-api from the dev compose on a runner with no AWS credentials and runs `flip-api/tests/local_auth_smoke.py` to sign in as the seeded admin.
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291).
 
 ##### flip-api: database migrations (Alembic)
 

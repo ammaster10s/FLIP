@@ -108,12 +108,9 @@ jobs:
         run: $COMPOSE --env-file .env.development build flip-api
 
       - name: Object store bucket directories
-        # A top-level directory under RustFS's data dir is a bucket. `make up` does this
-        # (_ensure-object-store-dir); this job drives compose directly, so it does it here.
-        run: |
-          for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do
-            mkdir -p "object-store/$(sed -n "s/^$var=//p" .env.development)"
-          done
+        # A top-level directory under RustFS's data dir is a bucket: the same make target
+        # `make up` runs, so the guard every developer's checkout gets is the one CI runs.
+        run: make _ensure-object-store-dir
 
       - name: Start flip-db, keycloak, the object store and flip-api
         run: $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak object-store flip-api
@@ -145,19 +142,26 @@ jobs:
         # so the project and trust the smoke creates are approved here in the database, and
         # the round trip runs on them.
         run: | # pragma: allowlist secret
+          set -o pipefail
           admin_email=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          ui_port=$(sed -n 's/^UI_PORT=//p' .env.development)
           smoke="python3 flip-api/tests/local_storage_smoke.py --api-url http://localhost:8080/api \
-            --keycloak-url http://localhost:8180 --username $admin_email --password Smoke-Test-Pa55word!"
-          ids=$($smoke --create-project | tee /dev/stderr)
+            --keycloak-url http://localhost:8180 --ui-origin http://localhost:$ui_port \
+            --username $admin_email --password Smoke-Test-Pa55word!"
+          ids=$($smoke --create-project | tee /dev/stderr) || { echo "::error::creating the smoke project failed (see above)"; exit 1; }
           project_id=$(printf '%s\n' "$ids" | sed -n 's/^project_id=//p')
           trust_id=$(printf '%s\n' "$ids" | sed -n 's/^trust_id=//p')
-          test -n "$project_id" && test -n "$trust_id"
+          if [ -z "$project_id" ] || [ -z "$trust_id" ]; then echo "::error::--create-project printed no project_id/trust_id"; exit 1; fi
           pg_user=$(sed -n 's/^POSTGRES_USER=//p' .env.development)
           pg_db=$(sed -n 's/^POSTGRES_DB=//p' .env.development)
-          $COMPOSE --env-file .env.development exec -T flip-db psql -U "$pg_user" -d "$pg_db" \
-            -c "update projects set status='APPROVED' where id='$project_id'" \
+          # ON_ERROR_STOP + a row-count check: psql otherwise exits 0 after a failed -c, and
+          # UPDATE 0 is not an error — either would surface later as "project not approved".
+          approved=$($COMPOSE --env-file .env.development exec -T flip-db psql -v ON_ERROR_STOP=1 --single-transaction -tA \
+            -U "$pg_user" -d "$pg_db" \
+            -c "update projects set status='APPROVED' where id='$project_id' returning id" \
             -c "insert into project_trust_intersect (id, project_id, trust_id, status, decided_at, decided_as) \
-                values (gen_random_uuid(), '$project_id', '$trust_id', 'APPROVED', now(), 'HUB')"
+                values (gen_random_uuid(), '$project_id', '$trust_id', 'APPROVED', now(), 'HUB') returning id" | wc -l)
+          test "$approved" -eq 2 || { echo "::error::approving the smoke project in the database touched $approved rows, expected 2"; exit 1; }
           $smoke --project-id "$project_id"
 
       - name: Logs on failure

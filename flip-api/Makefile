@@ -43,6 +43,9 @@ run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
 up:
+# flip-api depends on the object store, whose data directory the root Makefile
+# pre-creates host-owned (FLIP#1291) — the compose refuses to start it otherwise.
+	@$(MAKE) -C .. _ensure-object-store-dir
 # Note we need to start the db first
 	@echo "🚀 Starting flip-db..."
 	$(docker_command) up --remove-orphans -d flip-db

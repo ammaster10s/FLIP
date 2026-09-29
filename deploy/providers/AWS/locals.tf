@@ -199,7 +199,13 @@ locals {
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
+      # Both names for one release (FLIP#1291): an fl-api image from before the
+      # rename reads only the old one, one from after reads both, and a deploy
+      # that swaps only the image or only this environment must not leave
+      # either with an empty list. Drop BUNDLE_URL_ALLOWED_HOSTS in the release
+      # after every environment runs a post-#1291 fl-api.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
@@ -228,8 +234,10 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
-      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905).
+      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905), both names
+      # for one release (FLIP#1291) for the same reason.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
   }
 }

@@ -60,10 +60,23 @@ override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
 # The dev object store's data directory (FLIP#1291), bind-mounted into the RustFS
 # container: one sub-directory per bucket — that is how RustFS defines a bucket — created
-# by _ensure-object-store-dir before the store starts, the jobs/ idiom. Exported so the
-# compose sees the absolute path.
-OBJECT_STORE_DIR ?= object-store
+# by _ensure-object-store-dir before the store starts, the jobs/ idiom. Per instance
+# (`<instance>-object-store`): two RustFS processes must never share a data directory.
+# Exported so the compose sees the absolute path.
+OBJECT_STORE_DIR ?= $(INSTANCE_PREFIX)object-store
+ifeq ($(strip $(OBJECT_STORE_DIR)),)
+$(error OBJECT_STORE_DIR is empty: set it to a directory (default object-store) or leave it unset)
+endif
 override OBJECT_STORE_DIR := $(call abs_or_relative_to,$(OBJECT_STORE_DIR),$(MAKEFILE_DIR))
+# `clean-object-store` removes this directory, so it must never resolve to the checkout or
+# to anything the checkout lives in (an empty or `.` value would otherwise resolve to the
+# repo root through abs_or_relative_to).
+ifneq ($(filter $(OBJECT_STORE_DIR) $(OBJECT_STORE_DIR)/%,$(MAKEFILE_DIR)),)
+$(error OBJECT_STORE_DIR=$(OBJECT_STORE_DIR) is the checkout or a directory containing it; it must be a directory of its own)
+endif
+ifeq ($(OBJECT_STORE_DIR),/)
+$(error OBJECT_STORE_DIR=/ is not a directory of its own)
+endif
 export OBJECT_STORE_DIR
 
 # Service configuration
@@ -277,15 +290,25 @@ down:
 # (FLIP#1291): a top-level directory under its data dir IS a bucket, the container runs as
 # the host uid (`user:` in the compose) so it can write what the host created, and docker
 # would otherwise create the mount source root-owned. Idempotent; the three names are the
-# *_BUCKET_NAME values the hub's s3:// settings are built from.
+# *_BUCKET_NAME values the hub's s3:// settings are built from, each a single path segment.
+# A directory that already exists but is not writable by this uid (created root-owned by a
+# bare `docker compose up`, say) fails here with the remedy, not four layers later as a
+# store that answers healthy and refuses every upload. Development only: the deployed
+# environments run no store, so the target is a no-op there.
 _ensure-object-store-dir:
-	@for bucket in "$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)" "$(FLIP_FL_RESULTS_BUCKET_NAME)" "$(FLIP_APP_BUNDLES_BUCKET_NAME)"; do \
-		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: a *_BUCKET_NAME is empty in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
-		mkdir -p "$(OBJECT_STORE_DIR)/$$bucket"; \
+	@if [ -n "$(IS_DEPLOYED)" ]; then exit 0; fi; \
+	for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do \
+		bucket=$$(printf '%s' "$${!var}"); \
+		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: $$var is empty or unset in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
+		case "$$bucket" in */*|.|..|*'<'*|*'>'*) echo "❌ _ensure-object-store-dir: $$var='$$bucket' is not a bucket name (one path segment, no placeholders)" >&2; exit 1;; esac; \
+		dir="$(OBJECT_STORE_DIR)/$$bucket"; \
+		mkdir -p "$$dir" 2>/dev/null || { echo "❌ _ensure-object-store-dir: cannot create $$dir — if $(OBJECT_STORE_DIR) exists root-owned, run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
+		[ -w "$$dir" ] || { echo "❌ _ensure-object-store-dir: $$dir is not writable by uid $$(id -u) — run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
 	done
 
 # Empty the dev object store (FLIP#1291): stop the RustFS service and remove its host
 # directory. `make down` keeps the directory, like the jobs/ dir; this is the purge knob.
+# The parse-time guard on OBJECT_STORE_DIR above is what keeps this `rm -rf` off the checkout.
 clean-object-store:
 	${DOCKER_COMMAND} rm -sf object-store
 	rm -rf "$(OBJECT_STORE_DIR)"

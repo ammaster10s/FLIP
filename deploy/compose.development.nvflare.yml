@@ -118,7 +118,7 @@ services:
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
@@ -184,7 +184,7 @@ services:
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises

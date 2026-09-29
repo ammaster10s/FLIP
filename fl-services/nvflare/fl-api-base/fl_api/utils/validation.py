@@ -68,22 +68,30 @@ def bundle_url_allowed_origins() -> set[tuple[str, str, int]]:
     """The origins ``BUNDLE_URL_ALLOWED_ORIGINS`` admits, as ``(scheme, host, port)`` triples.
 
     Each comma-separated entry is a bare origin — ``http://host[:port]`` or ``https://host[:port]``, nothing
-    after the authority. The host is lower-cased and root-label-stripped so it compares against
-    ``urlparse(...).hostname`` after ``validate_bundle_url``'s own strip, and a missing port is the scheme's
-    default, so ``https://h`` and ``https://h:443`` are one origin.
+    after the authority, not even a trailing slash. The host is lower-cased and root-label-stripped so it
+    compares against ``urlparse(...).hostname`` after ``validate_bundle_url``'s own strip, and a missing port
+    is the scheme's default, so ``https://h`` and ``https://h:443`` are one origin.
 
     Returns:
         set[tuple[str, str, int]]: One ``(scheme, host, port)`` per entry. Empty when the variable is unset or
         holds only separators.
 
+    The pre-#1291 ``BUNDLE_URL_ALLOWED_HOSTS`` (bare hosts, https on 443 implied) is still read, as
+    ``https://<host>`` origins: the rename is a flag day between image and environment, and an ECS deploy
+    that swaps only the image (``deploy-centralhub TAG=…``) or only the environment must not leave the list
+    empty — "any public host" — with nothing but a warning. The deployed environments emit both names for one
+    release; the old one goes in a follow-up.
+
     Raises:
         ValueError: If an entry is not a bare origin (wrong scheme, no host, a path, query, fragment or
-            userinfo, or an unparseable port). Each app's startup hook parses the list, so a malformed
-            value fails the boot instead of silently admitting nothing — or, worse, everything.
+            userinfo, or an unparseable port). Each app's startup hook parses the list, so a malformed value
+            fails the boot instead of silently admitting nothing — or, worse, everything.
     """
     default_ports = {"http": 80, "https": 443}
     origins: set[tuple[str, str, int]] = set()
-    for raw in os.getenv("BUNDLE_URL_ALLOWED_ORIGINS", "").split(","):
+    legacy_hosts = [host.strip() for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",") if host.strip()]
+    entries = [f"https://{host}" for host in legacy_hosts] + os.getenv("BUNDLE_URL_ALLOWED_ORIGINS", "").split(",")
+    for raw in entries:
         entry = raw.strip()
         if not entry:
             continue
@@ -114,8 +122,10 @@ def warn_if_bundle_url_allow_list_empty() -> None:
     regression. A malformed value raises from ``bundle_url_allowed_origins`` here, which is what makes the
     startup hook fail the boot on one.
     """
+    # The list is parsed before the once-only gate, so a malformed value raises on every call —
+    # the startup hooks rely on that to fail the boot, whatever state the flag is in.
     global _warned_empty_allow_list
-    if _warned_empty_allow_list or bundle_url_allowed_origins():
+    if bundle_url_allowed_origins() or _warned_empty_allow_list:
         return
     _warned_empty_allow_list = True
     logger.warning(
