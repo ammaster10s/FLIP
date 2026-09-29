@@ -572,6 +572,43 @@ def count_distinct_subjects(df: pd.DataFrame) -> int | None:
     return min(len(df), subjects)
 
 
+def keep_imaging_accessions(df: pd.DataFrame) -> pd.DataFrame:
+    """Returns the rows of an accession-id cohort whose value is a real imaging accession.
+
+    ``/cohort/accession-ids`` counts its subjects through ``omop.image_occurrence``, so a value
+    that resolves to no imaging study contributes nothing to the floor. Releasing such values
+    anyway let a cohort smuggle arbitrary columns out under the ``accession_id`` alias — real
+    accessions clearing the floor, and aliased person data riding along with them — past a
+    ``cohort.dataframe`` deny (FLIP#1259). Only the values the floor counted are released. The
+    same lookup is harmless to a real imaging cohort: imaging-api can pull nothing for an
+    accession number the trust's own OMOP does not hold.
+
+    Args:
+        df (pd.DataFrame): The route's ``SELECT accession_id FROM (...)`` result.
+
+    Returns:
+        pd.DataFrame: The rows whose ``accession_id`` is in ``omop.image_occurrence``, in cohort
+        order, duplicates kept.
+    """
+    column = _first_column(df, ACCESSION_ID_COLUMN)
+    ids = [str(value) for value in column.dropna().unique()]
+    if not ids:
+        return df.iloc[0:0]
+
+    lookup = text("""
+    SELECT DISTINCT io.accession_id AS accession_id
+    FROM omop.image_occurrence io
+    WHERE io.accession_id IN :accession_ids
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    result = get_records(query=lookup, params={"accession_ids": ids})
+    if ACCESSION_ID_COLUMN not in result.columns:
+        # Cannot happen against a real database. Fails closed: nothing is known to be imaging.
+        logger.error("Imaging accession lookup returned an unexpected shape; releasing no accession ids")
+        return df.iloc[0:0]
+    known = set(result[ACCESSION_ID_COLUMN].astype(str))
+    return df[column.notna() & column.astype(str).isin(known)]
+
+
 def _first_column(df: pd.DataFrame, column: str) -> pd.Series:
     """Returns ``df[column]`` as a Series even when the projection carries that column twice.
 

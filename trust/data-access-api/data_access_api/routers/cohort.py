@@ -32,7 +32,13 @@ from data_access_api.routers.schema import (
     DataframeQuery,
     StatisticsResponse,
 )
-from data_access_api.services.cohort import count_distinct_subjects, get_records, get_statistics, validate_query
+from data_access_api.services.cohort import (
+    count_distinct_subjects,
+    get_records,
+    get_statistics,
+    keep_imaging_accessions,
+    validate_query,
+)
 from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
@@ -63,6 +69,13 @@ def _evaluate(action: str, project_id: str | None) -> Decision:
     change. In particular the caller must keep answering ``_BELOW_THRESHOLD_DETAIL``:
     naming the rule in the HTTP body would turn the refusal into a probe for the trust's
     configuration, and on the row-level routes into a row-count oracle.
+
+    Every route calls ``validate_query`` before this, so the query's shape is judged the same
+    whatever the policy says; deciding first made an invalid query a 400 when permitted and a
+    403 when denied. A denial still returns before any SQL runs, so a denied project's query
+    never touches OMOP. The one difference left is time: a denial answers without the query's
+    round trip. That tells a caller holding the trust-internal key whether its own project is
+    denied, which its training job learns anyway when every fetch is refused.
     """
     return decide(
         subject_attributes(),
@@ -158,6 +171,10 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     logger.info("Received cohort query")
 
+    # Judged before the policy, so an invalid query is refused the same way whether or not a
+    # rule covers this project (see _evaluate).
+    safe_query = validate_query(query_input.query)
+
     # The project id is only opened when a configured policy could actually use it. With no
     # policy this route must behave exactly as before, and decrypting unconditionally would
     # add a 400 failure mode (tampered/foreign envelope) that /cohort never had — a
@@ -185,8 +202,6 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
-    safe_query = validate_query(query_input.query)
-
     try:
         logger.info("Executing cohort query")
 
@@ -260,6 +275,8 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
+    safe_query = validate_query(query_input.query)
+
     decision = _evaluate(ACTION_COHORT_DATAFRAME, project_id)
     if not decision.permit:
         _log_denial(decision, project_id, "row-level data")
@@ -267,8 +284,6 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         # for "policy denied" would confirm the project exists and reveal that a rule
         # covers it, and would separate a denied cohort from an empty one.
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
-
-    safe_query = validate_query(query_input.query)
 
     try:
         df = get_records(safe_query)
@@ -367,16 +382,17 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
+    # validate_query returns the caller's SQL re-emitted from its parsed AST,
+    # which breaks any injection taint chain and strips trailing semicolons so
+    # the inner query composes cleanly inside the outer SELECT subquery.
+    safe_inner = validate_query(query_input.query)
+
     decision = _evaluate(ACTION_COHORT_ACCESSION_IDS, project_id)
     if not decision.permit:
         _log_denial(decision, project_id, "accession IDs")
         # Byte-identical to the below-threshold refusal, as on /cohort/dataframe.
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
-    # validate_query returns the caller's SQL re-emitted from its parsed AST,
-    # which breaks any injection taint chain and strips trailing semicolons so
-    # the inner query composes cleanly inside the outer SELECT subquery.
-    safe_inner = validate_query(query_input.query)
     wrapped_query = f"SELECT accession_id FROM ({safe_inner}) AS cohort_subquery"
 
     try:
@@ -400,12 +416,15 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     # The wrapper above projects accession_id and nothing else, so the count always resolves
     # through omop.image_occurrence. An accession number that belongs to no imaging study
     # contributes no subject, so a cohort aliasing some unrelated column to that name is refused
-    # rather than passed on its row count. The count sits outside the try above on purpose:
+    # rather than passed on its row count — and, when real accessions clear the floor alongside
+    # it, the unresolved values are dropped before anything is counted or returned, so only
+    # what the floor counted is released. The lookup and count sit outside the try above on purpose:
     # get_records' 400s keep their diagnostic shape, while a failure of the count itself must be
     # indistinguishable from a small cohort — an empty cohort never reaches the database here and
     # a non-empty one does, so an unguarded lookup error would separate the two exactly when the
     # lookup is unhealthy.
     try:
+        df = keep_imaging_accessions(df)
         subject_count = count_distinct_subjects(df)
     except Exception:
         logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
