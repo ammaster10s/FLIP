@@ -67,6 +67,9 @@ class UpgradeTrust(unittest.TestCase):
 
 GOVERNED_KIT = KIT + "ACCESS_POLICY_FILE=./governance.SCR.toml\n"
 FLOWER_GOVERNED_KIT = GOVERNED_KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower")
+# Also on the command line: CI runs this suite from `make ... FL_BACKEND=nvflare`, whose MAKEFLAGS
+# the scratch make inherits, and a command-line variable beats the kit file's.
+ON_FLOWER = "FL_BACKEND=flower"
 
 
 class Governance(unittest.TestCase):
@@ -89,7 +92,7 @@ class Governance(unittest.TestCase):
         assert 'FL_SITE_PRIVACY_PERCENTIL="5"' in out, out
 
     def test_check_governance_tells_the_renderer_the_backend(self):
-        out = dry_run("check-governance", kit=FLOWER_GOVERNED_KIT)
+        out = dry_run("check-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
         assert "--fl-backend flower" in out, out
 
     def test_reload_governance_on_nvflare_re_extracts_for_the_clients(self):
@@ -101,7 +104,7 @@ class Governance(unittest.TestCase):
 
     def test_reload_governance_on_flower_leaves_the_clients_alone(self):
         """Nothing on Flower reads the document, so recreating its clients only killed their jobs."""
-        out = dry_run("reload-governance", kit=FLOWER_GOVERNED_KIT)
+        out = dry_run("reload-governance", ON_FLOWER, kit=FLOWER_GOVERNED_KIT)
         assert "fl-governance-init" not in out, out
         assert 'services="data-access-api"' in out, out
         assert 'if [ -n "" ]' in out, out  # the client branch is compiled out
