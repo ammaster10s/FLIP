@@ -123,9 +123,10 @@ class S3Client:
     def get_presigned_url(
         self,
         s3_path: str,
+        *,
+        audience: PresignAudience,
         expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
         response_content_disposition: str | None = None,
-        audience: PresignAudience = PresignAudience.BROWSER,
     ) -> str:
         """
         Generate a pre-signed URL for downloading a file from S3.
@@ -144,9 +145,11 @@ class S3Client:
                 this GET — lets the browser save the file under the right
                 name even though the client never touches flip-api's own
                 response headers for the transfer itself.
-            audience: Who opens the URL — the browser or a host-side script
-                (the default), or the fl-api over the docker network. Decides
-                which endpoint host the URL is signed for (``PresignAudience``).
+            audience: Who opens the URL — the browser or a host-side script, or
+                the fl-api over the docker network. Decides which endpoint host
+                the URL is signed for (``PresignAudience``). Required, no default:
+                the two hosts differ in development, so every caller names its
+                consumer at the call site rather than inheriting one.
 
         Returns:
             str: Pre-signed URL string
