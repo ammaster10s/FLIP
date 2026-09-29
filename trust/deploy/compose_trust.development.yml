@@ -197,7 +197,6 @@ services:
       # the container. Policy may only tighten — a document that lowers the threshold is
       # rejected and the service refuses to start.
       ACCESS_POLICY_FILE: ${ACCESS_POLICY_FILE:+/app/governance.toml}
-      ACCESS_POLICY: ${ACCESS_POLICY:-}
       # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
       # install (UV_NO_SYNC), keep uv's cache + HOME writable.
       HOME: /tmp
@@ -208,11 +207,13 @@ services:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
       - ./observability/log_config:/app/log_config:ro
-      # The governance document, read-only — the service must never be able to rewrite
-      # its own policy. When ACCESS_POLICY_FILE is unset the example is mounted but the
-      # env var above is empty, so nothing reads it: compose needs a valid source path
-      # here whether or not a policy is configured.
-      - ${ACCESS_POLICY_FILE:-./governance.example.toml}:/app/governance.toml:ro
+      # The governance document, read-only — the service must never be able to rewrite its
+      # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var
+      # above is empty, so nothing reads it. /dev/null rather than a file in the checkout
+      # because it exists on every Docker host: a relative default resolves on the machine
+      # running compose, and over a remote DOCKER_CONTEXT the daemon would create an empty
+      # root-owned directory at that path on the trust host.
+      - ${ACCESS_POLICY_FILE:-/dev/null}:/app/governance.toml:ro
 
   trust-api:
     # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live
