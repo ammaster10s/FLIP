@@ -98,10 +98,8 @@ class Settings(BaseSettings):
     # endpoint, the host-published address browser- and host-bound presigned
     # URLs are signed for — SigV4 signs the host, so a URL the browser opens
     # cannot be signed for the docker service name the fl-api fetches bundles
-    # from. The base declares it None (one endpoint for every audience),
-    # DevSettings carries the compose default, and ProdSettings pins it to
-    # None so a value set there is a boot-time ValidationError: production
-    # presigns against its one regional endpoint.
+    # from. The base declares it None — one endpoint for every audience, which
+    # is production's shape — and DevSettings carries the compose default.
     S3_PUBLIC_ENDPOINT_URL: str | None = None
 
     # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
@@ -462,7 +460,7 @@ class DevSettings(Settings):
 
     # The dev object store's published host port, matching the `object-store`
     # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
-    # presigned URLs are signed for. ProdSettings pins it to None.
+    # presigned URLs are signed for.
     S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
 
     # Development sends no real email, ever: the console backend logs the
@@ -526,13 +524,6 @@ class ProdSettings(Settings):
     EMAIL_BACKEND: Literal["ses"] = "ses"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
-
-    # Production presigns against its one regional endpoint for every
-    # audience: the dev object store's public endpoint (FLIP#1291) is pinned to
-    # None, so a value set in a prod env is a boot-time ValidationError rather
-    # than browser URLs signed for a host that is not the bucket's. An empty
-    # string still coerces to None (commented-out env lines).
-    S3_PUBLIC_ENDPOINT_URL: None = None
 
 
 # Eager load once (for app use)

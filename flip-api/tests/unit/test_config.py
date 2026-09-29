@@ -391,8 +391,8 @@ def test_s3_public_endpoint_defaults_to_the_compose_object_store():
     """Development signs browser-bound URLs for the RustFS container's published port with no configuration (#1291).
 
     Asserted on the field, not an instance, for the reason ``test_dev_ses_addresses_are_optional_with_defaults``
-    gives. The base declares it ``None`` (one endpoint for every audience) so that ``ProdSettings`` can pin it
-    (below) rather than merely inherit a dev default.
+    gives. The base declares it ``None`` — one endpoint for every audience, production's shape — and only
+    ``DevSettings`` sets it.
     """
     assert DevSettings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default == "http://localhost:9000"
     assert Settings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default is None
@@ -402,16 +402,3 @@ def test_s3_public_endpoint_tolerates_an_empty_string():
     """The env-file trap of ``coerce_empty_email_backend``, for the public endpoint (#1291)."""
     assert DevSettings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
     assert Settings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None
-
-
-def test_s3_public_endpoint_is_rejected_in_production():
-    """Production presigns against its one regional endpoint for every audience (#1291).
-
-    ``ProdSettings`` pins the dev-only field to ``None`` (the ``AUTH_BACKEND`` pattern), so a value set in a
-    prod env is a boot-time validation error rather than browser URLs signed for a host that is not the
-    bucket's.
-    """
-    with pytest.raises(ValidationError) as exc_info:
-        ProdSettings(ENV="production", **_PROD_REQUIRED, S3_PUBLIC_ENDPOINT_URL="http://localhost:9000")
-    assert "S3_PUBLIC_ENDPOINT_URL" in str(exc_info.value)
-    assert ProdSettings(ENV="production", **_PROD_REQUIRED, S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None

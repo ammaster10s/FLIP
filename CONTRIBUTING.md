@@ -259,7 +259,7 @@ opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), t
 which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). The store's static keys
 reach flip-api and the fl-servers as plain `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, the only AWS credentials
 the dev stack holds. Staging and production are unchanged: real S3 buckets, the task role, the regional endpoint;
-`ProdSettings` pins `S3_PUBLIC_ENDPOINT_URL` to `None`, so it cannot be enabled there.
+the public endpoint is unset there, so every audience signs against the one endpoint.
 
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
 object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
