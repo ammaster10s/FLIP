@@ -42,8 +42,8 @@ the commented dev form):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
-match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
+that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kits.py` and
+`sync_trust_kit.py` both write through its `write_kit`. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
@@ -71,8 +71,7 @@ workstation in two commands (prod AWS creds required):
    — scaffolds `trust/.env.<CODE>.production` from the base template
    (`trust/.env.example`).
 2. `make register-trust KIT=<CODE> PROD=true` — registers on the prod hub and
-   fills BOTH the Kit credentials AND the Hub-shared block in one step
-   (replaces the old "paste 5 UI lines + separate `sync-trust-kit`").
+   fills BOTH the Kit credentials AND the Hub-shared block in one step.
 
 Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true`
 tarballs the populated kit file as-is + the operator's slice of the FL
@@ -137,13 +136,12 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
 
 ## Environment
 
-- All runtime config comes from the kit file (`trust/.env.<KIT>`); no hub `.env.*` is included by `trust/Makefile` or `trust/xnat/Makefile`. `PROD` still selects the compose-file suffix (development / production) but no longer drives an env-file include.
+- In production all runtime config comes from the kit file (`trust/.env.<KIT>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `PROD` also selects the compose-file suffix (development / production).
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
-- `DEBUG` is no longer inherited from a hub env file. `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
-- Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy (previous behavior). Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
+- `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
+- Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy. Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for NVFLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
-- Local trust uses `trust-local` project name to avoid port collisions
 
 ## XNAT and PACS Environment Variables
 
@@ -190,7 +188,7 @@ The senders construct the header inline at call sites:
 
 - `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
-- The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
+- The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `fl-tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 
 ## Trust data: seeding and versioning
 
@@ -198,7 +196,7 @@ The senders construct the header inline at call sites:
 Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
 `PROJECTS` (default `cxr_project`: one list drives both halves, so it holds only projects the
 dataset publishes a DICOM set for as well as tables — spleen and brain_mri regenerate theirs
-locally since #1221) from the published canonical tables at the pinned
+locally) from the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
 `source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
