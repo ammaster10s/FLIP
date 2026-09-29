@@ -92,10 +92,7 @@ def test_has_trust_permissions_true_only_at_the_granted_trust(session):
     other_trust = Trust(name="Trust Admin Flow B")
     session.add(other_trust)
     session.flush()
-    assert (
-        has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], other_trust.id, session)
-        is False
-    )
+    assert has_trust_permissions(user_id, [PermissionRef.CAN_APPROVE_FOR_TRUST], other_trust.id, session) is False
 
 
 def test_has_trust_permissions_ignores_global_admin_grant(session):
@@ -125,9 +122,7 @@ def test_has_permissions_returns_false_when_researcher_lacks_admin_only_permissi
     assert has_permissions(user_id, [PermissionRef.CAN_APPROVE_PROJECTS], session) is False
     # Mixed list must short-circuit to False — a single missing perm denies the whole check.
     assert (
-        has_permissions(
-            user_id, [PermissionRef.CAN_CREATE_PROJECTS, PermissionRef.CAN_APPROVE_PROJECTS], session
-        )
+        has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS, PermissionRef.CAN_APPROVE_PROJECTS], session)
         is False
     )
 
@@ -298,6 +293,5 @@ def test_role_permission_seed_contract(session):
     for role_id, expected in expected_by_role.items():
         granted = granted_by_role.get(role_id, set())
         assert granted == expected, (
-            f"role-perm seed drift for role {role_id}: "
-            f"missing {expected - granted}, extra {granted - expected}"
+            f"role-perm seed drift for role {role_id}: missing {expected - granted}, extra {granted - expected}"
         )

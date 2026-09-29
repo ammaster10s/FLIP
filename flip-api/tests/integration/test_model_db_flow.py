@@ -146,9 +146,7 @@ def test_save_model_persists_model_and_fans_out_to_approved_trusts_only(session,
     assert persisted.project_id == ctx["project"].id
     assert persisted.deleted is False
 
-    intersects = session.exec(
-        select(ModelTrustIntersect).where(ModelTrustIntersect.model_id == created.id)
-    ).all()
+    intersects = session.exec(select(ModelTrustIntersect).where(ModelTrustIntersect.model_id == created.id)).all()
     # Neither the declined nor the pending ProjectTrustIntersect may show up in the fan-out —
     # that's the invariant a mocked Session would happily violate.
     assert {row.trust_id for row in intersects} == {t.id for t in ctx["approved_trusts"]}
@@ -182,9 +180,7 @@ def test_declined_and_pending_trusts_get_no_imaging_project(session, approved_pr
 def test_save_model_403_when_user_is_not_project_owner(session, approved_project_with_trusts, user_factory):
     """A user who is not the owner (and lacks CAN_MANAGE_PROJECTS) gets 403."""
     other_user = user_factory()
-    payload = ISaveModel(
-        name="x", description="d", projectId=approved_project_with_trusts["project"].id
-    )
+    payload = ISaveModel(name="x", description="d", projectId=approved_project_with_trusts["project"].id)
 
     with pytest.raises(HTTPException) as exc:
         save_model(request=MagicMock(), payload=payload, db=session, user_id=other_user.id)

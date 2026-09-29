@@ -222,6 +222,8 @@ The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings d
 
 The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.production` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
+Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
+
 The flag is mirrored to the UI via `/users/me/mfa/status` (`required: bool`) so the router guard knows when to skip the enrolment redirect.
 
 ##### Resetting MFA for another user

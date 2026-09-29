@@ -33,9 +33,9 @@ This script reads that kit file and:
      infrastructure secrets (XNAT / OMOP / S3) created by the chart untouched.
   2. Writes a Helm values override (``k8s-trust-<CODE>.yaml``) carrying the
      non-secret, deployment-specific settings the chart needs: the hub URL,
-     FL backend, AWS region, the fl-client kit S3 bucket, the FL kit slot
-     (so the NVFLARE kit path resolves to the slot the hub assigned, not the
-     cosmetic trust name) and — when the kit names one — the trust's governance
+     FL backend, AWS region, trust number, where the FL kit sits on the node,
+     the release image pins, the OMOP vocabulary bucket, the FL-server
+     egress port and — when the kit names one — the trust's governance
      document (FLIP#1259), read from its ``ACCESS_POLICY_FILE`` and embedded
      whole (a path on the deploy host means nothing inside a pod).
 
@@ -139,14 +139,20 @@ def stamp_helm_ownership(secret_name: str, namespace: str, release_name: str) ->
     ns = _kubectl_ns(namespace)
     rel_ns = namespace or "default"
     subprocess.run(
-        [*KUBECTL, "label", "secret", secret_name, *ns,
-         "app.kubernetes.io/managed-by=Helm", "--overwrite"],
+        [*KUBECTL, "label", "secret", secret_name, *ns, "app.kubernetes.io/managed-by=Helm", "--overwrite"],
         check=True,
     )
     subprocess.run(
-        [*KUBECTL, "annotate", "secret", secret_name, *ns,
-         f"meta.helm.sh/release-name={release_name}",
-         f"meta.helm.sh/release-namespace={rel_ns}", "--overwrite"],
+        [
+            *KUBECTL,
+            "annotate",
+            "secret",
+            secret_name,
+            *ns,
+            f"meta.helm.sh/release-name={release_name}",
+            f"meta.helm.sh/release-namespace={rel_ns}",
+            "--overwrite",
+        ],
         check=True,
     )
 
@@ -165,10 +171,14 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
         release_name: Helm release name to record as the Secret's owner.
     """
     ns = _kubectl_ns(namespace)
-    exists = subprocess.run(
-        [*KUBECTL, "get", "secret", secret_name, *ns],
-        capture_output=True, text=True,
-    ).returncode == 0
+    exists = (
+        subprocess.run(
+            [*KUBECTL, "get", "secret", secret_name, *ns],
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
 
     if exists:
         data = {k: base64.b64encode(v.encode()).decode() for k, v in entries.items()}
@@ -219,7 +229,6 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
         GovernanceDocumentError: If the kit names an ``ACCESS_POLICY_FILE`` that cannot be read.
     """
     trust_name = kit.get("TRUST_NAME", code)
-    slot = kit.get("FL_KIT_SLOT", "").strip()
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
@@ -372,9 +381,17 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     return "\n".join(lines)
 
 
-def main(code: str, env: str, namespace: str, secret_name: str,
-         output_dir: Path, aws_region: str, apply_secret: bool,
-         write_override: bool = True, release_name: str | None = None) -> None:
+def main(
+    code: str,
+    env: str,
+    namespace: str,
+    secret_name: str,
+    output_dir: Path,
+    aws_region: str,
+    apply_secret: bool,
+    write_override: bool = True,
+    release_name: str | None = None,
+) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = Path(__file__).resolve().parents[3]
     kit_path = repo_root / "trust" / f".env.{code}.{env}"
@@ -387,7 +404,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     if not kit_path.exists():
         print(f"❌ Kit file not found: {kit_path}")
         print("   Register the trust first:")
-        print(f"     make new-trust TRUST_CODE={code} TRUST_NAME=\"...\"")
+        print(f'     make new-trust TRUST_CODE={code} TRUST_NAME="..."')
         print(f"     make -C deploy/providers/AWS register-trusts KIT={code} PROD={env}")
         print(f"     make sync-trust-kit KIT={code} PROD={env}")
         sys.exit(1)
@@ -405,10 +422,14 @@ def main(code: str, env: str, namespace: str, secret_name: str,
     # ── 1. Patch the per-trust secrets into the cluster ──────────────────
     entries = build_secret_entries(kit)
     if apply_secret:
-        ns_present = subprocess.run(
-            [*KUBECTL, "get", "ns", namespace],
-            capture_output=True, text=True,
-        ).returncode == 0
+        ns_present = (
+            subprocess.run(
+                [*KUBECTL, "get", "ns", namespace],
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
         if ns_present:
             print("🔐 Patching per-trust secrets into the Kubernetes Secret…")
             patch_k8s_secret(secret_name, namespace, entries, release_name)
@@ -452,9 +473,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Sync a registered FLIP trust kit into the Kubernetes Helm deployment"
-    )
+    parser = argparse.ArgumentParser(description="Sync a registered FLIP trust kit into the Kubernetes Helm deployment")
     parser.add_argument("--kit", required=True, help="Trust CODE (e.g. Trust_K8s, Trust_2)")
     parser.add_argument(
         "--env",

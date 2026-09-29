@@ -67,6 +67,7 @@ def test_announce_identity_ignores_response_without_identity():
     with patch.object(task_poller, "EXPECTED_TRUST_ID", "expected-id"):
         _maybe_announce_identity({"message": "Heartbeat recorded"})  # no exit
 
+
 # ---- _poll_for_tasks ----
 
 
@@ -331,7 +332,8 @@ async def test_report_task_result_includes_error_in_result():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "Something went wrong"},
     )
 
@@ -351,7 +353,8 @@ async def test_report_task_result_forwards_status_code():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "404: Project not found", "status_code": 404},
     )
 
@@ -369,7 +372,8 @@ async def test_report_task_result_omits_absent_status_code():
     mock_client.post.return_value = mock_response
 
     await _report_task_result(
-        mock_client, "task-123",
+        mock_client,
+        "task-123",
         {"success": False, "error": "Something went wrong"},
     )
 

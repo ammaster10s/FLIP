@@ -126,9 +126,7 @@ def delete_one_trust(name: str, session: Session) -> dict[str, Any]:
     # registration. Done before the dependent-rows pass so a partial run
     # doesn't leave the slot stuck assigned to a half-deleted trust.
     freed_slot: str | None = None
-    slot = session.exec(
-        select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust_id)
-    ).first()
+    slot = session.exec(select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust_id)).first()
     if slot is not None:
         slot.assigned_to_trust_id = None
         slot.assigned_at = None
@@ -141,9 +139,7 @@ def delete_one_trust(name: str, session: Session) -> dict[str, Any]:
     # session.execute() (not SQLModel's exec(), which only accepts SELECTs).
     deleted_counts: dict[str, int] = {}
     for model, fk_field in _DEPENDENT_TABLES:
-        result = session.execute(
-            delete(model).where(getattr(model, fk_field) == trust_id)
-        )
+        result = session.execute(delete(model).where(getattr(model, fk_field) == trust_id))
         # __tablename__ is set on every SQLModel table class above; cast
         # via getattr so mypy doesn't trip over the loosely-typed `type`
         # element in _DEPENDENT_TABLES. rowcount lives on CursorResult,

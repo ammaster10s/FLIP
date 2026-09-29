@@ -253,7 +253,8 @@ def test_stamp_helm_ownership_issues_label_and_annotate(monkeypatch):
     label = next(c for c in calls if c[1] == "label")
     annotate = next(c for c in calls if c[1] == "annotate")
     assert "app.kubernetes.io/managed-by=Helm" in label
-    assert "--overwrite" in label and "--overwrite" in annotate
+    assert "--overwrite" in label
+    assert "--overwrite" in annotate
     assert "meta.helm.sh/release-name=trust-release" in annotate
     assert "meta.helm.sh/release-namespace=flip-trust" in annotate
     assert ["-n", "flip-trust"] == label[4:6]  # namespaced
@@ -319,7 +320,8 @@ def test_patch_k8s_secret_heals_ownership_on_existing(monkeypatch):
     assert "annotate" in verbs
     label = next(c for c in calls if c[1] == "label")
     annotate = next(c for c in calls if c[1] == "annotate")
-    assert "--overwrite" in label and "--overwrite" in annotate
+    assert "--overwrite" in label
+    assert "--overwrite" in annotate
 
 
 def test_stamp_helm_ownership_default_namespace(monkeypatch):

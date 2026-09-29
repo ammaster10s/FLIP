@@ -60,15 +60,11 @@ def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_e
         delete_cognito_user(email, user_pool_id)
     except Exception:
         logger.exception(
-            f"Failed to roll back Cognito user {email} after audit-write failure; "
-            f"manual cleanup required."
+            f"Failed to roll back Cognito user {email} after audit-write failure; manual cleanup required."
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                "Failed to register user; rollback also failed. "
-                "Manual cleanup of the Cognito user required."
-            ),
+            detail=("Failed to register user; rollback also failed. Manual cleanup of the Cognito user required."),
         ) from original_err
 
 
@@ -161,6 +157,4 @@ def register_user(
         raise
     except Exception as e:
         logger.exception("Error registering user")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

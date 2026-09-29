@@ -27,9 +27,7 @@ def session():
     Real (not mocked) so the primary-key and unique constraints are enforced —
     that is what the rename regression below depends on.
     """
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[Role.__table__])
     with Session(engine) as session:
         yield session

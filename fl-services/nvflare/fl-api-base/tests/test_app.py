@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,6 +40,25 @@ def test_health_endpoint(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert "healthy" in response.json()["status"]
+
+
+def test_health_names_the_build(client, monkeypatch):
+    """/health reports the baked FLIP_RELEASE, so a running FL API can say which build it is."""
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    assert client.get("/health").json()["version"] == "v9.9.9"
+
+
+def test_openapi_names_the_same_build(monkeypatch):
+    """FastAPI reads the version at app construction, so reload the app module under the release."""
+    import fl_api.app as app_module
+
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    try:
+        importlib.reload(app_module)
+        assert app_module.app.version == "v9.9.9"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(app_module)
 
 
 def test_startup_session_is_created(client):

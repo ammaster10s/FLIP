@@ -204,9 +204,7 @@ def test_audit_commit_failure_rolls_back_cognito_user(mock_request, mock_db, tok
         mock_db.rollback.assert_called_once()
 
 
-def test_audit_commit_failure_still_500s_when_cognito_rollback_fails(
-    mock_request, mock_db, token_id, user_data
-):
+def test_audit_commit_failure_still_500s_when_cognito_rollback_fails(mock_request, mock_db, token_id, user_data):
     """If both the audit commit AND the rollback fail, surface a distinct 500 detail.
 
     The Cognito user is orphaned. A retry would hit ``UsernameExistsException`` and

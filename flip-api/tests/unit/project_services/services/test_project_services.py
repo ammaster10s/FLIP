@@ -712,8 +712,12 @@ class TestGetReimportQueries:
         trust_id = uuid4()
 
         query = Queries(
-            id=uuid4(), name="Test Query", query="SELECT *", project_id=ch_project_id,
-            created=None, created_by=uuid4(),
+            id=uuid4(),
+            name="Test Query",
+            query="SELECT *",
+            project_id=ch_project_id,
+            created=None,
+            created_by=uuid4(),
         )
         xnat_project_status = XNATProjectStatus(
             id=uuid4(),
@@ -772,8 +776,12 @@ class TestGetProject:
         trust_ok_2 = uuid4()
         trust_errored = uuid4()
         mock_query = Queries(
-            id=query_id, name="Test Query", query="SELECT *", project_id=project_id,
-            created=None, created_by=uuid4(),
+            id=query_id,
+            name="Test Query",
+            query="SELECT *",
+            project_id=project_id,
+            created=None,
+            created_by=uuid4(),
             queried_trust_ids=[trust_ok_1, trust_ok_2, trust_errored],
         )
         # Step 3: Mock (trust_id, data) pairs — successful + errored — so the
@@ -792,14 +800,19 @@ class TestGetProject:
         trust_pending = uuid4()
         trust_cancelled = uuid4()
         from flip_api.domain.schemas.status import TaskStatus
+
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
             MagicMock(first=MagicMock(return_value=(mock_query, "Alex Triay"))),  # Queries ⋈ UserProfile
             MagicMock(all=MagicMock(return_value=result_rows)),  # select(QueryResult.trust_id, .data)
-            MagicMock(all=MagicMock(return_value=[
-                (trust_pending, TaskStatus.PENDING),
-                (trust_cancelled, TaskStatus.CANCELLED),
-            ])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
+            MagicMock(
+                all=MagicMock(
+                    return_value=[
+                        (trust_pending, TaskStatus.PENDING),
+                        (trust_cancelled, TaskStatus.CANCELLED),
+                    ]
+                )
+            ),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
@@ -858,18 +871,26 @@ class TestGetProject:
             status="UNSTAGED",
         )
         mock_query = Queries(
-            id=query_id, name="Query X", query="bad sql", project_id=project_id,
-            created=None, created_by=uuid4(),
+            id=query_id,
+            name="Query X",
+            query="bad sql",
+            project_id=project_id,
+            created=None,
+            created_by=uuid4(),
         )
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats="{not-valid-json")
 
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
             MagicMock(first=MagicMock(return_value=(mock_query, None))),  # Queries ⋈ UserProfile
-            MagicMock(all=MagicMock(return_value=[
-                (uuid4(), '{"record_count": 1, "data": [], "error": null}'),
-                (uuid4(), '{"record_count": 2, "data": [], "error": null}'),
-            ])),  # select(QueryResult.trust_id, .data)
+            MagicMock(
+                all=MagicMock(
+                    return_value=[
+                        (uuid4(), '{"record_count": 1, "data": [], "error": null}'),
+                        (uuid4(), '{"record_count": 2, "data": [], "error": null}'),
+                    ]
+                )
+            ),  # select(QueryResult.trust_id, .data)
             MagicMock(all=MagicMock(return_value=[])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
@@ -1105,18 +1126,14 @@ class TestGetProjectModelsServiceSearch:
         )
 
         # Two exec() calls: count then models. Both should carry the `like %seg%` predicate.
-        compiled_stmts = [
-            str(call.args[0].compile()).lower() for call in mock_db_session.exec.call_args_list
-        ]
+        compiled_stmts = [str(call.args[0].compile()).lower() for call in mock_db_session.exec.call_args_list]
         for compiled in compiled_stmts:
             assert "like" in compiled
             assert "lower" in compiled
 
 
 class TestUnstageWarnsOnZeroDeletes:
-    def test_warns_when_no_rows_deleted_but_still_completes(
-        self, mock_db_session: MagicMock, sample_project: Projects
-    ):
+    def test_warns_when_no_rows_deleted_but_still_completes(self, mock_db_session: MagicMock, sample_project: Projects):
         """A staged project whose trust-intersect rows were already gone should
         still flip back to UNSTAGED with a warn-log, not raise. Belt-and-braces
         for projects whose state drifted out-of-band.

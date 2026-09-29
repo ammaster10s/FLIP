@@ -171,9 +171,7 @@ def _patch_session(monkeypatch):
     session_ctx = MagicMock()
     session_ctx.__enter__.return_value = session_mock
     session_ctx.__exit__.return_value = False
-    monkeypatch.setattr(
-        "flip_api.scripts.register_trust.Session", lambda _engine: session_ctx
-    )
+    monkeypatch.setattr("flip_api.scripts.register_trust.Session", lambda _engine: session_ctx)
     return session_mock
 
 
@@ -196,9 +194,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
             }
         ],
     )
-    monkeypatch.setattr(
-        "sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"]
-    )
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"])
 
     cli.main()
 
