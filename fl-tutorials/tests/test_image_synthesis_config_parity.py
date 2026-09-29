@@ -523,13 +523,12 @@ def test_latent_network_has_no_discriminator(latent_state_dict_keys: list[str]) 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_spatial_shape_matches_the_transform_resize(tutorial: Path) -> None:
-    """``config.json``'s ``spatial_shape`` equals the size ``transforms.py`` actually resizes to.
+    """``transforms.py`` resizes to ``config.json``'s ``spatial_shape``, read from the config itself.
 
-    The two are read by different halves of the app — the transform chain shapes the images, while
-    ``spatial_shape`` shapes the noise tensor a diffusion step samples and the latent grid the latent
-    job derives. A drift between them is not a config nit: the noise and the image would disagree on
-    shape, which surfaces as a broadcasting error deep inside a training step, or (worse, in the
-    latent job) as a silently mis-sized latent.
+    The transform chain shapes the images, while ``spatial_shape`` shapes the noise tensor a diffusion
+    step samples and the latent grid the latent job derives. Both come from the one config key, so
+    editing it resizes everything; a hard-coded size in ``transforms.py`` would leave the images at
+    the old size and fail with a broadcasting error inside a training step.
     """
     transforms = _load_app_module(tutorial, "transforms")
     assert _config(tutorial)["spatial_shape"] == list(transforms.SPATIAL_SHAPE)

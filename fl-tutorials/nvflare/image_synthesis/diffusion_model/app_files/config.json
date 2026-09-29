@@ -11,8 +11,8 @@
     "BATCH_SIZE": 6,
     "SAVE_DEBUG_SAMPLES": false,
     "spatial_shape": [
-        256,
-        256
+        128,
+        128
     ],
     "net_config": {
         "spatial_dims": 2,
