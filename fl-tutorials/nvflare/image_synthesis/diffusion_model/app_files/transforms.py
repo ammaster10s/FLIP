@@ -26,6 +26,13 @@ def load_spatial_shape() -> list[int]:
 SPATIAL_SHAPE = load_spatial_shape()
 
 
+def to_grayscale(image):
+    """Average an ``(H, W, 3)`` RGB-stored radiograph to ``(H, W)``; grayscale passes through."""
+    if image.ndim == 3 and image.shape[-1] == 3:
+        return image.float().mean(dim=-1)
+    return image
+
+
 def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
     """Return the MONAI transforms used for chest-X-ray training/validation.
 
@@ -37,6 +44,7 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
     """
     transforms = [
         mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
+        mt.Lambdad(keys=["image"], func=to_grayscale),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
         mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
         mt.ScaleIntensityd(keys=["image"]),
