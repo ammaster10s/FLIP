@@ -55,5 +55,5 @@ governance.*.toml
 data/**/*.dcm
 data/**/*.nii.gz
 
-# Approved-cohort snapshots (FLIP#857): row-level patient data, never committed
+# Approved-cohort memberships (FLIP#857): patient/study identifiers, never committed
 data-access-api/.snapshots/

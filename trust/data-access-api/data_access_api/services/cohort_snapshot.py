@@ -10,54 +10,49 @@
 # limitations under the License.
 #
 
-"""Durable, project-keyed store for the approved-cohort snapshot (FLIP#857).
+"""Durable, project-keyed store for the approved-cohort MEMBERSHIP (FLIP#857).
 
-At project approval the trust materialises its cohort dataframe once; this module persists
-that artefact on the local filesystem (``COHORT_SNAPSHOT_DIR``, a dedicated bind mount) so
-the row-level routes can serve a frozen, immutable cohort instead of re-running the SQL
-against live OMOP on every call. Deliberately a file store: data-access-api keeps zero
-write access to any database, and researcher SQL (pinned to the ``omop`` schema by
+At project approval the trust runs its cohort query once and records who is in it: the query of
+record plus the ``person_id`` and/or ``accession_id`` values it returned. The row-level routes then
+re-run that stored query (never the caller's SQL) and keep only rows whose ids are in the frozen
+set, so an approved cohort can SHRINK — a patient removed from OMOP (an opt-out, a correction) drops
+out and their data is no longer reachable — but can never GROW with the live database.
+
+What is stored is identifiers and the SQL text, never clinical values: the artefact is a small,
+human-readable JSON file an operator can inspect, diff and audit, and the attribute data stays in
+OMOP where the trust's existing governance applies to it. Deliberately a file store: data-access-api
+keeps zero write access to any database, and researcher SQL (pinned to the ``omop`` schema by
 ``validate_query``) cannot reach a filesystem at all.
 
-Layout, one directory per hub project id::
+Layout, one file per hub project id::
 
-    <COHORT_SNAPSHOT_DIR>/<project-uuid>/
-        dataframe.parquet   # the frozen cohort, dtype-faithful (parquet, no index)
-        meta.json           # row_count / subject_count / columns / query_hash / created_at /
-                            # imaging_accession_ids / imaging_subject_count / format_version
+    <COHORT_SNAPSHOT_DIR>/<project-uuid>/membership.json
 
-Writes are atomic at directory granularity: everything lands in a ``.tmp-*`` sibling first
-and is activated with ``os.replace`` renames, so a reader never observes a half-written
-snapshot and a crash mid-write leaves (at worst) a stale temp directory that the boot-time
-sweep removes. There is deliberately NO TTL and no in-place mutation — a snapshot is
-immutable until it is overwritten by a re-approval or deleted; an approved cohort must not
-silently vanish or drift mid-training (contrast ``services/query_cache.py``, the volatile
-per-process cache this module's API is modelled on).
+Writes are atomic at directory granularity: the file lands in a ``.tmp-*`` sibling first and is
+activated with ``os.replace`` renames, so a reader never observes a half-written record and a crash
+mid-write leaves (at worst) a stale temp directory that the boot-time sweep removes. There is no TTL
+and no in-place mutation — a record is replaced by a re-approval or deleted, never edited.
 """
 
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import shutil
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-
-import pandas as pd
 
 from data_access_api.config import get_settings
 from data_access_api.utils.logger import logger
 
-# Bumped when the on-disk layout changes; a snapshot with an unknown version is treated as
-# absent (legacy live-SQL fall-through) rather than mis-read.
+# Bumped when the on-disk layout changes; a record with an unknown version is treated as absent
+# (the project refuses row-level serving until it is re-approved) rather than mis-read.
 _FORMAT_VERSION = 2
-_DATA_FILENAME = "dataframe.parquet"
-_META_FILENAME = "meta.json"
-# Work-in-progress / superseded directories. Never valid snapshots; swept at startup.
+_MEMBERSHIP_FILENAME = "membership.json"
+# Work-in-progress / superseded directories. Never valid records; swept at startup.
 _TMP_PREFIX = ".tmp-"
 _OLD_PREFIX = ".old-"
 
@@ -67,48 +62,40 @@ class SnapshotStoreDisabled(Exception):
 
 
 class SnapshotTooLarge(Exception):
-    """Raised when the serialized snapshot exceeds ``SNAPSHOT_MAX_BYTES`` (never truncated)."""
-
-
-@dataclass(frozen=True)
-class SnapshotMeta:
-    """The snapshot's serving-relevant facts, readable without deserialising the frame."""
-
-    row_count: int
-    # Distinct subjects the cohort covers (``count_distinct_subjects`` at creation). The
-    # disclosure threshold is applied to this, not to row_count; a snapshot is never
-    # persisted without it.
-    subject_count: int
-    columns: list[str]
-    query_hash: str
-    created_at: str  # ISO-8601 UTC
-    # What /cohort/accession-ids releases: the cohort's accession_id values that resolved
-    # through omop.image_occurrence at creation (``keep_imaging_accessions``), in cohort order,
-    # and the distinct subjects behind them, which that route gates on. A value that is no
-    # imaging accession is never released, so nothing can ride out under the alias (FLIP#1259).
-    # Empty/0 for a cohort without an accession_id column.
-    imaging_accession_ids: list[str] = field(default_factory=list)
-    imaging_subject_count: int = 0
-    format_version: int = _FORMAT_VERSION
-
-    @property
-    def has_accessions(self) -> bool:
-        return "accession_id" in self.columns
+    """Raised when the serialized record exceeds ``SNAPSHOT_MAX_BYTES`` (never truncated)."""
 
 
 @dataclass(frozen=True)
 class Snapshot:
-    df: pd.DataFrame
-    meta: SnapshotMeta
+    """A project's frozen cohort membership."""
+
+    # The raw SQL of record, re-run (through validate_query) on every row-level fetch.
+    query: str
+    query_hash: str
+    # The frozen member ids, as strings. None when the cohort does not project that column.
+    # Serving keeps a row only if every frozen column's value is in its set, so neither a new
+    # patient nor a new study of an existing patient can enter an approved cohort.
+    person_ids: list[str] | None
+    accession_ids: list[str] | None
+    # Facts at approval, for the hub's audit strip and drift check. Serving re-counts live.
+    row_count: int
+    subject_count: int
+    columns: list[str]
+    created_at: str  # ISO-8601 UTC
+    format_version: int = _FORMAT_VERSION
+
+    @property
+    def has_accessions(self) -> bool:
+        return self.accession_ids is not None
 
 
 def normalised_query_hash(query: str) -> str:
     """SHA-256 of the whitespace-normalised, lowercased SQL text.
 
-    Used only to *detect and log* when a caller-supplied query differs from the one the
-    snapshot froze — never as a security control (the frozen artefact is served either
-    way; that is the point). Hashes the raw submitted text, not the validator's re-emitted
-    form, so the hub-side string of record compares equal across submission and serving.
+    Used only to *detect and log* when a caller-supplied query differs from the one of record —
+    never as a security control (the stored query is served either way; that is the point).
+    Hashes the raw submitted text, not the validator's re-emitted form, so the hub-side string of
+    record compares equal across submission and serving.
     """
     normalised = " ".join(query.strip().lower().split())
     return hashlib.sha256(normalised.encode()).hexdigest()
@@ -181,30 +168,30 @@ def ensure_store() -> None:
 
 def save_snapshot(
     project_id: str,
-    df: pd.DataFrame,
-    query_hash: str,
+    query: str,
+    person_ids: list[str] | None,
+    accession_ids: list[str] | None,
+    row_count: int,
     subject_count: int,
-    imaging_accession_ids: list[str] | None = None,
-    imaging_subject_count: int = 0,
-) -> SnapshotMeta:
-    """Persist the cohort dataframe for ``project_id``, atomically replacing any predecessor.
+    columns: list[str],
+) -> Snapshot:
+    """Persist the cohort membership for ``project_id``, atomically replacing any predecessor.
 
     Args:
         project_id (str): The decrypted hub project id (must be a UUID).
-        df (pd.DataFrame): The cohort exactly as ``get_records`` returned it.
-        query_hash (str): ``normalised_query_hash`` of the raw SQL that produced ``df``.
-        subject_count (int): Distinct subjects ``df`` covers, as ``count_distinct_subjects``
-            established them; the serve-time disclosure gate reads this.
-        imaging_accession_ids (list[str] | None): The accession ids ``/cohort/accession-ids``
-            may release — those that resolved to an imaging study. None/empty for none.
-        imaging_subject_count (int): Distinct subjects behind ``imaging_accession_ids``.
+        query (str): The raw SQL of record.
+        person_ids (list[str] | None): The frozen ``person_id`` values, or None when not projected.
+        accession_ids (list[str] | None): The frozen ``accession_id`` values, or None when not projected.
+        row_count (int): Rows the query returned at approval.
+        subject_count (int): Distinct subjects at approval, as ``count_distinct_subjects`` took them.
+        columns (list[str]): The query's column names at approval.
 
     Returns:
-        SnapshotMeta: What was written.
+        Snapshot: What was written.
 
     Raises:
         SnapshotStoreDisabled: When no store directory is configured.
-        SnapshotTooLarge: When the serialized frame exceeds ``SNAPSHOT_MAX_BYTES``.
+        SnapshotTooLarge: When the serialized record exceeds ``SNAPSHOT_MAX_BYTES``.
         ValueError: When ``project_id`` is not a UUID.
         OSError: When the store directory is not writable.
     """
@@ -213,30 +200,25 @@ def save_snapshot(
     if canonical is None:
         raise ValueError("project_id must be a UUID to key a cohort snapshot")
 
-    # Parquet keeps pandas dtypes (datetimes, nullable ints) so every training-time fetch of
-    # the frozen cohort deserialises to an identical frame. The index is dropped — the serve
-    # routes emit to_dict(orient="list"), which never includes it.
-    buffer = io.BytesIO()
-    df.to_parquet(buffer, engine="pyarrow", index=False)
-    payload = buffer.getvalue()
+    snapshot = Snapshot(
+        query=query,
+        query_hash=normalised_query_hash(query),
+        person_ids=person_ids,
+        accession_ids=accession_ids,
+        row_count=row_count,
+        subject_count=subject_count,
+        columns=columns,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    payload = json.dumps(asdict(snapshot), indent=1).encode()
 
     max_bytes = get_settings().SNAPSHOT_MAX_BYTES
     if len(payload) > max_bytes:
-        # Refuse rather than truncate: a partial cohort silently poisons training data.
+        # Refuse rather than truncate: a partial membership silently drops patients from training.
         raise SnapshotTooLarge(
-            f"Serialized cohort snapshot is {len(payload)} bytes, over the {max_bytes}-byte limit "
-            "(SNAPSHOT_MAX_BYTES). Narrow the cohort query's columns, or raise the limit."
+            f"Serialized cohort membership is {len(payload)} bytes, over the {max_bytes}-byte limit "
+            "(SNAPSHOT_MAX_BYTES). Raise the limit."
         )
-
-    meta = SnapshotMeta(
-        row_count=len(df),
-        subject_count=subject_count,
-        columns=[str(column) for column in df.columns],
-        query_hash=query_hash,
-        created_at=datetime.now(UTC).isoformat(),
-        imaging_accession_ids=list(imaging_accession_ids or []),
-        imaging_subject_count=imaging_subject_count,
-    )
 
     base.mkdir(parents=True, exist_ok=True)
     nonce = uuid.uuid4().hex[:8]
@@ -245,11 +227,10 @@ def save_snapshot(
     superseded = base / f"{_OLD_PREFIX}{canonical}-{nonce}"
     try:
         workdir.mkdir()
-        (workdir / _DATA_FILENAME).write_bytes(payload)
-        (workdir / _META_FILENAME).write_text(json.dumps(meta.__dict__))
+        (workdir / _MEMBERSHIP_FILENAME).write_bytes(payload)
 
-        # Two atomic renames. A crash between them leaves no active snapshot (readers fall
-        # back to live SQL and the boot sweep clears the debris) — never a half-written one.
+        # Two atomic renames. A crash between them leaves no active record (the project refuses
+        # row-level serving and the boot sweep clears the debris) — never a half-written one.
         if final.exists():
             os.replace(final, superseded)
         os.replace(workdir, final)
@@ -258,18 +239,18 @@ def save_snapshot(
         shutil.rmtree(superseded, ignore_errors=True)
 
     logger.info(
-        f"Cohort snapshot saved for project {canonical}: {meta.row_count} rows, "
-        f"{len(meta.columns)} columns, {len(payload)} bytes"
+        f"Cohort membership saved for project {canonical}: {len(person_ids or [])} person ids, "
+        f"{len(accession_ids or [])} accession ids, {len(payload)} bytes"
     )
-    return meta
+    return snapshot
 
 
 def get_snapshot(project_id: str) -> Snapshot | None:
-    """The frozen cohort for ``project_id``, or None when there is none to serve.
+    """The frozen membership for ``project_id``, or None when there is none to serve.
 
-    None covers every no-artefact case — store disabled, non-UUID project id, no snapshot
-    yet, unreadable/corrupt artefact (logged at ERROR). The row-level routes refuse on
-    None (fail-closed); a corrupt artefact is never partially served.
+    None covers every no-record case — store disabled, non-UUID project id, not approved yet,
+    unreadable/corrupt/unknown-version record (logged at ERROR). The row-level routes refuse on
+    None (fail-closed).
     """
     if not snapshot_enabled():
         return None
@@ -278,29 +259,25 @@ def get_snapshot(project_id: str) -> Snapshot | None:
         logger.debug(f"Project id {project_id!r} is not a UUID; no snapshot lookup")
         return None
 
-    snapshot_dir = _store_dir() / canonical
-    meta_path = snapshot_dir / _META_FILENAME
-    if not meta_path.exists():
+    path = _store_dir() / canonical / _MEMBERSHIP_FILENAME
+    if not path.exists():
         return None
 
     try:
-        raw_meta = json.loads(meta_path.read_text())
-        meta = SnapshotMeta(**raw_meta)
-        if meta.format_version != _FORMAT_VERSION:
+        raw = json.loads(path.read_text())
+        if raw.get("format_version") != _FORMAT_VERSION:
             logger.error(
-                f"Cohort snapshot for project {canonical} has format_version "
-                f"{meta.format_version} (expected {_FORMAT_VERSION}) — treating as absent"
+                f"Cohort membership for project {canonical} has format_version "
+                f"{raw.get('format_version')} (expected {_FORMAT_VERSION}) — treating as absent"
             )
             return None
-        df = pd.read_parquet(snapshot_dir / _DATA_FILENAME, engine="pyarrow")
+        return Snapshot(**raw)
     except Exception:
         logger.exception(
-            f"Cohort snapshot for project {canonical} is unreadable — treating as absent "
-            "(row-level routes refuse the project rather than serve a partial artefact)"
+            f"Cohort membership for project {canonical} is unreadable — treating as absent "
+            "(row-level routes refuse the project)"
         )
         return None
-
-    return Snapshot(df=df, meta=meta)
 
 
 def delete_snapshot(project_id: str) -> bool:

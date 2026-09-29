@@ -89,15 +89,15 @@ class Settings(BaseSettings):
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
 
-    # Approved-cohort snapshot store (FLIP#857). Directory where the cohort frozen at project
-    # approval is persisted, one sub-directory per hub project id — a dedicated bind mount in
-    # the compose files. The row-level routes serve ONLY these frozen artefacts (a project
-    # with no snapshot is refused), so an unset/unwritable directory means no row-level data
+    # Approved-cohort membership store (FLIP#857). Directory where the membership frozen at
+    # project approval is persisted, one sub-directory per hub project id — a dedicated bind
+    # mount in the compose files. The row-level routes serve ONLY these approved cohorts (a
+    # project with no record is refused), so an unset/unwritable directory means no row-level data
     # can be released until the store is fixed — deliberately fail-closed.
     COHORT_SNAPSHOT_DIR: str = ""
 
-    # Hard cap on one serialized snapshot. Over the cap the snapshot is REFUSED, never
-    # truncated — a partial cohort would silently poison training data.
+    # Hard cap on one serialized membership record. Over the cap it is REFUSED, never
+    # truncated — a partial membership would silently drop patients from training.
     SNAPSHOT_MAX_BYTES: PositiveInt = 536_870_912  # 512 MiB
 
     @field_validator("SNAPSHOT_MAX_BYTES", mode="before")

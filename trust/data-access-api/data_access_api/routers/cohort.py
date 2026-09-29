@@ -13,6 +13,7 @@
 import datetime
 from typing import Any
 
+import pandas as pd
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,6 +37,7 @@ from data_access_api.routers.schema import (
 )
 from data_access_api.services.cohort import (
     ACCESSION_ID_COLUMN,
+    SUBJECT_ID_COLUMN,
     count_distinct_subjects,
     get_records,
     get_statistics,
@@ -62,10 +64,10 @@ from data_access_api.utils.logger import logger
 # becomes a one-row oracle for probing the database.
 _BELOW_THRESHOLD_DETAIL = "Cohort is too small for row-level data to be released."
 
-# Returned by the row-level routes for a project with no frozen cohort artefact.
-# Row-level data is released ONLY from the snapshot persisted at approval
-# (FLIP#857); there is no live-SQL serving path. Deliberately generic: it must
-# not reveal whether the project exists.
+# Returned by the row-level routes for a project with no frozen cohort membership.
+# Row-level data is released ONLY for the membership recorded at approval
+# (FLIP#857); there is no path that serves a caller's own SQL. Deliberately
+# generic: it must not reveal whether the project exists.
 _NO_SNAPSHOT_DETAIL = "No approved cohort snapshot exists for this project."
 
 # Returned when a cohort's subject count cannot be established from its own projection. This
@@ -90,10 +92,10 @@ def _evaluate(action: str, project_id: str | None) -> Decision:
 
     ``/cohort`` calls ``validate_query`` before this, so the query's shape is judged the same
     whatever the policy says; deciding first made an invalid query a 400 when permitted and a
-    403 when denied. The two row-level routes ignore the caller's SQL (they serve the frozen
-    snapshot, FLIP#857) and decide before reading it, so a denied project's artefact is never
-    loaded and a denial answers the same whether or not a snapshot exists. The one difference
-    left is time: a denial answers without the query's round trip or the artefact read. That
+    403 when denied. The two row-level routes ignore the caller's SQL (they run the stored
+    query of record, FLIP#857) and decide before reading the frozen membership, so a denied
+    project's query never runs and a denial answers the same whether or not a membership exists.
+    The one difference left is time: a denial answers without the query's round trip. That
     tells a caller holding the trust-internal key whether its own project is denied, which its
     training job learns anyway when every fetch is refused.
     """
@@ -164,9 +166,9 @@ def _project_id_for_policy(encrypted_project_id: str) -> str | None:
 #
 # read_router — statistics + the two row-level serve routes. Gated on the trust-internal key
 # alone: every trust-internal service (trust-api, imaging-api, fl-client) legitimately reads
-# here, and the routes serve only the frozen, project-scoped, threshold-gated snapshot.
+# here, and the routes serve only the approved, project-scoped, threshold-gated cohort.
 #
-# write_router — the routes that DEFINE/destroy the frozen artefact the row-level routes then
+# write_router — the routes that DEFINE/destroy the frozen membership the row-level routes then
 # serve. Gated on the trust-internal key AND cohort-admin (proof of possessing AES_KEY_BASE64),
 # so a caller must be both a trust-internal service and one of the two trusted to define cohorts.
 # fl-client holds the trust-internal key but no AES key, so it can read its cohort but never
@@ -181,12 +183,12 @@ write_router = APIRouter(
 
 
 def _require_snapshot(project_id: str) -> Snapshot:
-    """The project's frozen cohort, or the fixed 403 when there is none.
+    """The project's frozen cohort membership, or the fixed 403 when there is none.
 
-    The snapshot persisted at approval is the ONLY source of row-level data: a project
-    that was never approved (or whose snapshot was purged, or whose trust has the store
-    unconfigured/unwritable) is refused. Fail-closed by construction — there is no
-    live-SQL fallback for these routes.
+    The membership recorded at approval is the ONLY basis for row-level data: a project that
+    was never approved (or whose record was purged, or whose trust has the store
+    unconfigured/unwritable) is refused. Fail-closed by construction — there is no path that
+    serves a caller's own SQL.
     """
     snapshot = get_snapshot(project_id)
     if snapshot is None:
@@ -195,41 +197,109 @@ def _require_snapshot(project_id: str) -> Snapshot:
     return snapshot
 
 
-def _check_frozen_threshold(project_id: str, subject_count: int, minimum_cohort_size: int) -> None:
-    """Apply the disclosure threshold to a FROZEN distinct-subject count.
+def _check_threshold(project_id: str, subject_count: int, minimum_cohort_size: int) -> None:
+    """Apply the disclosure threshold to a distinct-subject count.
 
-    The count is one ``count_distinct_subjects`` took when the snapshot was created and stored
-    in its meta, so the gate counts subjects, not rows, without a round trip to OMOP. The gate
-    reads the snapshot, not live OMOP: the frozen cohort is immutable, so a project that
-    cleared the threshold at approval keeps serving even while the live database drifts
-    underneath (pre-FLIP#857, the SQL was re-run on every call and the answer could change).
-    The refusal reuses the fixed below-threshold text so a zero-row snapshot and a
-    below-threshold one stay indistinguishable. The threshold itself is the governance
-    decision's ``effective_threshold``, taken live, so an operator RAISING their disclosure
-    floor — in the kit or in a governance rule — takes effect on already-approved projects.
+    The refusal reuses the fixed below-threshold text so an empty cohort and a below-threshold
+    one stay indistinguishable. The threshold is the governance decision's
+    ``effective_threshold``, taken live, so an operator RAISING their disclosure floor — in the
+    kit or in a governance rule — takes effect on already-approved projects.
     """
     if subject_count < minimum_cohort_size:
         logger.warning(
-            f"Withholding frozen cohort for project {project_id}: "
-            f"snapshot covers fewer than the minimum {minimum_cohort_size} subjects"
+            f"Withholding cohort for project {project_id}: "
+            f"it covers fewer than the minimum {minimum_cohort_size} subjects"
         )
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
 
 def _log_ignored_client_query(project_id: str, snapshot: Snapshot, client_query: str) -> None:
-    """Record that the caller-supplied SQL was ignored in favour of the frozen cohort.
+    """Record that the caller-supplied SQL was ignored in favour of the query of record.
 
-    Serving the snapshot regardless of the submitted SQL is what closes the arbitrary-SQL
-    exposure on these routes (see FLIP#857's audit note): the only row-level data obtainable
-    under a project's id is the cohort that was approved. The hash comparison exists purely
-    so a mismatch is visible in the trust's logs; the ``query`` field stays in the request
-    schema because the FL client library sends it.
+    Running only the stored query is what closes the arbitrary-SQL exposure on these routes
+    (see FLIP#857's audit note): the only row-level data obtainable under a project's id is the
+    cohort that was approved. The hash comparison exists purely so a mismatch is visible in the
+    trust's logs; the ``query`` field stays in the request schema because the FL client library
+    sends it.
     """
-    if normalised_query_hash(client_query) != snapshot.meta.query_hash:
+    if normalised_query_hash(client_query) != snapshot.query_hash:
         logger.warning(
-            f"Client-supplied query for project {project_id} differs from the frozen cohort "
-            "query — ignored; serving the approved snapshot."
+            f"Client-supplied query for project {project_id} differs from the approved cohort "
+            "query — ignored; serving the query of record."
         )
+
+
+def _id_str(value: Any) -> str:
+    """One canonical string per id, whatever dtype the column arrived as.
+
+    A nullable integer column comes back as float64 when it holds a NULL, so ``7`` and ``7.0``
+    must compare equal between the approval-time run and a later one.
+    """
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _frozen_ids(df: pd.DataFrame, column: str) -> list[str] | None:
+    """The distinct non-null values of ``column`` as canonical strings, or None when absent."""
+    if column not in df.columns:
+        return None
+    return sorted({_id_str(value) for value in df[column].dropna()})
+
+
+def _restrict_to_membership(df: pd.DataFrame, snapshot: Snapshot) -> pd.DataFrame:
+    """Keep only the rows whose ids are all in the frozen membership.
+
+    Both frozen columns must match, so neither a patient who joined OMOP after approval nor a new
+    study of an approved patient enters the cohort. A frozen column the query no longer projects
+    matches nothing — fail-closed, since membership can no longer be checked.
+    """
+    mask = pd.Series(True, index=df.index)
+    for column, ids in ((SUBJECT_ID_COLUMN, snapshot.person_ids), (ACCESSION_ID_COLUMN, snapshot.accession_ids)):
+        if ids is None:
+            continue
+        if column not in df.columns:
+            logger.error(f"Query of record no longer projects {column}; releasing no rows")
+            return df.iloc[0:0]
+        members = set(ids)
+        mask &= df[column].map(lambda value: pd.notna(value) and _id_str(value) in members)
+    return df[mask]
+
+
+def _run_cohort_query(query: str, *, use_cache: bool, what: str) -> pd.DataFrame:
+    """Validate and run a cohort query, with one column per name.
+
+    ``get_records`` already turns driver errors into category-only HTTPExceptions, which are
+    re-raised untouched; anything else becomes a category-only 500 — the detail travels back to
+    the hub, which shows it to every project member, and raw exception text can carry row values.
+    Duplicate column names (``SELECT *`` over a join that keeps both sides' ``person_id``) keep
+    their first copy, so every later ``df[column]`` is a Series.
+    """
+    safe_query = validate_query(query)
+    try:
+        df = get_records(safe_query, use_cache=use_cache)
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        logger.exception(f"{what} query failed with a database error")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
+    except Exception:
+        logger.exception(f"{what} query failed unexpectedly")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
+    return df.loc[:, ~df.columns.duplicated()]
+
+
+def _count_subjects_or_zero(df: pd.DataFrame, project_id: str) -> int:
+    """``count_distinct_subjects``, with any failure or an uncountable frame counted as zero.
+
+    A count that cannot be taken is refused exactly as a small cohort is, so the refusal never
+    says why.
+    """
+    try:
+        return count_distinct_subjects(df) or 0
+    except Exception:
+        logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
+        return 0
 
 
 @read_router.post("", response_model=StatisticsResponse)
@@ -325,29 +395,23 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
 @read_router.post("/dataframe")
 def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     """
-    Serves the project's FROZEN cohort in a DataFrame-like structure (column-oriented dict).
+    Serves the project's approved cohort in a DataFrame-like structure (column-oriented dict).
 
     This is the training-data path: user-supplied FL code inside the trust's fl-client
     reaches it through ``flip.get_dataframe(...)``, so it necessarily returns row-level
     records — a model trains on rows. The data stays inside the trust; only model updates
     leave it.
 
-    What it serves is the cohort snapshot persisted at project approval (FLIP#857), keyed
-    on the project id — **the caller-supplied SQL is ignored** (logged when it differs from
-    the frozen query). Consequences, all deliberate: the cohort cannot grow after approval;
-    every training round fetches an identical frame; and researcher code cannot execute
-    arbitrary SQL under an approved project's id. A project with no snapshot is refused —
-    there is no live-SQL serving path on this route.
+    It runs the query of record stored at approval (FLIP#857) — **the caller-supplied SQL is
+    ignored** (logged when it differs) — against live OMOP, uncached, and keeps only the rows
+    whose ``person_id`` / ``accession_id`` are in the membership frozen at approval. So the
+    cohort can shrink (a patient removed from OMOP drops out on the next fetch) but can never
+    grow, and researcher code cannot execute arbitrary SQL under an approved project's id. A
+    project with no frozen membership is refused.
 
-    Because it is row-level, the frozen cohort must clear ``COHORT_QUERY_THRESHOLD``
-    before anything is released, mirroring the suppression the ``/cohort`` statistics
-    route applies. The threshold is applied to **distinct subjects**, not rows: the floor
-    exists to stop a response revealing that ">=1 patient matched", and rows stopped
-    standing in for patients once a cohort could be one row per imaging study. The subject
-    count is taken once at snapshot creation and frozen with the artefact (a cohort whose
-    subjects cannot be established is refused there, so it never reaches this route); the
-    threshold is read live, so an operator raising their disclosure floor takes effect on
-    already-approved projects.
+    Because it is row-level, the served cohort must clear the disclosure threshold (the
+    governance decision's ``effective_threshold``) in **distinct subjects**, re-counted on every
+    fetch: a cohort that shrinks below the floor stops being served.
 
     Note there is deliberately no column allowlist here. ``accession_id`` is
     load-bearing — it is how the returned rows join to the imaging studies
@@ -360,12 +424,12 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         query_input (DataframeQuery): The encrypted project id (and the advisory query).
 
     Returns:
-        dict[str, list[Any]]: The frozen cohort in a DataFrame-like structure.
+        dict[str, list[Any]]: The approved cohort in a DataFrame-like structure.
 
     Raises:
-        HTTPException: 400 if the encrypted project id cannot be opened, 403 if the project
-            has no cohort snapshot or the frozen cohort covers fewer subjects than the
-            disclosure threshold.
+        HTTPException: 400 if the encrypted project id cannot be opened, 403 if policy denies
+            the project, it has no frozen membership, or the served cohort covers fewer subjects
+            than the disclosure threshold, 500 if the query fails to execute.
     """
     project_id = _open_project_id(query_input.encrypted_project_id)
 
@@ -381,49 +445,52 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     snapshot = _require_snapshot(project_id)
     _log_ignored_client_query(project_id, snapshot, query_input.query)
-    _check_frozen_threshold(project_id, snapshot.meta.subject_count, decision.effective_threshold)
-    logger.info(f"Serving frozen cohort snapshot for project {project_id}: {snapshot.meta.row_count} rows")
-    return snapshot.df.to_dict(orient="list")
+
+    # Uncached: a removal from OMOP must reach training on the next fetch, not after
+    # CACHE_TTL_DAYS.
+    df = _restrict_to_membership(_run_cohort_query(snapshot.query, use_cache=False, what="DataFrame"), snapshot)
+    _check_threshold(project_id, _count_subjects_or_zero(df, project_id), decision.effective_threshold)
+
+    logger.info(f"Serving approved cohort for project {project_id}: {len(df)} rows")
+    return df.to_dict(orient="list")
 
 
 @read_router.post("/accession-ids", response_model=AccessionIdsResponse)
 def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     """
-    Returns only the ``accession_id`` column of the project's FROZEN cohort.
+    Returns the approved cohort's accession IDs that are still imaging studies in OMOP.
 
     This is the minimal-disclosure endpoint used by imaging-api to fetch the accession
     numbers it needs to import studies from PACS — it does not expose row-level patient
-    attributes. Like ``/cohort/dataframe`` it serves the snapshot persisted at approval and
-    **ignores the caller-supplied SQL** (FLIP#857): the imaging status poll (roughly every
-    10 s while a project page is open) and reimport read a stable pointer set instead of
-    re-running the cohort SQL against a live OMOP that changes underneath.
+    attributes. It never runs the cohort SQL: it takes the accession ids frozen at approval
+    (FLIP#857) and keeps those that still resolve through ``omop.image_occurrence``
+    (``keep_imaging_accessions``), so the imaging status poll (roughly every 10 s while a
+    project page is open) costs two indexed lookups rather than a cohort query, the pointer set
+    cannot grow, and a study removed from OMOP drops out. Values that never resolved to an
+    imaging study are never released, so nothing can ride out under the ``accession_id`` alias
+    past a ``cohort.dataframe`` deny (FLIP#1259).
 
-    Accession IDs are still row-level identifiers, and they are the pointer set into
-    the imaging data: they decide whose studies get pulled into XNAT, where project
-    members view them. So the frozen cohort must clear ``COHORT_QUERY_THRESHOLD`` here
-    just as it must on ``/cohort/dataframe``, and the refusal reuses that route's fixed
-    text so a zero-row cohort and a below-threshold one are indistinguishable. The trust
-    applies this itself rather than relying on the hub's staging guard — the hub is a
-    separate administrative domain, and a trust must stay safe regardless of what the hub
-    checked.
+    Accession IDs are still row-level identifiers, and they are the pointer set into the imaging
+    data: they decide whose studies get pulled into XNAT, where project members view them. So
+    the released set must clear the disclosure threshold in **distinct subjects** (resolved
+    through ``omop.image_occurrence``, never more than the number of values released), and the
+    refusal reuses ``/cohort/dataframe``'s fixed text so an empty set and a below-threshold one
+    are indistinguishable. The trust applies this itself rather than relying on the hub's
+    staging guard — a trust must stay safe regardless of what the hub checked.
 
-    A frozen cohort with no ``accession_id`` column returns an EMPTY list rather than an
+    A cohort frozen without an ``accession_id`` column returns an EMPTY list rather than an
     error: a tabular/OMOP-only project legitimately has no imaging to pull.
-
-    The threshold counts **distinct subjects** rather than accession numbers (resolved
-    through ``omop.image_occurrence`` when the snapshot was taken): ten studies belonging to
-    one patient are one subject, and used to clear a floor of ten.
 
     Args:
         query_input (DataframeQuery): The encrypted project id (and the advisory query).
 
     Returns:
-        AccessionIdsResponse: The frozen cohort's accession IDs.
+        AccessionIdsResponse: The approved cohort's current imaging accession IDs.
 
     Raises:
-        HTTPException: 400 if the encrypted project id cannot be opened, 403 if the project
-            has no cohort snapshot or the frozen cohort covers fewer subjects than the
-            disclosure threshold.
+        HTTPException: 400 if the encrypted project id cannot be opened, 403 if policy denies
+            the project, it has no frozen membership, or the released set covers fewer subjects
+            than the disclosure threshold.
     """
     project_id = _open_project_id(query_input.encrypted_project_id)
 
@@ -437,44 +504,48 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     snapshot = _require_snapshot(project_id)
     _log_ignored_client_query(project_id, snapshot, query_input.query)
-    if not snapshot.meta.has_accessions:
-        # Threshold before the column check: nothing about the cohort's shape is revealed for
-        # a below-threshold snapshot.
-        _check_frozen_threshold(project_id, snapshot.meta.subject_count, decision.effective_threshold)
-        logger.info(f"Frozen cohort for project {project_id} has no accession_id column (tabular project)")
+
+    if snapshot.accession_ids is None:
+        # Threshold before the shape answer: nothing about a below-threshold cohort is revealed.
+        _check_threshold(project_id, snapshot.subject_count, decision.effective_threshold)
+        logger.info(f"Approved cohort for project {project_id} has no accession_id column (tabular project)")
         return AccessionIdsResponse(accession_ids=[])
-    # Gated on the subjects behind the RELEASABLE accessions, not the whole cohort's count: only
-    # values that resolved through omop.image_occurrence at snapshot time are served, so a value
-    # aliased to accession_id cannot ride out alongside real accessions that clear the floor —
-    # past a cohort.dataframe deny (FLIP#1259).
-    _check_frozen_threshold(project_id, snapshot.meta.imaging_subject_count, decision.effective_threshold)
-    frozen_ids = list(snapshot.meta.imaging_accession_ids)
-    logger.info(f"Serving {len(frozen_ids)} frozen accession ids for project {project_id}")
-    return AccessionIdsResponse(accession_ids=frozen_ids)
+
+    # Guarded like the count: a lookup failure must be indistinguishable from a small cohort.
+    try:
+        imaging = keep_imaging_accessions(pd.DataFrame({ACCESSION_ID_COLUMN: snapshot.accession_ids}))
+    except Exception:
+        logger.exception(f"Imaging accession lookup failed for project {project_id}; refusing as below threshold")
+        imaging = pd.DataFrame({ACCESSION_ID_COLUMN: []})
+    _check_threshold(project_id, _count_subjects_or_zero(imaging, project_id), decision.effective_threshold)
+
+    accession_ids = [str(value) for value in imaging[ACCESSION_ID_COLUMN].tolist()]
+    logger.info(f"Serving {len(accession_ids)} approved accession ids for project {project_id}")
+    return AccessionIdsResponse(accession_ids=accession_ids)
 
 
 @write_router.post("/snapshot", response_model=SnapshotResponse)
 def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     """
-    Materialises the cohort ONCE and persists it as this project's frozen artefact (FLIP#857).
+    Runs the cohort ONCE and freezes its membership as this project's approved cohort (FLIP#857).
 
-    Called by trust-api when the hub approves a project. It defines the artefact everyone
-    then trains on, so it sits on the ``write_router`` and requires cohort-admin authorisation
+    Called by trust-api when the hub approves a project. It defines the cohort everyone then
+    trains on, so it sits on the ``write_router`` and requires cohort-admin authorisation
     (proof of possessing ``AES_KEY_BASE64``) in addition to the trust-internal key — fl-client
-    holds the latter but not the former, so researcher code cannot reach here (FLIP#857). From
-    that point the two row-level routes serve the persisted dataframe keyed on the project id
-    and ignore caller SQL, so the cohort a project trains on is exactly the cohort that was
-    approved — it cannot grow with the live database, and it is identical on every fetch.
-    Re-approval calls this again and atomically replaces the artefact (which is also how
-    OMOP-side removals and opt-outs propagate into an approved project: at explicit re-snapshot
-    events, never silently mid-training).
+    holds the latter but not the former, so researcher code cannot reach here. What is stored is
+    the query of record and the ``person_id`` / ``accession_id`` values it returned — no
+    clinical values. From that point the row-level routes run only the stored query, restricted
+    to those ids, so the cohort can shrink but never grow. Re-approval calls this again and
+    atomically replaces the record.
 
-    This route (with the statistics route) is where live OMOP is evaluated, exactly once
-    per approval; ``validate_query`` remains the authority on the SQL executed here. The
-    disclosure threshold is enforced BEFORE anything is persisted: a below-threshold cohort
-    leaves no artefact and returns the same fixed refusal as the row-level routes. The
-    response carries aggregates only (count, column names, timestamps) — the row-level data
-    stays on this trust's disk.
+    The run is uncached, so it freezes LIVE OMOP (the statistics run at submission cached the
+    same SQL for ``CACHE_TTL_DAYS``). ``validate_query`` remains the authority on the SQL
+    executed. The disclosure threshold is enforced BEFORE anything is persisted: a
+    below-threshold cohort leaves no record and returns the same fixed refusal as the row-level
+    routes, and a cohort whose subjects cannot be established — it projects neither
+    ``person_id`` nor ``accession_id``, so it has no membership to freeze — is a 400 naming the
+    column (that reports the query's SHAPE, never its contents). The response carries aggregates
+    only.
 
     Args:
         query_input (DataframeQuery): The approved cohort query and encrypted project id.
@@ -484,9 +555,9 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
 
     Raises:
         HTTPException: 400 if the query is invalid, exposes neither ``person_id`` nor
-            ``accession_id``, or the project id cannot be opened or is not a UUID, 403 if
-            the cohort covers fewer subjects than the disclosure threshold, 413 if the serialized snapshot
-            exceeds ``SNAPSHOT_MAX_BYTES``, 500 if the query fails to execute, 503 if the
+            ``accession_id``, or the project id cannot be opened or is not a UUID, 403 if the
+            cohort covers fewer subjects than the disclosure threshold, 413 if the serialized
+            record exceeds ``SNAPSHOT_MAX_BYTES``, 500 if the query fails to execute, 503 if the
             snapshot store is not configured.
     """
     if not snapshot_enabled():
@@ -495,50 +566,12 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     project_id = _open_project_id(query_input.encrypted_project_id)
     logger.info(f"Received cohort snapshot request for project {project_id}")
 
-    safe_query = validate_query(query_input.query)
-    try:
-        # use_cache=False: the artefact must freeze LIVE OMOP at this moment. The statistics
-        # run at submission caches this same SQL for CACHE_TTL_DAYS, and on re-approval —
-        # the event that propagates OMOP-side removals/opt-outs into the snapshot — a cached
-        # read would silently re-freeze the pre-removal cohort.
-        df = get_records(safe_query, use_cache=False)
-    except HTTPException:
-        # get_records already converts driver errors into category-only
-        # HTTPExceptions; re-wrapping them below would discard that work and
-        # turn every categorised 400 into an opaque 500.
-        raise
-    except SQLAlchemyError:
-        logger.exception("Snapshot cohort query failed with a database error")
-        raise HTTPException(status_code=500, detail="Query execution failed.")
-    except Exception:
-        # Detail is category-only, as on the other routes: it travels back to the hub.
-        logger.exception("Snapshot cohort query failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Query execution failed.")
+    df = _run_cohort_query(query_input.query, use_cache=False, what="Snapshot cohort")
 
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
-    # The threshold counts distinct subjects, not rows: person_id directly, else accession_id
-    # resolved through omop.image_occurrence (an accession number that belongs to no imaging
-    # study contributes no subject, so a cohort aliasing an unrelated column to that name is
-    # refused rather than passed on its row count). The count is frozen with the artefact so the
-    # row-level routes gate on it without touching OMOP again. A cohort whose subjects cannot be
-    # established is a 400 naming the column — that reports the query's SHAPE, never its
-    # contents — so no uncountable snapshot is ever persisted. The count sits outside the try
-    # above on purpose: get_records' 400s keep their diagnostic shape, while a failure of the
-    # count itself is refused exactly as a small cohort is.
-    # The releasable accession list is frozen alongside: only values that resolve through
-    # omop.image_occurrence (keep_imaging_accessions), gated at serve time on the subjects behind
-    # them. Computed here so /cohort/accession-ids never touches OMOP after approval. A failure of
-    # either lookup refuses the snapshot as below threshold, rather than freezing an accession set
-    # that the imaging pull would then read as empty for the life of the project.
-    imaging_accession_ids: list[str] = []
-    imaging_subject_count = 0
+    # The count sits outside get_records' handling on purpose: its 400s keep their diagnostic
+    # shape, while a failure of the count itself is refused exactly as a small cohort is.
     try:
         subject_count = count_distinct_subjects(df)
-        if ACCESSION_ID_COLUMN in df.columns:
-            accessions = df.loc[:, ~df.columns.duplicated()][[ACCESSION_ID_COLUMN]]
-            imaging = keep_imaging_accessions(accessions)
-            imaging_accession_ids = [str(value) for value in imaging[ACCESSION_ID_COLUMN].tolist()]
-            imaging_subject_count = count_distinct_subjects(imaging) or 0
     except Exception:
         logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
         subject_count = 0
@@ -548,23 +581,17 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
             "accession_id, so its subject count cannot be established"
         )
         raise HTTPException(status_code=400, detail=_UNCOUNTABLE_SUBJECTS_DETAIL)
-    if subject_count < minimum_cohort_size:
-        logger.warning(
-            f"Refusing to snapshot project {project_id}: "
-            f"cohort covers fewer than the minimum {minimum_cohort_size} subjects"
-        )
-        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+    _check_threshold(project_id, subject_count, get_settings().COHORT_QUERY_THRESHOLD)
 
     try:
-        # The hash is of the RAW submitted SQL (not the validator's re-emission) so serving
-        # can compare it against the raw query the hub injects into FL job configs.
-        meta = save_snapshot(
+        snapshot = save_snapshot(
             project_id,
-            df,
-            query_hash=normalised_query_hash(query_input.query),
+            query=query_input.query,
+            person_ids=_frozen_ids(df, SUBJECT_ID_COLUMN),
+            accession_ids=_frozen_ids(df, ACCESSION_ID_COLUMN),
+            row_count=len(df),
             subject_count=subject_count,
-            imaging_accession_ids=imaging_accession_ids,
-            imaging_subject_count=imaging_subject_count,
+            columns=[str(column) for column in df.columns],
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")
@@ -576,18 +603,18 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
         raise HTTPException(status_code=500, detail="Snapshot persistence failed.")
 
     return SnapshotResponse(
-        row_count=meta.row_count,
-        columns=meta.columns,
-        has_accessions=meta.has_accessions,
-        snapshot_at=meta.created_at,
-        query_hash=meta.query_hash,
+        row_count=snapshot.row_count,
+        columns=snapshot.columns,
+        has_accessions=snapshot.has_accessions,
+        snapshot_at=snapshot.created_at,
+        query_hash=snapshot.query_hash,
     )
 
 
 @write_router.post("/snapshot/delete")
 def remove_snapshot(query_input: SnapshotDeleteRequest) -> dict[str, bool]:
     """
-    Removes a project's frozen cohort artefact. Idempotent.
+    Removes a project's frozen cohort membership. Idempotent.
 
     The teardown hook for the project purge path (FLIP#997 — which has no hub-side caller
     yet, so nothing invokes this in the current lifecycle). After deletion the project's

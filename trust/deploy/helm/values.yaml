@@ -382,9 +382,9 @@ dataAccessApi:
     OMOP_DB_SERVICE_NAME: "omop-db"
     OMOP_POSTGRES_DB: "trustomopdb"
     DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
-  # Approved-cohort snapshot store (FLIP#857): the frozen artefacts the row-level routes
-  # serve. Holds row-level patient data — include the PV in the trust's backup practice.
-  # Serving is fail-closed: with this disabled (or the volume unwritable) every project is
+  # Approved-cohort membership store (FLIP#857): one small JSON record per approved project
+  # (the query of record + the approved person/accession ids, no clinical values). Back the
+  # PV up — losing it refuses every approved project until re-approval. Serving is fail-closed: with this disabled (or the volume unwritable) every project is
   # refused row-level data, so only disable it deliberately. accessMode RWO matches
   # replicas: 1 — scaling data-access-api out needs a ReadWriteMany storage class so every
   # replica reads the same store.

@@ -178,8 +178,8 @@ services:
     volumes:
       # Approved-cohort snapshots: host dir from the kit's Host-local profile, pre-created
       # host-user-owned by `make up-trust` (the service runs non-root and disables the
-      # store if it cannot write). Holds row-level patient data — include it in the
-      # trust's backup/retention practice alongside the OMOP data dir.
+      # store if it cannot write). Holds the approved person/accession ids — back it up
+      # alongside the OMOP data dir.
       - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/trust}:/snapshots
       # The governance document, read-only — the service must never be able to rewrite its
       # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var

@@ -142,7 +142,7 @@ together so callers and receivers change atomically.
 
 Because the FL client legitimately holds this key — it reads the approved cohort and pulls
 imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
-two ``data-access-api`` routes that materialise or delete the frozen cohort therefore carry a
+two ``data-access-api`` routes that record or delete the frozen cohort therefore carry a
 second gate on top of the shared key: proof of possessing the trust's payload-encryption key
 (``AES_KEY_BASE64``), which ``trust-api`` and ``data-access-api`` hold but the FL client does
 not. The proof is a one-way digest of the key, not the key itself, so it never appears on the
@@ -170,15 +170,14 @@ independent controls would each have to fail before anything unintended could ex
   reveal that a handful of patients matched — the threshold is the trust's own
   disclosure floor (default 10), set by each trust in its deployment kit: trusts need
   not agree on a shared value, and the hub cannot lower it;
-- row-level data is released only from the **cohort frozen at project approval**: each
-  Trust materialises the approved query's result once and serves that immutable,
-  project-scoped artefact from then on, ignoring any SQL supplied at request time. The
-  cohort a project trains on is therefore exactly the cohort that was approved — it cannot
-  silently grow as the live database grows — and training code cannot run queries of its
-  own. Withdrawals and record corrections propagate at explicit re-approval events, which
-  atomically replace the frozen artefact, and at project teardown, which deletes it —
-  never mid-training, where a silently shifting dataset would corrupt the model without
-  anyone approving the change.
+- row-level data is released only for the **cohort frozen at project approval**: each
+  Trust records the approved query and the patient and study identifiers it returned (no
+  clinical values), and from then on serves only that query, restricted to those
+  identifiers, ignoring any SQL supplied at request time. The cohort a project trains on
+  can therefore never grow beyond what was approved, and training code cannot run queries
+  of its own. It can shrink: a patient removed from the Trust's database — for instance
+  after an opt-out — drops out on the next fetch, and a cohort that falls below the
+  disclosure threshold stops being served. The record is deleted at project teardown.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege

@@ -182,7 +182,7 @@ def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
     assert body["has_accessions"] is True
     assert set(body["columns"]) == {"modality", "accession_id"}
 
-    # The served query is hostile-looking and never executed: the frozen frame comes back.
+    # The served query is hostile-looking and never executed: the approved query of record runs instead.
     response = http_client.post(
         "/cohort/dataframe",
         json=_dataframe_payload("SELECT * FROM omop.person", _PROJECT_A),
