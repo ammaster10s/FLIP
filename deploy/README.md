@@ -229,7 +229,7 @@ Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, 
 
 The flag is mirrored to the UI via `/users/me/mfa/status` (`required: bool`) so the router guard knows when to skip the enrolment redirect.
 
-Local Keycloak stacks (`AUTH_BACKEND=keycloak`, the dev default) keep `ENFORCE_MFA=false`: the browser signs in with the OIDC password grant, which cannot enrol or answer TOTP, so `true` there only logs a warning at boot and locks browser users out. TOTP, forgot-password and admin password resets are done in the Keycloak console (`http://localhost:8180/admin`) instead.
+Development stacks (Keycloak, the only provider there) keep `ENFORCE_MFA=false`: the browser signs in with the OIDC password grant, which cannot enrol or answer TOTP, so `true` there only logs a warning at boot and locks browser users out. TOTP, forgot-password and admin password resets are done in the Keycloak console (`http://localhost:8180/admin`) instead.
 
 ##### Resetting MFA for another user
 

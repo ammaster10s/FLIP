@@ -58,13 +58,14 @@ class Settings(BaseSettings):
     # (another cloud's IdP, an on-prem Keycloak) is a new module plus a
     # deliberate widening of ProdSettings, never a branch in a router. The
     # base selects none (so a bare Settings(), built to read ENV, demands no
-    # provider's coordinates); the subclass decides — DevSettings defaults to
-    # the local provider, ProdSettings narrows the type to Literal["cognito"]
-    # so the dev substitute is a boot-time ValidationError in production.
+    # provider's coordinates); each subclass pins exactly one — DevSettings
+    # Literal["keycloak"], ProdSettings Literal["cognito"] — so the other is
+    # a boot-time ValidationError there: development reaches no AWS service,
+    # production never runs the local substitute.
     AUTH_BACKEND: Literal["cognito", "keycloak"] | None = None
 
-    # Cognito coordinates, required when AUTH_BACKEND=cognito (always, in
-    # production) and absent from a Keycloak dev env file.
+    # Cognito coordinates, required when AUTH_BACKEND=cognito (production) and
+    # never read in development.
     AWS_COGNITO_USER_POOL_ID: str | None = None
     AWS_COGNITO_APP_CLIENT_ID: str | None = None
 
@@ -205,10 +206,10 @@ class Settings(BaseSettings):
     # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
     # silently logging, but do not rely on this default for that.
     # A dedicated flag rather than an ENV branch (same rationale as
-    # ENFORCE_MFA) so tests and deliberate local experiments can select the
-    # SES path without flipping ENV — which also drives DB auth, encryption
-    # and docs. See tests/integration/test_console_email_backend.py, which
-    # pins the backend rather than reading the developer's env file.
+    # ENFORCE_MFA) so the integration tests can select the SES path on the
+    # base class without flipping ENV — which also drives DB auth, encryption
+    # and docs. Each subclass pins one value (DevSettings "console",
+    # ProdSettings "ses"), so no environment ever chooses.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -429,11 +430,12 @@ class DevSettings(Settings):
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
 
-    # Local development authenticates against the Keycloak container by
-    # default (FLIP#919): no AWS account needed to sign in. Set
-    # AUTH_BACKEND=cognito in .env.development to develop against the dev
-    # Cognito pool instead (needs the AWS_COGNITO_* ids and an SSO session).
-    AUTH_BACKEND: Literal["cognito", "keycloak"] = "keycloak"
+    # Local development authenticates against the Keycloak container, and
+    # nothing else (FLIP#919): the Literal pins it the way ProdSettings pins
+    # cognito, so a dev env file selecting the AWS provider is a boot-time
+    # ValidationError. The dev stack reaches no AWS service; the Cognito
+    # provider is exercised by its tests and on stag.
+    AUTH_BACKEND: Literal["keycloak"] = "keycloak"
 
     # Keycloak defaults that match the `keycloak` service in
     # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
@@ -444,16 +446,17 @@ class DevSettings(Settings):
     KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
 
-    # Development sends no real email: the console backend logs the would-be
-    # message instead (FLIP#919), so no SES identity or verified address is
-    # needed to boot. Both address fields keep syntactically-valid defaults so
+    # Development sends no real email, ever: the console backend logs the
+    # would-be message instead (FLIP#919) and the Literal pins it, so no SES
+    # identity, verified address or AWS session is needed to boot and none can
+    # be wired in. Both address fields keep syntactically-valid defaults so
     # neither is required in dev: the admin address is still read on the dev
     # path (it is the recipient the console backend logs), while the sender
     # address is read only by _send_via_ses, so its default exists purely to
     # keep the field non-required. Both tolerate empty-string env values, so a
     # stale .env.development still carrying (possibly commented-out)
     # AWS_SES_* lines can't fail EmailStr validation.
-    EMAIL_BACKEND: Literal["ses", "console"] = "console"
+    EMAIL_BACKEND: Literal["console"] = "console"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr = "flip-admin@example.com"
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
 
