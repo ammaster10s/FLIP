@@ -34,6 +34,7 @@ ones (the missing space after a comma, the trailing whitespace, the multi-line s
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import sys
 
@@ -59,7 +60,9 @@ EPOCH_LINES = (
 NOISE_LINES = (
     "2026-09-24 08:41:02,001 - CoreCell - INFO - server: created backbone external connector "
     "to tcp://localhost: 34953\n"
-    "2026-09-24 08:41:02,002 - ClientRunner - INFO - PID: 1005143\n"
+    "2026-09-24 08:41:02,002 - CoreCell - INFO - server: created internal connector "
+    "to tcp://localhost: 34953\n"
+    "2026-09-24 08:41:02,003 - ClientRunner - INFO - PID: 1005143\n"
     "2026-09-24 08:41:05,113 - __main__ - INFO - train size: 30\n"
 )
 
@@ -130,9 +133,10 @@ def test_incidental_pairs_are_kept_out_of_the_figure(plot_utils, tmp_path) -> No
     dense, sparse = plot_utils.split_by_cadence(plot_utils.parse_log(_write(tmp_path, text)))
 
     assert set(dense) == {"KL", "l1", "perceptual", "gan"}
-    assert "Total loss D" in sparse and "Validation SSIM (foreground)" in sparse
+    assert "Total loss D" in sparse
+    assert "Validation SSIM (foreground)" in sparse
     for panel in (dense, sparse):
-        assert "localhost" not in panel and "PID" not in panel and "train size" not in panel
+        assert not {"localhost", "PID", "train size"} & set(panel)
 
 
 def test_a_tutorial_logging_only_per_epoch_gets_one_populated_panel(plot_utils, tmp_path) -> None:
@@ -146,12 +150,18 @@ def test_a_tutorial_logging_only_per_epoch_gets_one_populated_panel(plot_utils, 
     assert sparse == {}
 
 
-def test_the_default_workspace_follows_the_tutorial_the_copy_sits_in(plot_utils) -> None:
+@pytest.mark.parametrize("tutorial", ["autoencoder", "diffusion_model", "latent_diffusion_model"])
+def test_the_default_workspace_follows_the_tutorial_the_copy_sits_in(tutorial: str) -> None:
     """One shared file, three tutorials, three simulator workspaces.
 
     The module is byte-identical in all three, so the default cannot be a literal — it is derived
-    from the directory the copy sits in, and a wrong derivation sends every tutorial to the
-    autoencoder's logs.
+    from the directory the copy sits in. Hard-coding it still looks right from the autoencoder,
+    which is why every copy is loaded here and checked against its own tutorial.
     """
-    assert plot_utils.DEFAULT_WORKSPACE.parent.name == "autoencoder"
-    assert plot_utils.DEFAULT_WORKSPACE.name == "flip_fedavg"
+    path = _SYNTHESIS / tutorial / "app_files" / "plot_utils.py"
+    spec = importlib.util.spec_from_file_location(f"_plot_utils_{tutorial}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.DEFAULT_WORKSPACE.parent.name == tutorial
+    assert module.DEFAULT_WORKSPACE.name == "flip_fedavg"

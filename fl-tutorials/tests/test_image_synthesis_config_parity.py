@@ -17,9 +17,14 @@ encoder declared via ``SERVER_CHECKPOINT``. That handoff spans two directories a
 convention, so every way it breaks breaks **quietly**:
 
 * ``InitialCheckpointPTModelPersistor`` loads the checkpoint with ``strict=False``. A wrong submodule
-  name or a drifted ``net_config.stage_1`` therefore matches *nothing*, raises *nothing*, and leaves
+  name or a wrong autoencoder architecture therefore matches *nothing*, raises *nothing*, and leaves
   the diffusion model training against a randomly-initialised encoder while it reports entirely
-  plausible losses. This is the failure mode the tests here exist for.
+  plausible losses. This is the failure mode the tests here exist for. The architecture is not
+  duplicated between the two ``config.json`` files: it is recorded once, in the
+  ``autoencoder_config.yaml`` that ``extract_autoencoder.py`` writes beside a checkpoint and
+  ``latent_diffusion_model``'s ``models.py`` reads. So the checks below compare that YAML against the
+  `autoencoder` tutorial's *actual* construction rather than comparing two JSON literals — which also
+  covers the arguments no shape comparison can see, ``norm_num_groups`` chief among them.
 * ``SERVER_CHECKPOINT`` naming a file that ``job.py`` does not stage means the persistor looks for a
   file nobody produced — logged, not raised.
 * ``AGGREGATE_ONLY_REGEX`` is a *privacy* control as well as a bandwidth one. ``PercentilePrivacy``
@@ -30,7 +35,7 @@ convention, so every way it breaks breaks **quietly**:
   named exactly ``LOCAL_ROUNDS`` — but only at submit time, i.e. after upload, on the platform.
   Catching it here keeps that a local failure.
 
-Since FLIP#1221 the three no longer share a cohort: ``autoencoder`` and ``latent_diffusion_model``
+The three do not share a cohort: ``autoencoder`` and ``latent_diffusion_model``
 train on 3-D brain MRI (four MR sequences per study), while ``diffusion_model`` stays on 2-D chest
 X-rays as the cheap read-this-first tutorial. That adds a second silent-failure surface, because the
 brain pair's conditioning is spread across two config keys that must agree:
@@ -53,11 +58,12 @@ import json
 import re
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+import yaml
 
 _SYNTHESIS_ROOT = Path(__file__).resolve().parents[1] / "nvflare" / "image_synthesis"
 
@@ -69,6 +75,10 @@ _ALL_TUTORIALS = (_AUTOENCODER, _DIFFUSION, _LATENT_DIFFUSION)
 # The two retargeted onto the 3-D brain-MRI cohort, which share the modality contract.
 _BRAIN_MRI_TUTORIALS = (_AUTOENCODER, _LATENT_DIFFUSION)
 
+#: The two diffusion tutorials share one training/validation wiring (cadence, scoring, sampling); the
+#: cadence tests run against both so the pixel-space copy cannot drift from the latent one.
+_DIFFUSION_TUTORIALS = [_DIFFUSION, _LATENT_DIFFUSION]
+
 # The submodule prefix the checkpoint handoff rides on. Both networks must name the autoencoder
 # submodule `autoencoder`, so its parameters are keyed `autoencoder.*` in both state dicts.
 _AUTOENCODER_PREFIX = "autoencoder."
@@ -79,6 +89,26 @@ _DIFFUSION_PREFIX = "diffusion_model."
 def _config(tutorial: Path) -> dict:
     """Read a tutorial's shipped ``app_files/config.json``."""
     return json.loads((tutorial / "app_files" / "config.json").read_text())
+
+
+def _autoencoder_config(tutorial: Path = _LATENT_DIFFUSION) -> dict:
+    """Read the frozen autoencoder's architecture YAML shipped in a tutorial's ``app_files``."""
+    return yaml.safe_load((tutorial / "app_files" / "autoencoder_config.yaml").read_text())
+
+
+def _load_process_tool(tutorial: Path, module: str) -> ModuleType:
+    """Import one of a tutorial's host-side ``process_tools/*.py`` modules."""
+    path = tutorial / "process_tools" / f"{module}.py"
+    module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.process_tools.{module}"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    loaded = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = loaded
+    spec.loader.exec_module(loaded)
+    return loaded
 
 
 def _load_app_module(tutorial: Path, module: str) -> ModuleType:
@@ -107,7 +137,16 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
     # leaving `models` or `transforms` cached would make the *next* tutorial's import silently resolve
     # to this one's copy, and the cross-tutorial comparisons here would then compare a file with
     # itself. (test_autoencoder_offline_backbone.py does the same dance for the same reason.)
+    #
+    # The reverse matters too: a bare sibling name some other test already cached (another tutorial's
+    # `transforms`, say) would win over this app dir's file, so any such entry is set aside for the
+    # import and put back afterwards.
     app_dir = str(tutorial / "app_files")
+    shadowed = {
+        sibling.stem: sys.modules.pop(sibling.stem)
+        for sibling in (tutorial / "app_files").glob("*.py")
+        if sibling.stem in sys.modules
+    }
     before = set(sys.modules)
     sys.path.insert(0, app_dir)
     try:
@@ -121,7 +160,14 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
         for name in set(sys.modules) - before - {module_name}:
             if "." not in name:
                 sys.modules.pop(name, None)
+        sys.modules.update(shadowed)
     return loaded
+
+
+def _as_simulator(monkeypatch: pytest.MonkeyPatch, plot_utils: ModuleType, debug_dir: Path) -> None:
+    """Make ``plot_utils`` see a Makefile-launched simulator run: ``LOCAL_DEV`` true and ``DEBUG_SAMPLES_DIR`` set."""
+    monkeypatch.setattr(plot_utils, "FlipConstants", SimpleNamespace(LOCAL_DEV=True))
+    monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(debug_dir))
 
 
 @pytest.fixture(scope="module")
@@ -134,7 +180,7 @@ def latent_state_dict_keys() -> list[str]:
 def test_declares_standard_job_type(tutorial: Path) -> None:
     """All three are single-stage FedAvg jobs, so all three declare ``job_type: standard``.
 
-    The ``diffusion_model`` *directory* deliberately shares its name with the platform's older
+    The ``diffusion_model`` *directory* deliberately shares its name with the platform's
     two-stage ``diffusion_model`` *job type*, which none of these tutorials uses — this pins that
     distinction so a future edit cannot quietly adopt the wrong one.
     """
@@ -155,8 +201,8 @@ def test_rounds_keys_are_unsuffixed(tutorial: Path) -> None:
     """Exactly one local-rounds key, named exactly ``LOCAL_ROUNDS``, paired with ``GLOBAL_ROUNDS``.
 
     ``fl_api.utils.prepare_config.configure_config`` raises when a config carries a single
-    local-rounds key under any other name — so the retired two-stage ``LOCAL_ROUNDS_AE`` /
-    ``LOCAL_ROUNDS_DM`` pairs must not reappear here. That check runs at submit time on the platform,
+    local-rounds key under any other name — so suffixed pairs such as ``LOCAL_ROUNDS_AE`` /
+    ``LOCAL_ROUNDS_DM`` must not appear here. That check runs at submit time on the platform,
     which is far too late to discover it.
     """
     config = _config(tutorial)
@@ -169,20 +215,58 @@ def test_rounds_keys_are_unsuffixed(tutorial: Path) -> None:
     assert global_keys == ["GLOBAL_ROUNDS"], f"{tutorial.name} has stray global-rounds keys: {global_keys}"
 
 
-def test_latent_stage_1_matches_autoencoder_tutorial() -> None:
-    """The latent job's ``net_config.stage_1`` is the autoencoder tutorial's, exactly.
+def test_frozen_autoencoder_config_matches_the_autoencoder_tutorials_network() -> None:
+    """The shipped ``autoencoder_config.yaml`` is what the `autoencoder` tutorial actually builds.
 
-    ``stage_1`` *is* the architecture the uploaded checkpoint was trained for. Any drift makes the
-    checkpoint unloadable — and because the persistor loads ``strict=False``, unloadable means
-    "silently ignored", not "raises". This is the single most valuable assertion in this file.
+    That YAML *is* the architecture the uploaded checkpoint was trained for, and the only copy of it.
+    Any drift makes the checkpoint unloadable — and because the persistor loads ``strict=False``,
+    unloadable means "silently ignored", not "raises". This is the single most valuable assertion in
+    this file.
+
+    Compared against ``models.autoencoder_kwargs`` rather than against ``config.json``'s ``stage_1``
+    block, because the kwargs are what reach ``AutoencoderKL``. A config value that never reaches the network
+    (``norm_num_groups`` is the dangerous one: it leaves every parameter shape untouched) would
+    otherwise go unnoticed.
     """
-    autoencoder_stage_1 = _config(_AUTOENCODER)["net_config"]["stage_1"]
-    latent_stage_1 = _config(_LATENT_DIFFUSION)["net_config"]["stage_1"]
-    assert latent_stage_1 == autoencoder_stage_1, (
-        "latent_diffusion_model's net_config.stage_1 has drifted from autoencoder's. The uploaded "
-        "checkpoint will load nothing (strict=False swallows it) and the diffusion model will train "
-        "against a randomly-initialised encoder."
+    autoencoder_models = _load_app_module(_AUTOENCODER, "models")
+    built = autoencoder_models.autoencoder_kwargs(_config(_AUTOENCODER)["net_config"])
+    recorded = _autoencoder_config()["autoencoder"]
+    assert recorded == built, (
+        "latent_diffusion_model's autoencoder_config.yaml has drifted from what the autoencoder "
+        "tutorial builds. Regenerate it with `make prepare-checkpoint RAW_CHECKPOINT=...`. Until "
+        "then the uploaded checkpoint loads nothing (strict=False swallows it) and the diffusion "
+        "model trains against a randomly-initialised encoder."
     )
+
+
+def test_the_latent_config_does_not_redeclare_the_autoencoder_architecture() -> None:
+    """``config.json`` must not grow a second copy of the architecture back.
+
+    A ``stage_1`` block here would be read by nothing
+    (``models.py`` builds from the YAML) while looking authoritative to the next person editing it.
+    """
+    net_config = _config(_LATENT_DIFFUSION)["net_config"]
+    assert "stage_1" not in net_config, (
+        "latent_diffusion_model's net_config has a stage_1 block. The frozen autoencoder's "
+        "architecture belongs in autoencoder_config.yaml, beside the checkpoint it describes."
+    )
+
+
+def test_the_recorded_architecture_pins_what_no_shape_check_could_catch() -> None:
+    """``autoencoder_kwargs`` passes the shape-invisible arguments explicitly.
+
+    ``norm_num_groups`` and ``norm_eps`` change how the network computes without changing one
+    parameter shape. Left to MONAI's defaults they are absent from the recorded architecture, and a
+    future default change would silently repartition GroupNorm on every checkpoint already trained —
+    loading cleanly under ``strict=True``, wrong in the latents only. So they must be named, here and
+    in the YAML.
+    """
+    autoencoder_models = _load_app_module(_AUTOENCODER, "models")
+    built = autoencoder_models.autoencoder_kwargs(_config(_AUTOENCODER)["net_config"])
+    recorded = _autoencoder_config()["autoencoder"]
+    for argument in ("norm_num_groups", "norm_eps"):
+        assert argument in built, f"autoencoder_kwargs leaves {argument} to MONAI's default"
+        assert argument in recorded, f"autoencoder_config.yaml does not record {argument}"
 
 
 def test_latent_diffusion_channels_match_autoencoder_latent_channels() -> None:
@@ -193,7 +277,7 @@ def test_latent_diffusion_channels_match_autoencoder_latent_channels() -> None:
     other.
     """
     latent_config = _config(_LATENT_DIFFUSION)["net_config"]
-    latent_channels = latent_config["stage_1"]["latent_channels"]
+    latent_channels = _autoencoder_config()["autoencoder"]["latent_channels"]
     assert latent_config["diffusion_model"]["in_channels"] == latent_channels
     assert latent_config["diffusion_model"]["out_channels"] == latent_channels
 
@@ -332,7 +416,7 @@ def test_latent_grid_survives_both_downsampling_ladders() -> None:
     config = _config(_LATENT_DIFFUSION)
     net = config["net_config"]
 
-    ae_factor = 2 ** (len(net["stage_1"]["channels"]) - 1)
+    ae_factor = 2 ** (len(_autoencoder_config()["autoencoder"]["channels"]) - 1)
     ragged = [dim for dim in config["spatial_shape"] if dim % ae_factor]
     assert not ragged, (
         f"spatial_shape {config['spatial_shape']} must be divisible by the autoencoder's "
@@ -456,9 +540,8 @@ def test_spatial_dims_agrees_with_spatial_shape(tutorial: Path) -> None:
     """``net_config.spatial_dims`` matches the dimensionality of ``spatial_shape``.
 
     A leftover ``spatial_dims`` from the other cohort builds a network that cannot consume the data
-    the transform chain produces, so pin them to each other. This is a live hazard rather than a
-    theoretical one: these tutorials have now been moved between 2-D and 3-D twice, and the two
-    brain-MRI ones sit beside a 2-D X-ray one in the same directory.
+    the transform chain produces, so pin them to each other. The two brain-MRI tutorials sit beside a 2-D
+    X-ray one in the same directory, so copying a block between them is an easy way to get this wrong.
 
     Deliberately asserts *consistency* rather than a literal, so it holds for both cohorts. An
     inconsistent pair — the actual defect — fails either way.
@@ -508,8 +591,10 @@ def test_debug_samples_ship_disabled(tutorial: Path) -> None:
     """
     config = _config(tutorial)
     assert config["SAVE_DEBUG_SAMPLES"] is False
-    assert isinstance(config["DEBUG_SAMPLES_MAX"], int)
-    assert config["DEBUG_SAMPLES_MAX"] > 0
+    # Optional: the latent tutorial draws one volume per modality and has no use for a cap.
+    if "DEBUG_SAMPLES_MAX" in config:
+        assert isinstance(config["DEBUG_SAMPLES_MAX"], int)
+        assert config["DEBUG_SAMPLES_MAX"] > 0
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
@@ -551,6 +636,7 @@ def test_debug_samples_writes_one_png_per_call_when_enabled(
 ) -> None:
     """Enabled, ``save_grid`` writes a single PNG tiling the batches it was given."""
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    _as_simulator(monkeypatch, plot_utils, tmp_path)
     monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
     config = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_SAMPLES_MAX": 2}
 
@@ -577,6 +663,7 @@ def test_debug_samples_reduces_volumes_to_a_mid_slice(tmp_path: Path, monkeypatc
     lose its debug images to a swallowed exception at exactly the moment they are most useful.
     """
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    _as_simulator(monkeypatch, plot_utils, tmp_path)
     monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
 
     volume = torch.zeros(1, 1, 8, 8, 5)
@@ -589,22 +676,38 @@ def test_debug_samples_reduces_volumes_to_a_mid_slice(tmp_path: Path, monkeypatc
     assert plot_utils._to_2d(volume).max() == 1.0
 
 
-@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
-def test_debug_plot_interval_ships_configured(tutorial: Path) -> None:
-    """Every tutorial declares ``DEBUG_PLOT_EVERY``, and it is a positive integer."""
-    interval = _config(tutorial)["DEBUG_PLOT_EVERY"]
+def test_debug_plot_interval_ships_configured() -> None:
+    """The autoencoder declares ``DEBUG_PLOT_EVERY``, and it is a positive integer."""
+    interval = _config(_AUTOENCODER)["DEBUG_PLOT_EVERY"]
     assert isinstance(interval, int)
     assert not isinstance(interval, bool)
     assert interval > 0
 
 
-def test_triplanar_is_gated_on_the_debug_flag_and_the_interval() -> None:
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_diffusion_configs_carry_no_debug_key_their_trainer_ignores(tutorial: Path) -> None:
+    """Sampling in both diffusion tutorials runs on ``VALIDATE_EVERY``, so ``DEBUG_PLOT_EVERY`` would be inert.
+
+    The latent tutorial also has no use for ``DEBUG_SAMPLES_MAX``: it draws exactly one volume per
+    modality. A key that is shipped but never read looks like a knob and silently does nothing.
+    """
+    config = _config(tutorial)
+    assert "DEBUG_PLOT_EVERY" not in config
+    source = (tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8")
+    if "DEBUG_SAMPLES_MAX" not in source:
+        assert "DEBUG_SAMPLES_MAX" not in config, f"{tutorial.name} ships DEBUG_SAMPLES_MAX but never reads it"
+
+
+def test_triplanar_is_gated_on_the_debug_flag_and_the_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``due_for_plot`` fires on step 0 and every Nth after, and never while debugging is off.
 
     Step 0 matters: it is the only look at an untrained model, and a run that dies early would
     otherwise leave no figure at all.
     """
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    _as_simulator(monkeypatch, plot_utils, tmp_path)
     on = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 100}
 
     assert [plot_utils.due_for_plot(i, on) for i in (0, 1, 99, 100, 101, 200)] == [
@@ -669,6 +772,7 @@ def test_triplanar_writes_three_views_of_each_volume(tmp_path: Path, monkeypatch
     times — the mistake that makes this plot useless while looking fine — cannot pass.
     """
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
+    _as_simulator(monkeypatch, plot_utils, tmp_path)
     monkeypatch.setattr(plot_utils, "debug_dir", lambda: tmp_path)
 
     volume = torch.zeros(2, 1, 12, 14, 16)
@@ -843,3 +947,428 @@ def test_debug_samples_never_raises_into_the_training_loop(monkeypatch: pytest.M
     monkeypatch.setattr(plot_utils, "debug_dir", lambda: (_ for _ in ()).throw(OSError("read-only")))
 
     assert plot_utils.save_grid({"input": torch.rand(1, 1, 8, 8)}, "recon", {"SAVE_DEBUG_SAMPLES": True}) is None
+
+
+def _tiny_autoencoder_architecture() -> dict:
+    """A 2-D toy ``AutoencoderKL`` spec, small enough to instantiate repeatedly on CPU."""
+    return {
+        "spatial_dims": 2,
+        "in_channels": 1,
+        "out_channels": 1,
+        "num_res_blocks": [1, 1],
+        "channels": [4, 8],
+        "attention_levels": [False, False],
+        "latent_channels": 2,
+        "norm_num_groups": 2,
+        "norm_eps": 1e-06,
+        "with_encoder_nonlocal_attn": False,
+        "with_decoder_nonlocal_attn": False,
+    }
+
+
+def _tensors_for(architecture: dict) -> dict:
+    """The ``autoencoder.*``-prefixed state dict a checkpoint of ``architecture`` would carry."""
+    from monai.networks.nets import AutoencoderKL
+
+    return {f"{_AUTOENCODER_PREFIX}{key}": value for key, value in AutoencoderKL(**architecture).state_dict().items()}
+
+
+def test_checkpoint_verification_accepts_the_architecture_that_built_it() -> None:
+    """The happy path, so the rejection test below cannot pass by rejecting everything."""
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    architecture = _tiny_autoencoder_architecture()
+    extract.verify_against_checkpoint(architecture, _tensors_for(architecture))
+
+
+def test_checkpoint_verification_refuses_a_differently_shaped_checkpoint() -> None:
+    """A checkpoint from another autoencoder is refused at extraction time, not tolerated at load.
+
+    This is the check that turns the worst failure mode into a stopped command: without it a stale
+    ``pretrained_autoencoder.pt`` from another run sits in ``app_files``, the persistor's
+    ``strict=False`` load quietly matches nothing, and the job trains a diffusion model against noise.
+    """
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    architecture = _tiny_autoencoder_architecture()
+    other = {**architecture, "channels": [8, 16]}
+    with pytest.raises(ValueError, match="does not describe this checkpoint"):
+        extract.verify_against_checkpoint(architecture, _tensors_for(other))
+
+
+def test_checkpoint_verification_cannot_see_norm_num_groups() -> None:
+    """Pins the blind spot that justifies recording the architecture instead of inferring it.
+
+    ``norm_num_groups`` repartitions every GroupNorm without moving a single parameter, so no
+    comparison against a finished checkpoint can recover it — this test asserts the verification
+    stays silent, which is *why* the value has to be written down by the tutorial that trained the
+    weights. If MONAI ever makes this visible in the state dict, this test fails and the guarantee in
+    ``extract_autoencoder``'s docstring can be strengthened.
+    """
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    architecture = _tiny_autoencoder_architecture()
+    regrouped = {**architecture, "norm_num_groups": 4}
+    extract.verify_against_checkpoint(architecture, _tensors_for(regrouped))
+
+
+def test_the_latent_network_refuses_to_guess_a_missing_autoencoder_config(tmp_path: Path) -> None:
+    """No YAML means stop, not fall back on a default.
+
+    A defaulted architecture is the silent-noise failure wearing a helpful face.
+    """
+    models = _load_app_module(_LATENT_DIFFUSION, "models")
+    with pytest.raises(FileNotFoundError, match="prepare-checkpoint"):
+        models.load_autoencoder_config(tmp_path / "autoencoder_config.yaml")
+
+
+def test_the_latent_network_refuses_a_config_schema_it_does_not_know(tmp_path: Path) -> None:
+    """A future layout is refused rather than partially understood."""
+    models = _load_app_module(_LATENT_DIFFUSION, "models")
+    path = tmp_path / "autoencoder_config.yaml"
+    path.write_text(yaml.safe_dump({"schema_version": 99, "autoencoder": _tiny_autoencoder_architecture()}))
+    with pytest.raises(ValueError, match="schema_version"):
+        models.load_autoencoder_config(path)
+
+
+def test_the_latent_network_refuses_channels_that_are_not_the_autoencoders_latents() -> None:
+    """The UNet's channel count must be the autoencoder's ``latent_channels``.
+
+    Caught at construction with a sentence naming both numbers, rather than as a size mismatch from
+    inside a training step.
+    """
+    models = _load_app_module(_LATENT_DIFFUSION, "models")
+    architecture = _tiny_autoencoder_architecture()
+    net_config = {"spatial_dims": 2, "diffusion_model": {"in_channels": 7, "out_channels": 7}}
+    with pytest.raises(ValueError, match="latent channels"):
+        models.check_latent_geometry(net_config, architecture)
+
+
+def test_the_latent_network_refuses_a_dimensionality_the_autoencoder_was_not_built_for() -> None:
+    """Both networks see the same data, so their ``spatial_dims`` cannot disagree."""
+    models = _load_app_module(_LATENT_DIFFUSION, "models")
+    architecture = _tiny_autoencoder_architecture()
+    latent_channels = architecture["latent_channels"]
+    net_config = {
+        "spatial_dims": 3,
+        "diffusion_model": {"in_channels": latent_channels, "out_channels": latent_channels},
+    }
+    with pytest.raises(ValueError, match="3-D data|spatial_dims"):
+        models.check_latent_geometry(net_config, architecture)
+
+
+def test_the_architecture_config_key_names_the_file_that_ships() -> None:
+    """``AUTOENCODER_CONFIG`` names a YAML that is actually in ``app_files``.
+
+    The weights filename has ``SERVER_CHECKPOINT``; this is its counterpart for the architecture, so
+    the pair can be renamed together without touching code. Unlike the checkpoint, a wrong name here
+    fails loudly at import — but it fails on every client mid-deploy, which is a slow way to find out.
+    """
+    declared = _config(_LATENT_DIFFUSION)["AUTOENCODER_CONFIG"]
+    shipped = _LATENT_DIFFUSION / "app_files" / declared
+    assert shipped.is_file(), (
+        f"config.json declares AUTOENCODER_CONFIG={declared!r} but no such file ships in app_files/"
+    )
+
+
+def test_the_makefile_prepares_the_filenames_the_config_declares() -> None:
+    """``prepare-checkpoint`` writes the two names ``config.json`` asks for.
+
+    The Makefile decides where the artifacts land; ``config.json`` decides where the job looks for
+    them. Drift means `make prepare-checkpoint` reports success having written a checkpoint the
+    persistor will never open, and the run proceeds on a randomly-initialised encoder.
+    """
+    makefile = (_LATENT_DIFFUSION / "Makefile").read_text(encoding="utf-8")
+    config = _config(_LATENT_DIFFUSION)
+    for variable, key in (("PROCESSED_CHECKPOINT", "SERVER_CHECKPOINT"), ("PROCESSED_CONFIG", "AUTOENCODER_CONFIG")):
+        match = re.search(rf"^{variable} \?= (\S+)$", makefile, re.MULTILINE)
+        assert match, f"{variable} is not defined in latent_diffusion_model/Makefile"
+        assert Path(match.group(1)).name == config[key], (
+            f"Makefile's {variable} is {match.group(1)!r} but config.json's {key} is {config[key]!r}"
+        )
+
+
+def test_the_latent_network_reads_the_configured_architecture_filename() -> None:
+    """``models.py`` honours ``AUTOENCODER_CONFIG`` rather than its own hardcoded default."""
+    models = _load_app_module(_LATENT_DIFFUSION, "models")
+    assert models.autoencoder_config_name() == _config(_LATENT_DIFFUSION)["AUTOENCODER_CONFIG"]
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_the_sim_workspace_is_named_after_the_tutorial(tutorial: Path) -> None:
+    """``job.py``'s simulator workspace default is ``/tmp/nvflare/<tutorial dir>``.
+
+    ``plot_utils.py`` ships byte-identically in all three tutorials, so it cannot carry a per-tutorial
+    path — it derives the workspace from the directory it sits in. An abbreviated workspace name
+    therefore does not fail, it just makes the loss plots come out empty, which reads as "this run
+    logged nothing" rather than "you are looking in the wrong place".
+    """
+    job_py = (tutorial / "job.py").read_text(encoding="utf-8")
+    match = re.search(r'"(/tmp/nvflare/[^"]*)"', job_py)
+    assert match, f"{tutorial.name}/job.py declares no simulator workspace default"
+    assert match.group(1) == f"/tmp/nvflare/{tutorial.name}", (
+        f"{tutorial.name}/job.py uses workspace {match.group(1)!r}, but plot_utils.py derives "
+        f"'/tmp/nvflare/{tutorial.name}' from the directory name and would find no logs there"
+    )
+
+
+def test_the_config_flag_is_required_even_in_the_simulator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``SAVE_DEBUG_SAMPLES: false`` means no images, simulator included; the user's switch is final."""
+    plot_utils = _load_app_module(_LATENT_DIFFUSION, "plot_utils")
+    _as_simulator(monkeypatch, plot_utils, tmp_path)
+    assert plot_utils.samples_enabled({"SAVE_DEBUG_SAMPLES": True}) is True
+    assert plot_utils.samples_enabled({"SAVE_DEBUG_SAMPLES": False}) is False
+    assert plot_utils.samples_enabled({}) is False
+
+
+@pytest.mark.parametrize(
+    ("local_dev", "debug_dir_env"),
+    [(False, "set"), (False, None), (True, None), (True, "   ")],
+    ids=["trust-with-stray-dir", "trust", "local-dev-default-without-makefile", "blank-dir"],
+)
+def test_production_never_writes_samples_whatever_the_config_says(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, local_dev: bool, debug_dir_env: str | None
+) -> None:
+    """Outside a Makefile-launched simulator run the gate is closed even with ``SAVE_DEBUG_SAMPLES: true``.
+
+    ``config.json`` is uploaded with the app and read on the trust, so it must never be what separates
+    simulation from production. ``LOCAL_DEV=false`` (every trust deployment sets it) closes the gate on
+    its own; ``LOCAL_DEV`` true is not enough either, because it defaults to true when unset — the
+    Makefile-only ``DEBUG_SAMPLES_DIR`` has to be there too.
+    """
+    plot_utils = _load_app_module(_LATENT_DIFFUSION, "plot_utils")
+    monkeypatch.setattr(plot_utils, "FlipConstants", SimpleNamespace(LOCAL_DEV=local_dev))
+    if debug_dir_env is None:
+        monkeypatch.delenv(plot_utils.DEBUG_DIR_ENV, raising=False)
+    else:
+        monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(tmp_path) if debug_dir_env == "set" else debug_dir_env)
+    assert plot_utils.samples_enabled({"SAVE_DEBUG_SAMPLES": True}) is False
+
+
+def test_the_gate_fails_closed_when_settings_cannot_be_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A ``FlipConstants`` that raises (e.g. half-configured production settings) means no images."""
+    plot_utils = _load_app_module(_LATENT_DIFFUSION, "plot_utils")
+
+    class _Broken:
+        def __getattr__(self, name: str) -> object:
+            raise ValueError("settings unavailable")
+
+    monkeypatch.setattr(plot_utils, "FlipConstants", _Broken())
+    monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(tmp_path))
+    assert plot_utils.samples_enabled({"SAVE_DEBUG_SAMPLES": True}) is False
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_no_trainer_gates_debug_output_on_local_dev(tutorial: Path) -> None:
+    """``samples_enabled`` is the only gate; no trainer may widen it with ``LOCAL_DEV``.
+
+    A looser test around a writer that consults ``samples_enabled`` internally does not produce more
+    output — it produces the same output after paying for work that is then discarded: in the latent
+    tutorial, a full reverse diffusion decoded through the autoencoder.
+    """
+    source = (tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8")
+    offenders = [
+        line.strip()
+        for line in source.splitlines()
+        if "LOCAL_DEV" in line and not line.strip().startswith("#")
+    ]
+    assert not offenders, (
+        f"{tutorial.name}/trainer.py gates on LOCAL_DEV: {offenders}. Debug output is gated by "
+        "samples_enabled() alone, which already checks LOCAL_DEV and DEBUG_SAMPLES_DIR."
+    )
+
+
+def _trainer(tutorial: Path) -> ModuleType:
+    return _load_app_module(tutorial, "trainer")
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_validation_cadence_defaults_without_a_config_key(tutorial: Path) -> None:
+    """``VALIDATE_EVERY`` absent falls back to the module default rather than validating every epoch.
+
+    Every epoch would be wrong because the pass includes sampling: a full reverse diffusion per
+    epoch is hours added to a long round.
+    """
+    trainer = _trainer(tutorial)
+    assert trainer.validate_every({}) == trainer.DEFAULT_VALIDATE_EVERY
+    assert trainer.DEFAULT_VALIDATE_EVERY > 1, "an every-epoch default would make sampling dominate the round"
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_a_non_integer_validation_cadence_falls_back_rather_than_raising(tutorial: Path) -> None:
+    """A malformed value must not kill a training round mid-flight."""
+    trainer = _trainer(tutorial)
+    assert trainer.validate_every({"VALIDATE_EVERY": "often"}) == trainer.DEFAULT_VALIDATE_EVERY
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_validation_fires_on_the_cadence_and_on_the_final_epoch(tutorial: Path) -> None:
+    """Every Nth epoch, plus the last one of the round unconditionally.
+
+    The final-epoch rule matters whenever the cadence does not divide ``LOCAL_ROUNDS``: without it the
+    run reports nothing for the closing stretch, which is the part you most want scored before the
+    weights are aggregated.
+    """
+    trainer = _trainer(tutorial)
+    epochs = 10
+    due = [e for e in range(epochs) if trainer.due_for_validation(e, epochs, {"VALIDATE_EVERY": 7})]
+    assert due == [6, 9], f"expected the 7th epoch and the last, got {due}"
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_validation_cadence_can_be_turned_off(tutorial: Path) -> None:
+    """Zero or negative disables the in-loop pass, leaving only the round-boundary validate task."""
+    trainer = _trainer(tutorial)
+    epochs = 5
+    for interval in (0, -1):
+        due = [e for e in range(epochs) if trainer.due_for_validation(e, epochs, {"VALIDATE_EVERY": interval})]
+        assert due == [], f"VALIDATE_EVERY={interval} should disable in-loop validation, got {due}"
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_shipped_config_declares_a_validation_cadence(tutorial: Path) -> None:
+    """``VALIDATE_EVERY`` is declared, and is a cadence the round actually reaches.
+
+    A cadence larger than ``LOCAL_ROUNDS`` would collapse to "only the final epoch", which is a
+    surprising way to spell "off".
+    """
+    config = _config(tutorial)
+    assert "VALIDATE_EVERY" in config
+    interval = config["VALIDATE_EVERY"]
+    assert isinstance(interval, int)
+    if interval > 0:
+        assert interval <= config["LOCAL_ROUNDS"], (
+            f"VALIDATE_EVERY={interval} exceeds LOCAL_ROUNDS={config['LOCAL_ROUNDS']}, so only the "
+            "final epoch would ever validate"
+        )
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_in_loop_and_round_boundary_validation_share_one_scorer_and_sampler(tutorial: Path) -> None:
+    """``train`` and ``validate`` both go through ``score_split`` and ``sample_and_save``.
+
+    Two hand-kept copies of the scoring loop are how the two diffusion trainers once came to disagree
+    on whether to restore train mode, and how the pixel-space one ended up never sampling mid-round.
+    """
+    tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    for caller in ("train", "validate"):
+        called = {
+            node.func.id
+            for node in ast.walk(functions[caller])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        missing = {"score_split", "sample_and_save"} - called
+        assert not missing, f"{tutorial.name}: {caller}() does not call {sorted(missing)}"
+
+
+def test_the_optimisation_helpers_are_identical_across_the_diffusion_tutorials() -> None:
+    """``grad_clip_norm`` and ``lr_at`` are the same source in both trainers.
+
+    Both are hand-duplicated (``app_files/`` is the upload unit), so pin them to each other: a decay
+    tweak made in one tutorial alone would make the two runs incomparable without anything saying so.
+    """
+    for name in ("grad_clip_norm", "lr_at"):
+        sources = {}
+        for tutorial in _DIFFUSION_TUTORIALS:
+            tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
+            function = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+            sources[tutorial.name] = ast.unparse(function)
+        assert len(set(sources.values())) == 1, f"{name} differs between {sorted(sources)}"
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_lr_decays_by_cosine_from_start_to_end_and_then_holds(tutorial: Path) -> None:
+    """``LR_START`` at epoch 0, the midpoint half-way, ``LR_END`` from ``LR_DECAY_EPOCHS`` on — never back up.
+
+    Holding past ``LR_DECAY_EPOCHS`` is the point of driving a ``LambdaLR``: ``CosineAnnealingLR`` is
+    periodic and would ramp the rate back up in a round longer than its ``T_max``.
+    """
+    trainer = _trainer(tutorial)
+    config = {"LR_START": 1e-4, "LR_END": 1e-6, "LR_DECAY_EPOCHS": 200}
+    assert trainer.lr_at(0, config) == pytest.approx(1e-4)
+    assert trainer.lr_at(100, config) == pytest.approx(5.05e-5)
+    assert trainer.lr_at(200, config) == pytest.approx(1e-6)
+    assert trainer.lr_at(300, config) == pytest.approx(1e-6)
+    rates = [trainer.lr_at(e, config) for e in range(301)]
+    assert all(a >= b for a, b in zip(rates, rates[1:])), "the LR must never increase"
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_lr_stays_at_start_without_an_end_or_a_decay_length(tutorial: Path) -> None:
+    """No ``LR_END``, or ``LR_DECAY_EPOCHS`` absent / non-positive, keeps the rate at ``LR_START``."""
+    trainer = _trainer(tutorial)
+    for extra in ({}, {"LR_DECAY_EPOCHS": 200}, {"LR_END": 1e-6}, {"LR_END": 1e-6, "LR_DECAY_EPOCHS": 0}):
+        assert trainer.lr_at(150, {"LR_START": 1e-4, **extra}) == 1e-4
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_the_shipped_lr_schedule_decays(tutorial: Path) -> None:
+    """Both diffusion tutorials ship the same three LR keys, with the end below the start."""
+    config = _config(tutorial)
+    assert "LR_DM" not in config, "the LR keys are LR_START / LR_END / LR_DECAY_EPOCHS, not LR_DM"
+    assert 0 < config["LR_END"] < config["LR_START"]
+    assert config["LR_DECAY_EPOCHS"] > 0
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_gradient_clipping_defaults_on_and_falls_back_on_junk(tutorial: Path) -> None:
+    """Absent means clip at the default; a malformed value must not kill a round mid-flight."""
+    trainer = _trainer(tutorial)
+    assert trainer.grad_clip_norm({}) == trainer.DEFAULT_GRAD_CLIP_NORM > 0
+    assert trainer.grad_clip_norm({"GRAD_CLIP_NORM": "lots"}) == trainer.DEFAULT_GRAD_CLIP_NORM
+    assert trainer.grad_clip_norm({"GRAD_CLIP_NORM": 0}) == 0
+
+
+@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def test_gradients_are_unscaled_before_they_are_clipped(tutorial: Path) -> None:
+    """``train`` calls ``scaler.unscale_`` ahead of ``clip_grad_norm_``, and steps the LR schedule.
+
+    Clipping the GradScaler-inflated gradients would compare the threshold against a norm scaled by
+    up to 2**16, i.e. clip every step to almost nothing.
+    """
+    tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
+    train = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "train")
+    calls = [
+        (node.lineno, node.func.attr)
+        for node in ast.walk(train)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    lines = {name: lineno for lineno, name in sorted(calls, reverse=True)}
+    assert "clip_grad_norm_" in lines, f"{tutorial.name}: train() does not clip"
+    assert "unscale_" in lines, f"{tutorial.name}: train() clips without unscaling"
+    assert lines["unscale_"] < lines["clip_grad_norm_"], f"{tutorial.name}: clips before unscaling"
+    assert "self.lr_scheduler.step()" in ast.unparse(train), f"{tutorial.name}: the LR schedule is never stepped"
+
+
+def test_generated_volumes_are_plotted_tri_planar_not_as_a_mid_slice_grid() -> None:
+    """The latent tutorial writes tri-planar figures, matching the `autoencoder` tutorial.
+
+    A mid-axial grid can look like a brain while the model has learnt nothing about through-plane
+    structure — for a *generative* model that is the question, so the sagittal and coronal cuts are
+    not optional. The pixel-space tutorial keeps ``save_grid`` because its data is 2-D chest X-rays,
+    where ``save_triplanar`` correctly declines to draw anything.
+    """
+    latent = (_LATENT_DIFFUSION / "app_files" / "trainer.py").read_text(encoding="utf-8")
+    assert "save_triplanar(" in latent, "the latent tutorial must write tri-planar sample figures"
+    assert "save_grid(" not in latent, "the latent tutorial must not write mid-slice grids for 3-D volumes"
+
+    autoencoder = (_AUTOENCODER / "app_files" / "trainer.py").read_text(encoding="utf-8")
+    assert "save_triplanar(" in autoencoder, "the autoencoder tutorial is the plot this one matches"
+
+
+def test_conditioned_samples_are_keyed_by_modality_so_the_columns_are_labelled() -> None:
+    """Each sampled volume is passed under its modality name, one column each.
+
+    ``save_triplanar`` titles a column with its dict key, so keying by modality is what makes the
+    figure self-describing. Passing the whole batch under one key would collapse four modalities into
+    a single unlabelled column and silently drop three of them.
+    """
+    source = (_LATENT_DIFFUSION / "app_files" / "trainer.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "sample_and_save"
+    )
+    comprehensions = [node for node in ast.walk(function) if isinstance(node, ast.DictComp)]
+    assert comprehensions, "sample_and_save does not build a per-modality dict of volumes"
+    keys = {ast.unparse(node.key) for node in comprehensions}
+    assert keys == {"modality"}, f"expected the dict keyed by modality, got keys {keys}"

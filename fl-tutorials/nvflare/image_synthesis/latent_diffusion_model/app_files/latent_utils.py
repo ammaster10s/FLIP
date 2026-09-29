@@ -15,10 +15,9 @@ The diffusion model denoises inside the frozen autoencoder's latent space, so bo
 the validation pass need to know that space's shape and scale. Those helpers live here because both
 passes in ``trainer.py`` share them.
 
-Named ``latent_utils.py`` rather than ``validator.py`` deliberately: this tutorial is a `standard`
-job type, whose required upload set is ``trainer.py``/``config.json``/``models.py``. The old
-``validator.py`` name belonged to the retired two-stage `diffusion_model` job type, which declared
-it as a required file; keeping that name here would imply a contract that no longer applies.
+Not named ``validator.py``: that is a required file of the platform's two-stage `diffusion_model`
+job type, and this tutorial is a `standard` job, whose required upload set is
+``trainer.py``/``config.json``/``models.py``.
 """
 
 import logging
@@ -75,7 +74,7 @@ def resolve_scale_factor(
 
     The diffusion model trains on latents normalised by this factor, so **every site must use the
     same value or their updates are not averaging comparable models.** Deriving it from a local
-    batch (the historical behaviour) gives each site a slightly different value; with a frozen
+    batch (what happens when ``LATENT_SCALE_FACTOR`` is null) gives each site a slightly different value; with a frozen
     autoencoder the factor is a fixed property of that autoencoder and the data, so it can simply be
     pinned in ``config.json`` as ``LATENT_SCALE_FACTOR``.
 

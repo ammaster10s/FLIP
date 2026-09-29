@@ -17,7 +17,8 @@ It is one of three tutorials that between them cover generative image synthesis 
 denoising objective, none of the latent machinery. The latent tutorial then adds a frozen autoencoder
 so the same UNet can work on a compressed representation instead.
 
-Validation reports the noise-prediction MSE on each site's held-out split.
+Validation reports the noise-prediction MSE on each site's held-out split, every `VALIDATE_EVERY`
+local epochs and at the end of each round (see below).
 
 ## Data
 
@@ -34,9 +35,8 @@ make -C fl-tutorials download-xray-data
 ## Job type: `standard`, not `diffusion_model`
 
 Careful here — **this directory is named `diffusion_model`, but the job type it uses is `standard`**,
-not the job type of the same name. `JOB_TYPE=diffusion_model` refers to the platform's older
-*two-stage* (autoencoder-then-diffusion) job, which is still registered but which none of these three
-tutorials uses. All three are ordinary single-stage FedAvg jobs, so they all declare
+not the job type of the same name. `JOB_TYPE=diffusion_model` refers to the platform's
+*two-stage* (autoencoder-then-diffusion) job, which none of these three tutorials uses. All three are ordinary single-stage FedAvg jobs, so they all declare
 `JOB_TYPE=standard` and pair with
 [`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/). The required upload set is
 `trainer.py`, `config.json`, `models.py`; `transforms.py` is uploaded alongside them as an extra app
@@ -75,36 +75,51 @@ shipped four-level ladder), or the UNet's skip connections will not line up. The
 resizes every image to exactly `spatial_shape`, so this is a config invariant — `fl-tutorials/tests/`
 pins it.
 
-## Seeing what it generates (`SAVE_DEBUG_SAMPLES`)
+## Learning rate schedule and gradient clipping
 
-Loss curves are a poor judge of a generative model — the noise-prediction MSE barely separates a model that generates radiographs from one that generates plausible texture. Set
+The same as the latent tutorial, with the same keys and the same code:
 
 ```json
-"SAVE_DEBUG_SAMPLES": true,
-"DEBUG_SAMPLES_MAX": 8
+"LR_START": 0.0001,
+"LR_END": 0.000001,
+"LR_DECAY_EPOCHS": 200,
+"GRAD_CLIP_NORM": 1.0
 ```
 
-in `config.json` and the client writes PNGs to `app_files/debug_samples/` **inside its own job
-workspace** — per client, per run, gitignored.
+The rate follows a cosine decay from `LR_START` to `LR_END` over `LR_DECAY_EPOCHS` epochs, counted
+across rounds, and then stays at `LR_END`. `LR_END` or `LR_DECAY_EPOCHS` absent (or the latter `0`)
+keeps the rate at `LR_START`. The current rate is logged as `LR DM@epoch`.
 
-`samples_....png` tiles a batch of generated images, written by the `validate` task.
-Sampling is a full reverse diffusion (one forward pass per training timestep), which is why it runs
-there and not once per epoch.
+Gradients are clipped to `GRAD_CLIP_NORM` once per optimizer step, after they have been unscaled;
+`0` turns clipping off. See the latent tutorial's README for why both are there.
 
-The same grid is produced by a `LOCAL_DEV` run without the flag; the flag is what makes it survive
-as a file rather than a logged tensor shape.
+## Debugging
 
-`DEBUG_PLOT_EVERY` ships with the shared `debug_samples.py` but is inert here: the tri-planar
-figure needs volumes, and this tutorial is 2-D.
+### Sample images
 
-Nothing about this puts an image on the wire. The files are written beside the running training
-script and no code path reads them back, adds them to an `FLModel` or hands them to the metrics
-writer — the Client API's `SummaryWriter` carries scalars only, so it could not take one anyway. An
-image leaves the site only if a person deliberately copies it out, which at a real trust is a
-disclosure decision like any other, not something the job can do by itself.
+Written only when **all three** hold:
 
-It ships **off**, and is meant for local runs. Left on at a trust it accumulates patient-derived
-images on that trust's disk, round after round, with no retention policy attached.
+| Condition | Set by |
+| --- | --- |
+| `"SAVE_DEBUG_SAMPLES": true` | you, in `config.json` (ships `false`) |
+| `LOCAL_DEV=true` | the simulator (every trust sets `false`) |
+| `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
+
+At a trust the last two never hold, so **production never writes images, whatever `config.json`
+says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
+
+- **Where:** `fl-tutorials/data/debug_samples/diffusion_model/` (gitignored). Nothing sends them to the server.
+- **When:** every `VALIDATE_EVERY` epochs, on each round's last epoch, and in the round-end `validate` task. Sampling is a full reverse diffusion (minutes), so keep `VALIDATE_EVERY` well above 1; `0` leaves only the round-end pass.
+- **What:** a grid of 4 generated X-rays, `samples_site-<N>_step<epoch>.png`.
+
+### Loss curves
+
+```bash
+DEBUG_SAMPLES_DIR=../../../data/debug_samples/diffusion_model python app_files/plot_utils.py
+```
+
+Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine
+only, never at a trust.
 
 ## Rounds configuration
 

@@ -122,7 +122,7 @@ def main() -> None:
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/ldm",
+        default="/tmp/nvflare/latent_diffusion_model",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them

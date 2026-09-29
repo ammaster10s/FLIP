@@ -27,11 +27,9 @@ Because the samples within one study are four views of one brain, the train/vali
 **accession**, not by file. Splitting by file would put a subject's T1w in training and their T2w in
 validation, and the reported SSIM would then be measuring memorisation.
 
-This is the first half of what used to be the two-stage latent diffusion job, split out so an
-autoencoder can be trained, scored and re-used on its own. The reconstruction/adversarial maths is
-unchanged from that job's ``train_ae`` phase. The run's aggregated weights are what the latent
-diffusion tutorial consumes as its frozen encoder — see that tutorial's
-``process_tools/extract_autoencoder.py``.
+A standalone job, so an autoencoder can be trained, scored and re-used on its own. The run's
+aggregated weights are what the latent diffusion tutorial consumes as its frozen encoder — see that
+tutorial's ``process_tools/extract_autoencoder.py``.
 """
 
 import argparse
@@ -44,7 +42,6 @@ import nibabel as nib
 import numpy as np
 import nvflare.client as flare
 import torch
-from plot_utils import due_for_plot, save_triplanar
 from flip import FLIP
 from flip.constants import ResourceType
 from medicalnet_perceptual import load_medicalnet_perceptual
@@ -54,6 +51,7 @@ from monai.data import DataLoader, Dataset
 from monai.losses import PatchAdversarialLoss
 from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
+from plot_utils import due_for_plot, save_triplanar
 from torch.amp import GradScaler, autocast
 from transforms import get_brain_mri_transforms
 
@@ -64,7 +62,7 @@ logger = logging.getLogger(__name__)
 # `medicalnet_perceptual` — see that module for why MONAI's own `PerceptualLoss(...)` constructor
 # cannot be used here (it builds its backbone through `torch.hub.load`, and FL apps never download
 # at run time, FLIP#1206). Being genuinely 3-D, it scores the whole volume rather than sampled
-# slices, so the 2-D slicing below applies only to the discriminator now.
+# slices, so the 2-D slicing below applies only to the discriminator.
 
 
 def describe(name: str, tensor: torch.Tensor) -> str:
@@ -264,12 +262,11 @@ def foreground_ssim(
 
     ``data_range`` is derived per volume rather than assumed. It sets SSIM's two stability
     constants (``c1 = (k1 * data_range)^2``, likewise ``c2``), so a wrong value silently rescales
-    the whole metric. It was hard-coded to 1 while the chain ended in ``ScaleIntensityd(0, 1)``;
-    ``NormalizeIntensityd`` z-scores each volume instead, giving a span nearer 5.5, and each volume
-    gets its own because each is z-scored independently. The callers correspondingly pass the
-    reconstruction **unclamped** — clamping it to [0, 1] flattened every voxel above 1, some 15% of
-    the volume and all of the bright anatomy, to a constant. Together those two stale assumptions
-    scored a *perfect* reconstruction at 0.26 rather than 1.0.
+    the whole metric. ``NormalizeIntensityd`` z-scores each volume, giving a span nearer 5.5 (not 1),
+    and each volume gets its own because each is z-scored independently. The callers correspondingly
+    pass the reconstruction **unclamped**: clamping to [0, 1] would flatten every voxel above 1, some
+    15% of the volume and all of the bright anatomy, to a constant. With ``data_range=1`` and a clamp,
+    a *perfect* reconstruction scores 0.26 rather than 1.0.
 
     Two details make the mask exact rather than approximate:
 
@@ -662,8 +659,8 @@ class AutoencoderTrainer:
                 f"Validation SSIM (foreground): {val_ssim}"
             )
 
-            # Send metrics to FLIP. Labels match the legacy tutorial's series names; the "@epoch"
-            # suffix names the x-axis and `step` (cumulative local epoch) is the coordinate.
+            # Send metrics to FLIP. The "@epoch" suffix names the x-axis and `step` (cumulative local
+            # epoch) is the coordinate.
             self.scheduler_g.step()
 
             step = global_round * epochs + epoch + 1

@@ -27,29 +27,47 @@ autoencoder in the loop and none of the latent-geometry machinery that comes wit
 The trade-off is cost: denoising at full image resolution is heavier than denoising a compressed
 latent — the gap is far starker in 3-D, but it is the same trade-off here. See the README on sizing
 ``net_config`` and ``BATCH_SIZE``.
+
+Everything else — the train loop, the ``VALIDATE_EVERY`` cadence for in-loop validation and sampling,
+the shared :func:`score_split` / :func:`sample_and_save` helpers used by both the in-loop pass and the
+round-boundary ``validate`` task, and what gets logged — mirrors the latent tutorial's trainer, so the
+two can be compared like for like. Samples are written with ``save_grid`` rather than
+``save_triplanar`` because the data is 2-D.
 """
 
 import argparse
 import json
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
 import nvflare.client as flare
 import pydicom
 import torch
-from plot_utils import samples_enabled, save_grid
 from flip import FLIP
-from flip.constants import FlipConstants, ResourceType
+from flip.constants import ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.inferers import DiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
+from plot_utils import samples_enabled, save_grid
 from torch.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import LambdaLR
 from transforms import get_xray_transforms
 
 logger = logging.getLogger(__name__)
+
+#: Epochs between in-loop validation and sampling when ``VALIDATE_EVERY`` is absent from the config.
+DEFAULT_VALIDATE_EVERY = 10
+
+#: Images drawn per sample grid. Fixed, like the latent tutorial's one volume per modality; kept within
+#: ``plot_utils``' default tile cap so ``save_grid`` writes every image it is given.
+NUM_DEBUG_SAMPLES = 4
+
+#: Max gradient norm when ``GRAD_CLIP_NORM`` is absent from the config.
+DEFAULT_GRAD_CLIP_NORM = 1.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,6 +107,93 @@ def batch_accumulation_step(batch_size: int) -> int:
     return 1
 
 
+def validate_every(config: dict) -> int:
+    """Epochs between in-loop validation and sampling, from ``VALIDATE_EVERY`` (default 10).
+
+    Zero or negative turns the in-loop pass off entirely, leaving only the round-boundary ``validate``
+    task. Defaults above 1 for the same reason as the latent tutorial: the pass also samples, and a
+    full reverse diffusion (every one of the scheduler's timesteps) is far costlier than a held-out
+    forward pass.
+
+    Args:
+        config (dict): The parsed ``config.json``.
+
+    Returns:
+        int: The interval in epochs.
+    """
+    try:
+        return int(config.get("VALIDATE_EVERY", DEFAULT_VALIDATE_EVERY))
+    except (TypeError, ValueError):
+        logger.warning(f"VALIDATE_EVERY is not an integer; falling back to {DEFAULT_VALIDATE_EVERY}.")
+        return DEFAULT_VALIDATE_EVERY
+
+
+def due_for_validation(epoch: int, epochs: int, config: dict) -> bool:
+    """Whether this 0-based epoch gets an in-loop validation and sample.
+
+    True every ``VALIDATE_EVERY`` epochs **and** always on the round's last epoch, so a round never
+    ends without a fresh score.
+
+    Args:
+        epoch (int): 0-based epoch index within this round.
+        epochs (int): Total epochs in this round.
+        config (dict): The parsed ``config.json``.
+
+    Returns:
+        bool: True when this epoch should validate and sample.
+    """
+    interval = validate_every(config)
+    if interval <= 0:
+        return False
+    return (epoch + 1) % interval == 0 or epoch == epochs - 1
+
+
+def grad_clip_norm(config: dict) -> float:
+    """Max global gradient norm for the diffusion UNet, from ``GRAD_CLIP_NORM`` (default 1.0).
+
+    Zero or negative turns clipping off. Clipping is applied to the *unscaled* gradients, once per
+    optimizer step (after accumulation), so the threshold means the same whatever ``BATCH_SIZE`` is.
+
+    Args:
+        config (dict): The parsed ``config.json``.
+
+    Returns:
+        float: The max norm; ``<= 0`` means no clipping.
+    """
+    try:
+        return float(config.get("GRAD_CLIP_NORM", DEFAULT_GRAD_CLIP_NORM))
+    except (TypeError, ValueError):
+        logger.warning(f"GRAD_CLIP_NORM is not a number; falling back to {DEFAULT_GRAD_CLIP_NORM}.")
+        return DEFAULT_GRAD_CLIP_NORM
+
+
+def lr_at(epoch: int, config: dict) -> float:
+    """The diffusion UNet's learning rate at a given epoch: cosine from ``LR_START`` to ``LR_END``.
+
+    Over the first ``LR_DECAY_EPOCHS`` epochs the rate follows half a cosine from ``LR_START`` down to
+    ``LR_END``, and holds at ``LR_END`` afterwards (``CosineAnnealingLR`` would climb back up past
+    ``T_max``, which is why this drives a ``LambdaLR``). ``LR_END`` absent, or ``LR_DECAY_EPOCHS``
+    absent or ``<= 0``, keeps the rate at ``LR_START``.
+
+    The epoch counts across rounds: the trainer (and so the scheduler) lives for the whole
+    ``flare.is_running()`` loop, so round 2 continues the decay where round 1 left it.
+
+    Args:
+        epoch (int): Epochs completed so far, across every round of this run.
+        config (dict): The parsed ``config.json``.
+
+    Returns:
+        float: The learning rate for that epoch.
+    """
+    start = float(config["LR_START"])
+    end = float(config.get("LR_END", start))
+    decay_epochs = int(config.get("LR_DECAY_EPOCHS", 0) or 0)
+    if decay_epochs <= 0:
+        return start
+    progress = min(epoch, decay_epochs) / decay_epochs
+    return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
 def image_noise_shape(config: dict, batch_size: int) -> list[int]:
     """Noise shape for a pixel-space diffusion step: ``[B, image_channels, *spatial_shape]``.
 
@@ -98,6 +203,114 @@ def image_noise_shape(config: dict, batch_size: int) -> list[int]:
     image to exactly that shape, so this is a config invariant rather than a per-batch check.
     """
     return [batch_size, config["net_config"]["diffusion_model"]["in_channels"], *config["spatial_shape"]]
+
+
+def score_split(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    inferer: DiffusionInferer,
+    scheduler: DDPMScheduler,
+    config: dict,
+    device: torch.device,
+) -> float:
+    """Mean noise-prediction MSE over a loader, with the diffusion model in eval mode.
+
+    Shared by the in-loop pass and the round-boundary ``validate`` task so the two scores are computed
+    identically. Restores the caller's train/eval mode afterwards, so the in-loop pass hands training
+    back a model still in train mode.
+
+    Args:
+        model (torch.nn.Module): The diffusion network.
+        loader (DataLoader): The split to score.
+        inferer (DiffusionInferer): The inferer built for this round.
+        scheduler (DDPMScheduler): The DDPM noise scheduler.
+        config (dict): The parsed ``config.json``.
+        device (torch.device): Device to run on.
+
+    Returns:
+        float: Mean MSE, or NaN when the loader is empty.
+    """
+    loss_fn = torch.nn.functional.mse_loss
+    was_training = model.diffusion_model.training
+    model.diffusion_model.eval()
+    losses = []
+    try:
+        for batch in loader:
+            images = batch["image"].to(device)
+            with autocast(enabled=False, device_type=device.type):
+                with torch.no_grad():
+                    noise = torch.randn(image_noise_shape(config, images.shape[0])).to(device)
+                    timesteps = torch.randint(
+                        0, scheduler.num_train_timesteps, (images.shape[0],), device=device
+                    ).long()
+                    noise_pred = inferer(
+                        inputs=images,
+                        diffusion_model=model.diffusion_model,
+                        noise=noise,
+                        timesteps=timesteps,
+                        condition=None,
+                        mode="crossattn",
+                    )
+                losses.append(loss_fn(noise.float(), noise_pred.float()).item())
+    finally:
+        if was_training:
+            model.diffusion_model.train()
+    return float(np.mean(losses)) if losses else float("nan")
+
+
+def sample_and_save(
+    model: torch.nn.Module,
+    inferer: DiffusionInferer,
+    scheduler: DDPMScheduler,
+    config: dict,
+    device: torch.device,
+    *,
+    step: int | None = None,
+) -> None:
+    """Draw samples and write one grid. No-op unless samples are enabled.
+
+    Sampling is the only honest read on a diffusion model: the noise-prediction MSE barely moves
+    between a model that generates radiographs and one that generates texture. Gated on exactly what
+    decides whether the grid is written, and nothing looser: this is a full reverse diffusion, so a
+    broader test buys that cost and then discards the result inside ``save_grid``.
+
+    Draws a fixed ``NUM_DEBUG_SAMPLES`` images per grid, as the latent tutorial draws a fixed one volume
+    per modality: neither reads ``DEBUG_SAMPLES_MAX``, so the two configs carry the same debug keys.
+
+    Args:
+        model (torch.nn.Module): The diffusion network.
+        inferer (DiffusionInferer): The inferer built for this round.
+        scheduler (DDPMScheduler): The DDPM noise scheduler.
+        config (dict): The parsed ``config.json``.
+        device (torch.device): Device to run on.
+        step (int | None): Epoch/round counter for the filename, so successive grids sort.
+    """
+    if not samples_enabled(config):
+        return
+
+    sample_count = NUM_DEBUG_SAMPLES
+    logger.info(f"[DEBUG]: Sampling {sample_count} image(s)...")
+
+    was_training = model.diffusion_model.training
+    model.diffusion_model.eval()
+    try:
+        noise = torch.randn(image_noise_shape(config, sample_count)).to(device)
+        with torch.no_grad():
+            sampled_images = inferer.sample(
+                input_noise=noise,
+                diffusion_model=model.diffusion_model,
+                scheduler=scheduler,
+                save_intermediates=False,
+                conditioning=None,
+                # No tqdm bar: simulated sites share one terminal and their bars overwrite each other's line.
+                verbose=False,
+            )
+    finally:
+        if was_training:
+            model.diffusion_model.train()
+
+    logger.info(f"Sampled images shape: {tuple(sampled_images.shape)}")
+    save_grid({"sample": sampled_images}, "samples", config, site_name=flare.get_site_name(), step=step)
 
 
 class DiffusionTrainer:
@@ -111,7 +324,7 @@ class DiffusionTrainer:
         self.config = config
         self.project_id = project_id
 
-        self.params_diffusion = {"lr": config["LR_DM"], "epochs": config.get("LOCAL_ROUNDS", 5)}
+        self.params_diffusion = {"lr": config["LR_START"], "epochs": config.get("LOCAL_ROUNDS", 5)}
 
         # Model creation
         self.model = get_model()
@@ -131,6 +344,11 @@ class DiffusionTrainer:
                 beta_end=0.0195,
             ),
         }
+        # Cosine decay LR_START -> LR_END over LR_DECAY_EPOCHS epochs, stepped once per epoch (see lr_at).
+        # LambdaLR takes a multiplier on the optimizer's initial rate, which is LR_START.
+        self.lr_scheduler = LambdaLR(
+            self.optimizers_dm["optimizer"], lambda epoch: lr_at(epoch, self.config) / self.params_diffusion["lr"]
+        )
 
         # Data loading
         self.flip = FLIP()
@@ -244,45 +462,53 @@ class DiffusionTrainer:
                 scaler.scale(loss).backward()
                 batch_acc_counter += 1
                 if batch_acc_counter == accumulation_step:
+                    max_norm = grad_clip_norm(self.config)
+                    if max_norm > 0:
+                        # Unscale first so the norm is measured on the real gradients, not the
+                        # GradScaler-inflated ones; scaler.step then knows not to unscale again.
+                        scaler.unscale_(self.optimizers_dm["optimizer"])
+                        torch.nn.utils.clip_grad_norm_(self.model.diffusion_model.parameters(), max_norm)
                     scaler.step(self.optimizers_dm["optimizer"])
                     scaler.update()
                     batch_acc_counter = 0
                     self.optimizers_dm["optimizer"].zero_grad(set_to_none=True)
                 train_loss_epoch += loss.item()
+                logger.debug(f"Batch loss {loss.item()}")
 
             train_loss.append(train_loss_epoch / max(1, len(train_loader)))
 
-            # Validation loss
-            val_loss_epoch = 0
-            for batch in val_loader:
-                images = batch["image"].to(self.device)
-                self.model.diffusion_model.eval()
-                with autocast(enabled=False, device_type=self.device.type):
-                    noise = torch.randn(image_noise_shape(self.config, images.shape[0])).to(self.device)
-                    timesteps = torch.randint(
-                        0,
-                        self.optimizers_dm["scheduler"].num_train_timesteps,
-                        (images.shape[0],),
-                        device=self.device,
-                    ).long()
-                    with torch.no_grad():
-                        noise_pred = inferer(
-                            inputs=images,
-                            diffusion_model=self.model.diffusion_model,
-                            noise=noise,
-                            timesteps=timesteps,
-                            condition=None,
-                            mode="crossattn",
-                        )
-                    val_loss_epoch += self.losses_dm["loss"](noise.float(), noise_pred.float()).item()
-
-            val_loss.append(val_loss_epoch / max(1, len(val_loader)))
-
-            logger.info(f"Epoch {epoch + 1} / {epochs};\n Total loss DM: {np.mean(train_loss)}")
-
+            # Report this epoch's loss, not np.mean(train_loss) — a running cumulative average that
+            # flattens as the round goes on and lags real changes.
+            epoch_loss = train_loss[-1]
             step = global_round * epochs + epoch + 1
-            writer.add_scalar("Total loss DM@epoch", float(np.mean(train_loss)), global_step=step)
-            writer.add_scalar("Validation loss DM@epoch", float(np.mean(val_loss)), global_step=step)
+            logger.info(f"Epoch {epoch + 1} / {epochs};\n Total loss DM: {epoch_loss}")
+            writer.add_scalar("Total loss DM@epoch", epoch_loss, global_step=step)
+            writer.add_scalar("LR DM@epoch", self.optimizers_dm["optimizer"].param_groups[0]["lr"], global_step=step)
+            # Per epoch, after the epoch's last optimizer step. ``lr_scheduler`` is not in
+            # ``optimizers_dm`` because that dict's "scheduler" is the DDPM noise scheduler.
+            self.lr_scheduler.step()
+
+            # Validation and sampling on a cadence, not every epoch (see validate_every).
+            if due_for_validation(epoch, epochs, self.config):
+                epoch_val_loss = score_split(
+                    self.model,
+                    val_loader,
+                    inferer,
+                    self.optimizers_dm["scheduler"],
+                    self.config,
+                    self.device,
+                )
+                val_loss.append(epoch_val_loss)
+                logger.info(f"Validation DM: {epoch_val_loss}")
+                writer.add_scalar("Validation loss DM@epoch", epoch_val_loss, global_step=step)
+                sample_and_save(
+                    self.model,
+                    inferer,
+                    self.optimizers_dm["scheduler"],
+                    self.config,
+                    self.device,
+                    step=step,
+                )
 
         return epochs * len(train_loader)
 
@@ -308,48 +534,16 @@ def validate(
     Returns:
         float: Mean noise-prediction MSE over the held-out split.
     """
-    loss_fn = torch.nn.functional.mse_loss
-
     model.diffusion_model.to(device=device)
     inferer = DiffusionInferer(scheduler=scheduler)
     model.diffusion_model.eval()
 
-    val_loss = []
-    for batch in test_loader:
-        images = batch["image"].to(device)
-        with autocast(enabled=False, device_type=device.type):
-            with torch.no_grad():
-                noise = torch.randn(image_noise_shape(config, images.shape[0])).to(device)
-                timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=device).long()
-                noise_pred = inferer(
-                    inputs=images,
-                    diffusion_model=model.diffusion_model,
-                    noise=noise,
-                    timesteps=timesteps,
-                    condition=None,
-                    mode="crossattn",
-                )
-            val_loss.append(loss_fn(noise.float(), noise_pred.float()).item())
+    # Same two helpers the in-loop pass uses, so the round-boundary score and the mid-round scores are
+    # computed identically.
+    mean_val_loss = score_split(model, test_loader, inferer, scheduler, config, device)
+    sample_and_save(model, inferer, scheduler, config, device)
 
-    # Sampling is the only honest read on a diffusion model: the noise-prediction MSE above barely
-    # moves between a model that generates radiographs and one that generates texture. Run it when
-    # either the dev sanity check or client-local debug images are asked for — it is a full reverse
-    # diffusion (num_train_timesteps steps), so it stays off the per-epoch path.
-    if FlipConstants.LOCAL_DEV or samples_enabled(config):
-        logger.info("[DEBUG]: Sampling images...")
-        noise = torch.randn(image_noise_shape(config, config["BATCH_SIZE"])).to(device)
-        sampled_images = inferer.sample(
-            input_noise=noise,
-            diffusion_model=model.diffusion_model,
-            scheduler=scheduler,
-            conditioning=None,
-        )
-        logger.info(f"Sampled images shape: {sampled_images.detach().cpu().numpy().shape}")
-        save_grid({"sample": sampled_images}, "samples", config, site_name=flare.get_site_name())
-
-    mean_val_loss = float(np.mean(val_loss)) if val_loss else float("nan")
     logger.info(f"Validation DM: {mean_val_loss}")
-
     writer.add_scalar("Total loss DM (val)", mean_val_loss, global_step=0)
 
     return mean_val_loss

@@ -43,6 +43,37 @@ def load_net_config():
     return net_config
 
 
+def autoencoder_kwargs(net_config: Mapping[str, Any]) -> dict[str, Any]:
+    """The exact keyword arguments this tutorial builds its ``AutoencoderKL`` with.
+
+    This is the sole definition of the autoencoder's architecture, and the reason it is a named
+    function rather than inline in ``__init__``: the latent diffusion tutorial's
+    ``process_tools/extract_autoencoder.py`` calls it to record the architecture into the YAML that
+    travels with an extracted checkpoint, so the two tutorials cannot disagree about what a set of
+    weights means.
+
+    Every argument is passed explicitly, including the ones that happen to equal MONAI's defaults.
+    ``norm_num_groups`` is why that matters: it changes how GroupNorm computes without changing a
+    single parameter *shape*, so a network built with one value loads a checkpoint trained with
+    another under ``strict=True`` and reports nothing. The only symptom is silently wrong latents.
+    Leaving it to the default meant ``config.json`` could name a value that steered nothing.
+    """
+    stage_1 = net_config["stage_1"]
+    return {
+        "spatial_dims": net_config["spatial_dims"],
+        "in_channels": stage_1["in_channels"],
+        "out_channels": stage_1["out_channels"],
+        "num_res_blocks": stage_1["num_res_blocks"],
+        "channels": stage_1["channels"],
+        "attention_levels": stage_1["attention_levels"],
+        "latent_channels": stage_1["latent_channels"],
+        "norm_num_groups": stage_1["norm_num_groups"],
+        "norm_eps": stage_1["norm_eps"],
+        "with_encoder_nonlocal_attn": stage_1["with_encoder_nonlocal_attn"],
+        "with_decoder_nonlocal_attn": stage_1["with_decoder_nonlocal_attn"],
+    }
+
+
 class AutoencoderNetwork(nn.Module):
     """Creates the autoencoder training network, containing a:
 
@@ -53,17 +84,7 @@ class AutoencoderNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         net_config = load_net_config()
-        self.autoencoder = AutoencoderKL(
-            spatial_dims=net_config["spatial_dims"],
-            in_channels=net_config["stage_1"]["in_channels"],
-            out_channels=net_config["stage_1"]["out_channels"],
-            num_res_blocks=net_config["stage_1"]["num_res_blocks"],
-            channels=net_config["stage_1"]["channels"],
-            attention_levels=net_config["stage_1"]["attention_levels"],
-            latent_channels=net_config["stage_1"]["latent_channels"],
-            with_encoder_nonlocal_attn=False,
-            with_decoder_nonlocal_attn=False,
-        )
+        self.autoencoder = AutoencoderKL(**autoencoder_kwargs(net_config))
 
         self.discriminator = PatchDiscriminator(
             spatial_dims=net_config["discriminator"]["spatial_dims"],

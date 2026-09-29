@@ -1,17 +1,18 @@
 {
     "job_type": "standard",
     "SERVER_CHECKPOINT": "pretrained_autoencoder.pt",
+    "AUTOENCODER_CONFIG": "autoencoder_config.yaml",
     "AGGREGATE_ONLY_REGEX": "^diffusion_model\\.",
-    "GLOBAL_ROUNDS": 1,
-    "LOCAL_ROUNDS": 1,
-    "PATIENCE_STEPS": 10,
-    "CEILING_NUM_ROUNDS": 100,
-    "LR_DM": 0.0001,
+    "GLOBAL_ROUNDS": 2,
+    "LOCAL_ROUNDS": 300,
+    "VALIDATE_EVERY": 5,
+    "LR_START": 0.0001,
+    "LR_END": 1e-06,
+    "LR_DECAY_EPOCHS": 200,
+    "GRAD_CLIP_NORM": 1.0,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 2,
     "SAVE_DEBUG_SAMPLES": false,
-    "DEBUG_SAMPLES_MAX": 8,
-    "DEBUG_PLOT_EVERY": 100,
     "MODALITIES": [
         "FLAIR",
         "T1w",
@@ -26,31 +27,6 @@
     ],
     "net_config": {
         "spatial_dims": 3,
-        "stage_1": {
-            "in_channels": 1,
-            "spatial_dims": 3,
-            "out_channels": 1,
-            "num_res_blocks": [
-                2,
-                2,
-                2
-            ],
-            "channels": [
-                64,
-                128,
-                256
-            ],
-            "attention_levels": [
-                false,
-                false,
-                false
-            ],
-            "latent_channels": 3,
-            "norm_num_groups": 16,
-            "norm_eps": 1e-06,
-            "with_encoder_nonlocal_attn": false,
-            "with_decoder_nonlocal_attn": false
-        },
         "diffusion_model": {
             "in_channels": 3,
             "out_channels": 3,

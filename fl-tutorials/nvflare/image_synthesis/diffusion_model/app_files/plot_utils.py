@@ -32,9 +32,8 @@ Client API's writer exposes only ``add_scalar``/``add_scalars``). An image saved
 only if a human deliberately copies it out, which at a real trust is a disclosure decision governed
 by the same rules as any other data egress, not something a training run can do by itself.
 
-Off by default, and enabled per job by ``SAVE_DEBUG_SAMPLES`` in ``config.json``. Treat it as a
-local-development instrument: leaving it on at a trust accumulates patient-derived reconstructions
-on that trust's disk, round after round, with no retention policy attached.
+Off by default. Enabled by ``SAVE_DEBUG_SAMPLES`` in ``config.json``, and **only in a local simulator
+run** (see :func:`samples_enabled`): at a trust nothing is written whatever the config says.
 
 The analysis half is **inert at a trust**: it runs only under ``__main__``, reads simulator paths
 that do not exist there, and is never imported by ``trainer.py``. It ships regardless, because this
@@ -57,6 +56,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from flip.constants import FlipConstants
 from torchvision.utils import make_grid, save_image
 
 logger = logging.getLogger(__name__)
@@ -64,8 +64,8 @@ logger = logging.getLogger(__name__)
 #: Directory created next to the training script. Gitignored, and never read back by any code path.
 DEBUG_DIR_NAME = "debug_samples"
 
-#: Environment variable that relocates the output. Set by the tutorial Makefiles for simulator runs
-#: only — see :func:`debug_dir` for why it is an env var rather than a ``config.json`` key.
+#: Environment variable set by the tutorial Makefiles' ``sim`` recipe only. It is both where the output
+#: goes and half of the simulator check in :func:`in_simulation`; never a ``config.json`` key.
 DEBUG_DIR_ENV = "DEBUG_SAMPLES_DIR"
 
 #: How many images to write per grid when ``DEBUG_SAMPLES_MAX`` is absent from the config.
@@ -91,18 +91,49 @@ DEFAULT_PLOT_EVERY = 100
 _PLANES = (("sagittal", 0, True), ("coronal", 1, False), ("axial", 2, False))
 
 
-def samples_enabled(config: dict) -> bool:
-    """Whether this job asked for client-local debug images.
+def in_simulation() -> bool:
+    """Whether this process is a local simulator run launched by a tutorial Makefile.
 
-    Absent key means off, so an existing ``config.json`` keeps its current behaviour.
+    Needs **both** signals, so that neither alone can open the gate on a trust:
+
+    - ``FlipConstants.LOCAL_DEV`` is true. Every trust deployment (compose and Helm) sets it to
+      ``false``, and the ``flip`` library already reads its data from the trust APIs on that value,
+      so a client with it true cannot be running a real cohort. It is not enough on its own because
+      it *defaults* to true when the variable is unset.
+    - ``DEBUG_SAMPLES_DIR`` is set and non-blank. Only the tutorial Makefiles' ``sim`` recipe sets
+      it; it is not a ``config.json`` key, so nothing uploaded with the app can supply it.
+
+    Returns:
+        bool: True only inside a Makefile-launched simulator run.
+    """
+    if not os.environ.get(DEBUG_DIR_ENV, "").strip():
+        return False
+    try:
+        return FlipConstants.LOCAL_DEV is True
+    except Exception:  # unreadable settings: fail closed
+        return False
+
+
+def samples_enabled(config: dict) -> bool:
+    """Whether this job writes client-local debug images.
+
+    True only when ``config.json`` sets ``SAVE_DEBUG_SAMPLES`` **and** :func:`in_simulation` holds.
+    The config is the user's switch — false means no images, simulator included. It is never what
+    separates simulation from production, because ``config.json`` travels with the app to the trust:
+    in production (``LOCAL_DEV=false``, no ``DEBUG_SAMPLES_DIR``) this returns False whatever the
+    config says, so patient-derived pixels are never written at a trust.
+
+    This is the single gate for both writers. ``save_grid`` and ``save_triplanar`` consult it and
+    no-op when it is false, so a caller must never add a second condition of its own: a sampling
+    block that runs on a looser test than this one pays for its output and then discards it.
 
     Args:
         config (dict): The parsed ``config.json``.
 
     Returns:
-        bool: True when ``SAVE_DEBUG_SAMPLES`` is truthy.
+        bool: True when ``SAVE_DEBUG_SAMPLES`` is truthy and this is a simulator run.
     """
-    return bool(config.get("SAVE_DEBUG_SAMPLES", False))
+    return bool(config.get("SAVE_DEBUG_SAMPLES", False)) and in_simulation()
 
 
 def plot_every(config: dict) -> int:
@@ -144,23 +175,11 @@ def due_for_plot(iteration: int, config: dict) -> bool:
 def debug_dir() -> Path:
     """Return (creating if needed) the directory debug images are written to.
 
-    **Default: beside this app's own training script.** Resolved from ``__file__`` rather than the
-    process working directory, which for an NVFLARE client is the workspace root shared by every app
-    in the run. Each client unpacks its own copy of the app, so that path is inherently per-client
-    and per-run — two simulated sites cannot overwrite each other's images, and nothing is written
-    outside the job the trust agreed to run. That containment is the default precisely because it is
-    the behaviour that has to hold on a trust.
-
-    **Override: ``DEBUG_SAMPLES_DIR``.** In the simulator the default buries the images somewhere
-    like ``/tmp/nvflare/<job>/flip_fedavg/site-1/simulate_job/app_site-1/custom/debug_samples/``,
-    which is tedious to find and is wiped by the next run. The tutorial Makefiles therefore point
-    this at ``fl-tutorials/data/debug_samples/<tutorial>/`` for local runs, beside the datasets and
-    under the same gitignore.
-
-    It is an environment variable rather than a ``config.json`` key on purpose: ``config.json`` is
-    uploaded with the app and read on the trust, so a path in it would follow the job to production
-    and ask a client to write patient-derived images to an operator-chosen location. The env var is
-    set only by the local Makefile, is absent on a trust, and so cannot.
+    ``DEBUG_SAMPLES_DIR``, which the tutorial Makefiles point at
+    ``fl-tutorials/data/debug_samples/<tutorial>/`` — beside the datasets, under the same gitignore,
+    and stable across runs. :func:`samples_enabled` requires it to be set, so in practice every image
+    lands there. The fallback, ``debug_samples/`` beside this script (per client, per run), only
+    applies to a direct call with the variable unset.
     """
     override = os.environ.get(DEBUG_DIR_ENV, "").strip()
     target = Path(override).expanduser().resolve() if override else Path(__file__).parent.resolve() / DEBUG_DIR_NAME
@@ -384,8 +403,8 @@ DEFAULT_WORKSPACE = Path("/tmp/nvflare") / Path(__file__).resolve().parent.paren
 _MESSAGE_RE = re.compile(r" - (?:DEBUG|INFO|WARNING|ERROR|CRITICAL) - (?P<message>.*)$")
 
 #: One ``name: number`` pair inside a message. Deliberately generic: every tutorial here logs its
-#: losses in that shape but with different names, and hard-coding one tutorial's names is what made
-#: the previous version of this dead weight in the other two. The name charset excludes quotes,
+#: losses in that shape but with different names, so hard-coding one tutorial's names would leave
+#: the other two with empty plots. The name charset excludes quotes,
 #: commas and hyphens, which is what keeps a name from bridging across ``a: 1, b: 2`` or reaching
 #: back into the logger prefix; ``nan``/``inf`` are accepted as values so a run that broke still
 #: plots up to the point it broke.

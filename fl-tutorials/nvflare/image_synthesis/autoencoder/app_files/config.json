@@ -2,13 +2,11 @@
     "job_type": "standard",
     "GLOBAL_ROUNDS": 3,
     "LOCAL_ROUNDS": 150,
-    "PATIENCE_STEPS": 10,
-    "CEILING_NUM_ROUNDS": 100,
     "LR_G": 0.0001,
     "LR_D": 0.0001,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 2,
-    "SAVE_DEBUG_SAMPLES": true,
+    "SAVE_DEBUG_SAMPLES": false,
     "DEBUG_SAMPLES_MAX": 8,
     "DEBUG_PLOT_EVERY": 100,
     "MODALITIES": [
@@ -48,7 +46,7 @@
                 false
             ],
             "latent_channels": 3,
-            "norm_num_groups": 16,
+            "norm_num_groups": 32,
             "norm_eps": 1e-06,
             "with_encoder_nonlocal_attn": false,
             "with_decoder_nonlocal_attn": false

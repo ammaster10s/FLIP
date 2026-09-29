@@ -36,10 +36,10 @@ NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
 
 # --- Where debug images land (local runs only) ---
-# app_files/debug_samples/ inside the simulator's per-site job workspace is the default and the
-# production behaviour, but under /tmp/nvflare/... it is awkward to find and the next run wipes it.
-# For local runs put it beside the datasets instead, under the same gitignored fl-tutorials/data/.
-# Never set on a trust: config.json travels with the app, this does not.
+# Output dir for sample images, beside the datasets under the gitignored fl-tutorials/data/. Also half
+# of the simulator check: images are written only with SAVE_DEBUG_SAMPLES true in config.json AND
+# LOCAL_DEV true AND this set (plot_utils.samples_enabled). Never set on a trust, which also runs
+# with LOCAL_DEV=false, so production writes nothing whatever config.json says.
 DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/autoencoder
 
 # --- Shipped weights (FLIP#1206) ---

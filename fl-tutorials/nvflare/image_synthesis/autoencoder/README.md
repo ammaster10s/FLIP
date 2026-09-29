@@ -59,7 +59,7 @@ tutorial's benefit. The tumour labels in the cohort are ignored entirely — thi
 These files are compatible with `JOB_TYPE=standard` in the base application
 ([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)) — an ordinary single-stage
 FedAvg job with cross-site validation. The required upload set is `trainer.py`, `config.json`,
-`models.py`; `transforms.py`, `modality.py`, `debug_samples.py`, `medicalnet_perceptual.py` and the
+`models.py`; `transforms.py`, `modality.py`, `plot_utils.py`, `medicalnet_perceptual.py` and the
 shipped perceptual backbone (`medicalnet_resnet10_23datasets-afa8055f.pth`, produced by
 `make weights`) are uploaded alongside them as extra app
 files.
@@ -74,9 +74,12 @@ attribute in `app_files/models.py`** — the checkpoint load on the other side i
 mismatch is silently tolerated and the diffusion model then trains against a randomly-initialised
 encoder rather than yours.
 
-The `net_config.stage_1` block must also stay identical between the two tutorials, for the same
-reason. See `process_tools/extract_autoencoder.py` in that tutorial for the conversion step, which
-takes this run's downloaded result and emits the autoencoder-only checkpoint to upload.
+The architecture is not kept identical by hand. `process_tools/extract_autoencoder.py`
+in that tutorial takes this run's downloaded result and emits two files — the autoencoder-only
+checkpoint to upload, and an `autoencoder_config.yaml` recording the architecture it was trained with,
+which the latent tutorial builds its frozen encoder from. The architecture is read from
+`models.autoencoder_kwargs` here, so **that function is the single definition of this network's shape**
+and the reason it exists as a named function rather than inline in `__init__`.
 
 
 ## 3D or 2D discriminator 
@@ -93,9 +96,9 @@ The discriminator can be either 2D or 3D. The reason for a 2D discriminator in a
   always be no, and asking on the raw geometry instead (240×240×155, a ratio of 1.55) would log
   "found axial anisotropy" about data that is about to be made isotropic. It is there for a cohort
   that is genuinely thick-slice and resampled to a grid that keeps it that way.
-  The perceptual loss no longer uses this path: MedicalNet takes the volume whole. Slicing it was
-  a quiet source of dilution — a random axial slice of a skull-stripped head is often mostly air,
-  and scores near zero whatever the model did.
+  The perceptual loss does not use this path: MedicalNet takes the volume whole. Slicing would
+  dilute it — a random axial slice of a skull-stripped head is often mostly air, and scores near
+  zero whatever the model did.
 
 **`net_config.spatial_dims` is the top-level key, and the one every network is built from.**
 `stage_1` carries a copy that `models.py` does not read; a parity test fails if the two disagree,
@@ -144,32 +147,33 @@ cohort within about 15 steps. Squaring that overflows to `inf`, and `z_mu**2 + i
 `RuntimeError: NaN in autoencoder reconstruction during train`, pointing at the forward pass rather
 than at the loss that poisoned it.
 
-## Seeing what it generates (`SAVE_DEBUG_SAMPLES`)
+## Debugging
 
-Loss curves are a poor judge of a generative model, and an autoencoder is the clearest case: L1 falls just as convincingly while the network learns to emit a well-centred blur. Set
+### Sample images
 
-```json
-"SAVE_DEBUG_SAMPLES": true,
-"DEBUG_SAMPLES_MAX": 8
+Written only when **all three** hold:
+
+| Condition | Set by |
+| --- | --- |
+| `"SAVE_DEBUG_SAMPLES": true` | you, in `config.json` (ships `false`) |
+| `LOCAL_DEV=true` | the simulator (every trust sets `false`) |
+| `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
+
+At a trust the last two never hold, so **production never writes images, whatever `config.json`
+says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
+
+- **Where:** `fl-tutorials/data/debug_samples/autoencoder/` (gitignored). Nothing sends them to the server.
+- **When:** at iteration 0 and every `DEBUG_PLOT_EVERY` training iterations, after each epoch's validation, and in the round-end `validate` task.
+- **What:** tri-planar figures (sagittal, coronal, axial) of input vs reconstruction.
+
+### Loss curves
+
+```bash
+DEBUG_SAMPLES_DIR=../../../data/debug_samples/autoencoder python app_files/plot_utils.py
 ```
 
-in `config.json`. For a **local simulator run** the images land beside the datasets:
-
-```
-fl-tutorials/data/debug_samples/autoencoder/
-```
-
-which is stable across runs and already gitignored. On a **trust** they go to
-`app_files/debug_samples/` inside that client's own job workspace instead — per client, per run,
-and never outside the job the trust agreed to run.
-
-The difference is one environment variable, `DEBUG_SAMPLES_DIR`, which the tutorial Makefile sets
-for `make sim` and which does not exist on a trust. It is deliberately *not* a `config.json` key:
-that file is uploaded with the app and read on the trust, so a path in it would follow the job into
-production and ask a client to write patient-derived images wherever the config said.
-
-This needs `matplotlib`, which is in `app_files/requirements.txt` and in the base image; the module
-imports it lazily and forces the `Agg` backend, since an FL client has no display.
+Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine
+only, never at a trust.
 
 ## Base-image dependency (torchvision)
 
@@ -178,9 +182,7 @@ against the **same torch** as the
 `flare-fl-base` image (pinned `torch>=2.11`, cu128, in
 [`flip-utils/pyproject.toml`](../../../../flip-utils/pyproject.toml)). A base image whose
 `torchvision` predates that pin fails at runtime with
-`RuntimeError: operator torchvision::nms does not exist`. (The `app_files/requirements.txt` lists
-`torchvision` too, but that file is a dependency *spec* — the runtime deps come from the base image,
-not from installing it per job.) The perceptual network's weights are **not** downloaded at run
+`RuntimeError: operator torchvision::nms does not exist`. The perceptual network's weights are **not** downloaded at run
 time — see the next section.
 
 ## FLIP-specific values

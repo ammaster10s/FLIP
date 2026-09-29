@@ -17,10 +17,8 @@ It is one of three tutorials that between them cover generative image synthesis 
 | [`diffusion_model`](../diffusion_model/) | `DiffusionModelUNet` | 2-D chest X-rays, in pixel space | no |
 | **`latent_diffusion_model`** (this one) | `DiffusionModelUNet` | latents of a frozen autoencoder, 3-D brain MRI | **yes** — the autoencoder |
 
-Each is an **independent single-stage job**. This tutorial used to be a single two-stage job that
-trained the autoencoder and then the diffusion model in one run; the two halves are now separate, so
-you can train an autoencoder once and re-use it across many diffusion runs, or bring one you already
-have.
+Each is an **independent single-stage job**, so you can train an autoencoder once and re-use it
+across many diffusion runs, or bring one you already have.
 
 Validation reports the noise-prediction MSE on each site's held-out split.
 
@@ -89,9 +87,8 @@ These files are compatible with `JOB_TYPE=standard` in the base application
 `trainer.py`, `config.json`, `models.py`; `transforms.py`, `latent_utils.py` **and the autoencoder
 checkpoint** are uploaded alongside them.
 
-Note this tutorial no longer uses `JOB_TYPE=diffusion_model`. That job type is the platform's older
-*two-stage* autoencoder-then-diffusion job; it remains registered and working, but none of these three
-tutorials uses it.
+This tutorial does not use `JOB_TYPE=diffusion_model`. That job type is the platform's *two-stage*
+autoencoder-then-diffusion job, and none of these three tutorials uses it.
 
 ## Getting the autoencoder (do this first)
 
@@ -109,12 +106,28 @@ make prepare-checkpoint RAW_CHECKPOINT=<path to that run's .pt>
 ```
 
 `prepare-checkpoint` unwraps the persistor envelope (the state dict sits under a `"model"` key),
-keeps only `autoencoder.*`, and writes `app_files/pretrained_autoencoder.pt`. It is a no-op if that
-file already exists, and `make run` depends on it. Dropping `discriminator.*` is about file size and
-a clean load log rather than correctness — the persistor loads `strict=False`, so leftover keys would
-merely be reported as unexpected.
+keeps only `autoencoder.*`, and writes **two** files, which are one artifact and must never be staged
+apart:
 
-**That file is the only checkpoint you upload.** There is no diffusion-model checkpoint to provide,
+| File | What it is | Where it goes |
+|---|---|---|
+| `app_files/pretrained_autoencoder.pt` | the weights | server only (`SERVER_CHECKPOINT`) |
+| `app_files/autoencoder_config.yaml` | the architecture those weights belong to | every client, in the app bundle |
+
+The YAML is what `models.py` builds the frozen autoencoder from, which is why the architecture is
+**not** duplicated in this tutorial's `config.json`. Clients need it precisely because they *don't*
+get the checkpoint: they build a bare autoencoder and receive the weights in the round-0 broadcast,
+so they have to know its shape up front.
+
+Dropping `discriminator.*` is about file size and a clean load log rather than correctness — the
+persistor loads `strict=False`, so leftover keys would merely be reported as unexpected.
+
+Re-running `prepare-checkpoint` when both files already exist **verifies** them instead of skipping:
+it instantiates the recorded architecture and compares it to the checkpoint's own tensors, key by key
+and shape by shape, so a checkpoint from a differently-shaped autoencoder is caught here instead of
+being silently declined at load time.
+
+**The checkpoint is the only thing you upload as a model file.** There is no diffusion-model checkpoint to provide,
 empty or otherwise: the server builds the full network from `models.py` — autoencoder plus a freshly
 initialised diffusion model — and fills in the autoencoder half from your upload before round 0. The
 two models stay separate everywhere else: each is trained by its own job, and the autoencoder's
@@ -128,13 +141,23 @@ randomly-initialised encoder while reporting entirely plausible losses:
 
 1. **The submodule name.** Both networks must call the submodule `autoencoder`, so its parameters are
    keyed `autoencoder.*` in both state dicts. Renaming it in either `models.py` breaks the handoff.
-2. **`net_config.stage_1`.** It must be identical to the `autoencoder` tutorial's block — it *is* the
-   architecture the checkpoint was trained for.
+2. **A checkpoint and a config that don't match each other.** `autoencoder_config.yaml` *is* the
+   architecture the weights were trained for. Replace one of the pair without the other and the
+   persistor loads nothing.
 
-`fl-tutorials/tests/test_image_synthesis_config_parity.py` guards both statically. At run time, check
-the server log for `Loaded backbone into initial global model from …` and confirm the **missing-key
-count** covers only the diffusion model (126 of the network's 444 tensors are the autoencoder's); a
-larger count is the symptom of either failure above.
+The second is why the architecture is recorded at extraction time rather than transcribed by hand,
+and why it comes from the `autoencoder` tutorial's `models.autoencoder_kwargs` rather than from its
+`config.json`: a config value that is never passed through to the network would go unnoticed.
+`norm_num_groups` is the worst case of this whole class — it repartitions every GroupNorm **without changing a single
+parameter shape**, so the wrong value loads the checkpoint cleanly under `strict=True` and the only
+symptom is latents that are quietly wrong. No check made after the fact can recover it; it has to be
+written down by the run that trained the weights, which is what this design does.
+
+`fl-tutorials/tests/test_image_synthesis_config_parity.py` guards both statically, and
+`prepare-checkpoint` re-verifies the pair on every invocation. At run time, check the server log for
+`Loaded backbone into initial global model from …` and confirm the **missing-key count** covers only
+the diffusion model (130 of the network's 624 tensors are the autoencoder's); a larger count is the
+symptom of either failure above.
 
 ## How the frozen autoencoder reaches the clients
 
@@ -144,7 +167,7 @@ Clients need the autoencoder to encode images into latents, but they never recei
    into the round-0 global model, so round 0 broadcasts a full model — your autoencoder plus a
    freshly-initialised diffusion model.
 2. `AGGREGATE_ONLY_REGEX` (`^diffusion_model\.`) then keeps only the diffusion model on the wire.
-   Clients return only `diffusion_model.*` diffs (`KeepOnlyVars` — 318 of 444 tensors), the server
+   Clients return only `diffusion_model.*` diffs (`KeepOnlyVars` — 494 of 624 tensors), the server
    broadcasts only those after round 0 (`TrimBroadcastVars`), and each client rebuilds the full model
    from its cached round-0 broadcast (`ReconstructFullModel`).
 
@@ -158,11 +181,12 @@ exactly where the persistor looks for a simulator run.)
 
 It is also a **privacy** control. `PercentilePrivacy` computes its cutoff over *all* variables
 concatenated together, not per-variable, and zeroes everything below the 10th percentile by default.
-The frozen autoencoder is ~10% of this network's parameters and its diffs are exactly zero, so leaving
-them in the update puts that cutoff at or immediately next to zero — at which point the DP
-sparsification stops discarding anything and quietly degrades to the `gamma` clip alone. Keeping the
-autoencoder out of the update is what keeps the cutoff meaningful. (With a larger autoencoder relative
-to the diffusion model, the effect is starker still.)
+The frozen autoencoder is **~51%** of this network's parameters (20.9M against the diffusion model's
+20.3M) and its diffs are exactly zero, so leaving them in the update puts that cutoff at exactly zero
+— a majority of the values *are* zero, so any percentile below the 51st lands there. At that point the
+DP sparsification stops discarding anything and quietly degrades to the `gamma` clip alone. Keeping
+the autoencoder out of the update is what keeps the cutoff meaningful, and at this ratio it is not a
+marginal effect.
 
 ## The latent scale factor (`LATENT_SCALE_FACTOR`)
 
@@ -176,78 +200,72 @@ that autoencoder and the data, so you can pin it:
 ```
 
 Set it and every site uses that exact value — **recommended for any real multi-site run**. Leave it
-`null` and behaviour is identical to the historical per-batch derivation. Either way the resolved
+`null` and each site derives it from its first batch. Either way the resolved
 value is logged, so you can read the derived numbers off a first run and pin the result.
 
-## Seeing what it generates (`SAVE_DEBUG_SAMPLES`)
-
-Loss curves are a poor judge of a generative model — the noise-prediction MSE barely separates a
-model that generates brains from one that generates plausible texture. Set
+## Learning rate schedule and gradient clipping
 
 ```json
-"SAVE_DEBUG_SAMPLES": true,
-"DEBUG_SAMPLES_MAX": 8
+"LR_START": 0.0001,
+"LR_END": 0.000001,
+"LR_DECAY_EPOCHS": 200,
+"GRAD_CLIP_NORM": 1.0
 ```
 
-in `config.json` and the client writes PNGs to `app_files/debug_samples/` **inside its own job
-workspace** — per client, per run, gitignored. In a simulator run that resolves to
+The rate follows half a cosine from `LR_START` down to `LR_END` over the first `LR_DECAY_EPOCHS`
+epochs, then holds at `LR_END`. It is stepped once per epoch, and the epoch count
+runs across rounds: round 2 continues from where round 1 left off rather than restarting the decay.
+Leave `LR_END` or `LR_DECAY_EPOCHS` out, or set `LR_DECAY_EPOCHS` to `0`, to keep the rate at `LR_START`. The current rate is logged
+as `LR DM@epoch`.
+
+Why decay at all: the noise-prediction loss flattens within a few dozen epochs, but at a constant
+`1e-4` the weights keep moving. With only a few dozen studies per site, that is enough to knock out
+one modality's conditioning between two sample grids, even while the loss stays flat.
+
+`GRAD_CLIP_NORM` caps the global gradient norm of the diffusion UNet once per optimizer step, after
+gradient accumulation and after the GradScaler has been unscaled. `0` turns clipping off.
+
+## Debugging
+
+### Sample images
+
+Written only when **all three** hold:
+
+| Condition | Set by |
+| --- | --- |
+| `"SAVE_DEBUG_SAMPLES": true` | you, in `config.json` (ships `false`) |
+| `LOCAL_DEV=true` | the simulator (every trust sets `false`) |
+| `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
+
+At a trust the last two never hold, so **production never writes images, whatever `config.json`
+says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
+
+- **Where:** `fl-tutorials/data/debug_samples/latent_diffusion_model/` (gitignored). Nothing sends them to the server.
+- **When:** every `VALIDATE_EVERY` epochs, on each round's last epoch, and in the round-end `validate` task. Sampling is a full reverse diffusion (minutes), so keep `VALIDATE_EVERY` well above 1; `0` leaves only the round-end pass.
+- **What:** a tri-planar figure of generated volumes, one column per modality, `samples_site-<N>_step<epoch>.png`.
+
+Samples are also the check that the frozen autoencoder loaded: its load is `strict=False`, so a bad
+checkpoint still trains and only shows up here as noise. After one round samples are noise anyway;
+check the server log instead, where `unexpected=0` means every checkpoint key was used:
 
 ```
-/tmp/nvflare/ldm/flip_fedavg/site-<N>/simulate_job/app_site-<N>/custom/debug_samples/
+InitialCheckpointPTModelPersistor - Loaded backbone ... (missing=494, unexpected=0 keys).
 ```
 
-because the app directory *is* the job directory; at a trust it is that trust's job workspace. Each
-generated volume is tiled by its **axial mid-slice**, so you get a PNG rather than a NIfTI.
+### Loss curves
 
-The `validate` task writes one grid. **When conditioning is on it samples one volume per modality,
-in `MODALITIES` order**, so the file is named for them — e.g.
-`samples_FLAIR_T1w_T1Gd_T2w_site-1.png`, four columns, left to right. That is deliberate: a batch of
-samples all drawn under the same condition cannot answer the question conditioning exists to answer,
-which is whether the columns actually differ. Unconditioned, it is one sample and the file is just
-`samples_site-<N>.png`.
-
-Sampling is a full reverse diffusion (one forward pass per training timestep — 1000 by default),
-which is why it runs in `validate` and not once per epoch. Expect it to take minutes, not seconds.
-
-**Once trained, these samples are the best check that the frozen autoencoder actually loaded.**
-Sampling is the only thing in this job that runs the autoencoder's *decoder*, and the checkpoint load
-is `strict=False` — so a mismatched or missing checkpoint (see "Two ways this handoff breaks
-silently" above) trains happily, reports a falling loss, and shows up here as noise.
-
-**Do not use it as a smoke test at one round**, though: at that budget the samples are noise whether
-the checkpoint loaded or not, because the diffusion model has had a few dozen gradient steps and the
-decoder is only as good as the autoencoder run behind it. For a quick check, read the server log
-instead — the persistor line is unambiguous:
-
-```
-InitialCheckpointPTModelPersistor - Loaded backbone into initial global model from
-  .../pretrained_autoencoder.pt (missing=494, unexpected=0 keys).
+```bash
+DEBUG_SAMPLES_DIR=../../../data/debug_samples/latent_diffusion_model python app_files/plot_utils.py
 ```
 
-`unexpected=0` is the half that matters: every key in the checkpoint found a home. `missing` counts
-the keys of the *composite* model that the checkpoint does not carry — the diffusion model's own,
-which it is not supposed to — so a large number there is correct. A non-zero `unexpected`, or a
-`missing` count that approaches the full model, means the names did not line up.
-
-`DEBUG_PLOT_EVERY` ships with the shared `debug_samples.py`. It is unused on this tutorial's
-path — there is no per-iteration input/reconstruction pair to draw — and the sample grid above is
-what this job writes.
-
-Nothing about this puts an image on the wire. The files are written beside the running training
-script and no code path reads them back, adds them to an `FLModel` or hands them to the metrics
-writer — the Client API's `SummaryWriter` carries scalars only, so it could not take one anyway. An
-image leaves the site only if a person deliberately copies it out, which at a real trust is a
-disclosure decision like any other, not something the job can do by itself.
-
-It ships **off**, and is meant for local runs. Left on at a trust it accumulates patient-derived
-images on that trust's disk, round after round, with no retention policy attached.
+Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine
+only, never at a trust.
 
 ## Rounds configuration
 
 `app_files/config.json` carries `GLOBAL_ROUNDS` (federated rounds) and `LOCAL_ROUNDS` (local epochs
 per round). These names are load-bearing: with a single local-rounds key, the FL API requires it to be
-called exactly `LOCAL_ROUNDS` and rejects the job otherwise. (The old two-stage job's
-`GLOBAL_ROUNDS_AE`/`GLOBAL_ROUNDS_DM` pairs no longer apply.)
+called exactly `LOCAL_ROUNDS` and rejects the job otherwise.
 
 ## FLIP-specific values
 

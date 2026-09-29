@@ -57,6 +57,9 @@ class DiffusionModelNetwork(nn.Module):
             channels=net_config["diffusion_model"]["channels"],
             num_res_blocks=net_config["diffusion_model"]["num_res_blocks"],
             attention_levels=net_config["diffusion_model"]["attention_levels"],
+            # Fused SDPA: attention at 64x64 (level 2 of a 256² image) would otherwise materialise a
+            # 4096x4096 map per head (~9 GiB at batch 6); same weights, same result.
+            use_flash_attention=True,
         )
 
     def forward_dm(self, x):
