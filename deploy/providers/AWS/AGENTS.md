@@ -89,8 +89,8 @@ Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
 plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
 applies on push to `develop` (stag) and `main` (prod); `terraform_drift.yml` plans
 nightly and raises one issue per environment. All three authenticate via OIDC —
-no long-lived AWS keys in GitHub. **Merging to `main` now changes production
-infrastructure**; the old "don't `make apply` for prod" rule is superseded.
+no long-lived AWS keys in GitHub. **Merging to `main` changes production
+infrastructure.**
 
 Things worth knowing before touching any of it:
 
@@ -112,7 +112,7 @@ Things worth knowing before touching any of it:
   `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, which is why repointing an estate is a
   value change. `tests/test_ci_env_target.py` pins the script's token table against
   a real `make` probe of `deploy/env_mode.mk`.
-- **Env values now live in two places** (the operator `.env.<env>` file and the
+- **Env values live in two places** (the operator `.env.<env>` file and the
   GitHub environment) with no automatic link. Missing keys fail loudly; drifted
   ones show up as an unexpected plan diff.
 - **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
@@ -161,7 +161,7 @@ Things worth knowing before touching any of it:
   `tests/test_iam_permissions_boundary.py` pins both defaults (FLIP#1199, FLIP#1280).
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
-  and `make -C deploy/providers/AWS test` cannot be used (parse-time env guard), so
+  and this directory's Makefile has no `test` target, so
   run it locally with the `uv run --no-project --with …` line above, from this
   directory — that is what CI runs, and `--frozen` would pull the dev group's
   ansible-core and pyqt5 for a suite that needs four packages.

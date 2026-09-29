@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # ///
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -628,27 +628,42 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
     )
 
 
+def _governance_document(kit_vars: dict[str, str], repo_root: Path) -> str | None:
+    """The kit's ACCESS_POLICY_FILE as an absolute path, resolved as Compose resolves it.
+
+    Compose runs with ``--project-directory trust``, so a relative path is relative to trust/.
+    """
+    raw = kit_vars.get("ACCESS_POLICY_FILE", "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    return str(path if path.is_absolute() else (repo_root / "trust" / path).resolve())
+
+
 def check_site_privacy_policy(
     kit_vars: dict[str, str],
     kit_present: bool,
     kit: str,
     repo_root: Path,
 ) -> Check:
-    """Validate site-policy variables with the same stdlib-only renderer used at runtime."""
+    """Validate the site privacy filter with the same stdlib-only renderer used at runtime.
+
+    Both sources: the kit's FL_SITE_PRIVACY_* and the governance document's
+    [fl_privacy.nvflare] section (FLIP#1259). The renderer itself fails a filter set in both,
+    and — told the backend — a filter on a backend that would not enforce it.
+    """
     label = "Site privacy policy"
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
-    hints = [f"Edit trust/.env.{kit} → Host-local profile; the fl-client fails closed on an invalid policy."]
-    policy_vars = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
-    if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
-        if any(value.strip() for value in policy_vars.values()):
-            return Check(
-                label,
-                Status.FAIL,
-                "configured but FL_BACKEND is not nvflare; the policy would be ignored",
-                hints=hints,
-            )
-        return Check(label, Status.PASS, "not applicable for this FL backend")
+    hints = [
+        f"Edit trust/.env.{kit} (Host-local profile) or the governance document's [fl_privacy.nvflare];"
+        " the fl-client fails closed on an invalid policy."
+    ]
+    env = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
+    document = _governance_document(kit_vars, repo_root)
+    if document is not None:
+        env["ACCESS_POLICY_FILE"] = document
+    backend = kit_vars.get("FL_BACKEND", "").strip().lower() or "nvflare"
 
     renderer = repo_root / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
     # The validation target must not exist: the renderer treats any existing file as a
@@ -657,10 +672,17 @@ def check_site_privacy_policy(
     # provides, not whatever the operator's shell happens to export.
     with tempfile.TemporaryDirectory() as tmp_dir:
         result = subprocess.run(
-            [sys.executable, str(renderer), "--check", str(Path(tmp_dir) / "privacy.json")],
+            [
+                sys.executable,
+                str(renderer),
+                "--check",
+                "--fl-backend",
+                backend,
+                str(Path(tmp_dir) / "privacy.json"),
+            ],
             capture_output=True,
             check=False,
-            env=policy_vars,
+            env=env,
             text=True,
         )
     if result.returncode:
@@ -670,6 +692,57 @@ def check_site_privacy_policy(
     # validation path, which means nothing in a readiness table.
     detail = result.stdout.strip().removeprefix("[site-privacy] ").split(" — ")[0]
     return Check(label, Status.PASS, detail)
+
+
+def check_governance_document(
+    kit_vars: dict[str, str],
+    kit_present: bool,
+    kit: str,
+    repo_root: Path,
+) -> Check:
+    """Validate the governance document's [disclosure]/[access] half with data-access-api's loader.
+
+    data-access-api refuses to start on an invalid document, and this checklist gates
+    ``upgrade-onprem-trust``, so the error belongs here rather than in a crash-looping
+    container. The loader is stdlib-only; it runs on this interpreter with the service tree on
+    PYTHONPATH, installing nothing.
+    """
+    label = "Governance document"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    document = _governance_document(kit_vars, repo_root)
+    floor = kit_vars.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
+    if document is None:
+        return Check(label, Status.PASS, f"not configured — platform defaults (COHORT_QUERY_THRESHOLD={floor})")
+
+    service_root = repo_root / "trust" / "data-access-api"
+    result = subprocess.run(
+        [sys.executable, str(service_root / "scripts" / "check_governance.py")],
+        capture_output=True,
+        check=False,
+        env={"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": floor, "PYTHONPATH": str(service_root)},
+        text=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    if result.returncode:
+        detail = (lines[0] if lines else result.stderr.strip()).removeprefix("❌ ")
+        return Check(
+            label,
+            Status.FAIL,
+            detail or "governance document validation failed",
+            hints=[
+                f"Edit {document}; data-access-api refuses to start on an invalid document.",
+                f"`make -C trust check-governance KIT={kit}` validates both halves with the details.",
+            ],
+        )
+    facts = {line.split(":", 1)[0].strip(): line.split(":", 1)[1].strip() for line in lines if ":" in line}
+    digest = facts.get("sha256", "").split(" ")[0][:12]
+    return Check(
+        label,
+        Status.PASS,
+        f"valid — {facts.get('access rules', '0')} access rule(s), "
+        f"min cohort size {facts.get('effective min cohort size', floor)}, sha256 {digest}",
+    )
 
 
 def check_unrotated_passwords(
@@ -814,6 +887,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_contents(kit_vars, kit_present),
         check_gpu_capacity(kit_vars, kit_present, kit),
         check_site_privacy_policy(kit_vars, kit_present, kit, repo_root),
+        check_governance_document(kit_vars, kit_present, kit, repo_root),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
