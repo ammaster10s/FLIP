@@ -128,8 +128,7 @@ def decide(
         permit=False,
         rule_id="default.deny",
         reason=(
-            f"policy defines rules for {action} but none match "
-            f"project {project_id or '<none>'}; denying by default"
+            f"policy defines rules for {action} but none match project {project_id or '<none>'}; denying by default"
         ),
         effective_threshold=section_threshold,
     )

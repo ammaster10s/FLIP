@@ -165,9 +165,7 @@ def parse_policy(text: str, *, floor: int, source: str) -> Policy:
         raise AccessPolicyError(f"{source} [[access.rule]] must be an array of tables")
 
     seen_ids: set[str] = set()
-    rules = tuple(
-        _parse_rule(raw, index=index, floor=floor, seen_ids=seen_ids) for index, raw in enumerate(raw_rules)
-    )
+    rules = tuple(_parse_rule(raw, index=index, floor=floor, seen_ids=seen_ids) for index, raw in enumerate(raw_rules))
 
     return Policy(min_cohort_size=min_cohort_size, rules=rules, source=source)
 

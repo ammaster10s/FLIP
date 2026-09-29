@@ -269,9 +269,7 @@ def test_the_flower_client_gets_the_same_mount_and_env(tmp_path: Path) -> None:
     [disclosure]/[access] halves are enforced for a Flower trust exactly as for an NVFLARE one
     (they are data-access-api's).
     """
-    rendered = _render(
-        "--set", "flBackend=flower", "--set-file", f"governance.document={_document_file(tmp_path)}"
-    )
+    rendered = _render("--set", "flBackend=flower", "--set-file", f"governance.document={_document_file(tmp_path)}")
     pod = _pods(rendered)["fl-client"]
     container = _container(pod, "fl-client")
 
@@ -290,7 +288,9 @@ def test_the_document_does_not_disturb_the_fl_site_privacy_env_wiring(tmp_path: 
     has not migrated — dropping them here would change the meaning of an existing values file.
     """
     rendered = _render(
-        "--set", "flClient.nvflare.sitePrivacy.policy=percentile", "--set-file",
+        "--set",
+        "flClient.nvflare.sitePrivacy.policy=percentile",
+        "--set-file",
         f"governance.document={_document_file(tmp_path)}",
     )
     container = _container(_pods(rendered)["fl-client"], "fl-client")

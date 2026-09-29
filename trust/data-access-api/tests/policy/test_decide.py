@@ -167,9 +167,7 @@ def test_rule_threshold_raises_above_the_section_threshold():
         """
     )
 
-    decision = decide(
-        {}, {"project_id": "p1"}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR
-    )
+    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
 
     assert decision.permit is True
     assert decision.effective_threshold == 50

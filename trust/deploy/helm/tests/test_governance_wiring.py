@@ -52,8 +52,7 @@ CONFIGMAP_TEMPLATE_NAME = "governance-configmap.yaml"
 VOLUME_NAME = "governance"
 CONFIGMAP_NAME = 'name: {{ include "flip-trust.fullname" . }}-governance'
 CHECKSUM_DIRECTIVE = (
-    f'checksum/{VOLUME_NAME}: '
-    '{{ include (print $.Template.BasePath "/governance-configmap.yaml") . | sha256sum }}'
+    f'checksum/{VOLUME_NAME}: {{{{ include (print $.Template.BasePath "/governance-configmap.yaml") . | sha256sum }}}}'
 )
 
 

@@ -183,7 +183,7 @@ def test_render_override_embeds_the_governance_document(tmp_path):
     become an empty string."""
     (tmp_path / "policies").mkdir()
     (tmp_path / "policies" / "governance.Trust_K8s.toml").write_text(
-        "[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy]\npolicy = \"percentile\"\n"
+        '[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy]\npolicy = "percentile"\n'
     )
     kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "policies/governance.Trust_K8s.toml"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
@@ -199,7 +199,7 @@ def test_render_override_accepts_an_absolute_governance_path(tmp_path):
     resolving it against the trust tree would append a relative path to it and read
     something else entirely."""
     document = tmp_path / "governance.toml"
-    document.write_text("[access.rule]\nid = \"x\"\n")
+    document.write_text('[access.rule]\nid = "x"\n')
     kit = {**_FL_KIT, "ACCESS_POLICY_FILE": str(document)}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path / "elsewhere")
 

@@ -67,8 +67,8 @@ def test_dataframe_policy_denial_uses_the_fixed_refusal_text(
 
     with caplog.at_level("WARNING"):
         response = client.post(
-        "/cohort/dataframe", json={"encrypted_project_id": "sealed", "query": "SELECT 1"}, headers=AUTH_HEADERS
-    )
+            "/cohort/dataframe", json={"encrypted_project_id": "sealed", "query": "SELECT 1"}, headers=AUTH_HEADERS
+        )
 
     assert response.status_code == 403
     assert response.json() == _FIXED_REFUSAL
@@ -170,9 +170,7 @@ def test_dataframe_permitted_by_policy_returns_data(
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.get_records")
-def test_statistics_policy_denial_is_suppressed_not_errored(
-    mock_get_records, mock_get_settings, mock_get_policy
-):
+def test_statistics_policy_denial_is_suppressed_not_errored(mock_get_records, mock_get_settings, mock_get_policy):
     """/cohort answers a denial as a suppressed zero-count response, never an HTTP error.
 
     An error would tell the caller a policy exists; the route's whole contract (issue #519)
