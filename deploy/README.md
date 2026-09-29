@@ -41,10 +41,8 @@ only, FLIP#1291: an S3-compatible RustFS container standing in for the S3 bucket
 `./object-store/` where a top-level directory is a bucket — `make up` pre-creates one per bucket name, the
 `jobs/` idiom; every service reaches it through `AWS_ENDPOINT_URL_S3`, the fl-apis admit it as
 `BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and `make clean-object-store` empties it), and the
-`fl-api-net-*` / `fl-server-net-*` FL server side.
-`compose.development.aws.yml` is the one overlay: the `~/.aws` mounts and `AWS_PROFILE` for flip-api, which
-the root Makefile appends only in development and only when `AWS_PROFILE` is set — the door through which
-the `AUTH_BACKEND=cognito` and `EMAIL_BACKEND=ses` dev opt-ins get an SSO session, and nothing else needs one. No trust service is defined here. The one place
+`fl-api-net-*` / `fl-server-net-*` FL server side. Nothing in the development stack mounts `~/.aws` or
+reaches an AWS service: sign-in, email and object storage are all local (FLIP#919, FLIP#1291). No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**

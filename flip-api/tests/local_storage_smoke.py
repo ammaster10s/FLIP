@@ -32,6 +32,10 @@ against ``--project-id``:
     # insert into project_trust_intersect (id, project_id, trust_id, status, decided_at, decided_as)
     #   values (gen_random_uuid(), '<project_id>', '<trust_id>', 'APPROVED', now(), 'HUB');
     python3 tests/local_storage_smoke.py --project-id <project_id> --api-url … --username … --password …
+
+Each ``--create-project`` registers a trust, which takes an FL kit slot from the hub's pool (two on a
+fresh dev hub), so on a long-lived hub rerun the round trip with ``--project-id`` of a project it
+already approved rather than creating another.
 """
 
 import argparse

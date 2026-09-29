@@ -93,21 +93,16 @@ class Settings(BaseSettings):
 
     # The dev object store (FLIP#1291): development runs an S3-compatible
     # RustFS container in the dev compose instead of AWS S3, reached through
-    # the native AWS_ENDPOINT_URL_S3 env like any endpoint. Three things are
-    # dev-only and therefore settings rather than generic AWS env: the
-    # credentials, scoped to the S3 client alone because generic
-    # AWS_ACCESS_KEY_ID env would outrank a profile in boto3's chain and
-    # silently shadow every other dev opt-in (AUTH_BACKEND=cognito,
-    # EMAIL_BACKEND=ses); and the public endpoint, the host-published address
-    # browser- and host-bound presigned URLs are signed for — SigV4 signs the
-    # host, so a URL the browser opens cannot be signed for the docker
-    # service name the fl-api fetches bundles from. The base declares them as
-    # None (no store selected), DevSettings carries the compose defaults, and
-    # ProdSettings pins them to None so a value set there is a boot-time
-    # ValidationError: production reaches S3 through the task role.
+    # boto3's native AWS_ENDPOINT_URL_S3 and AWS_ACCESS_KEY_ID env like any
+    # endpoint. One thing is dev-only and therefore a setting: the public
+    # endpoint, the host-published address browser- and host-bound presigned
+    # URLs are signed for — SigV4 signs the host, so a URL the browser opens
+    # cannot be signed for the docker service name the fl-api fetches bundles
+    # from. The base declares it None (one endpoint for every audience),
+    # DevSettings carries the compose default, and ProdSettings pins it to
+    # None so a value set there is a boot-time ValidationError: production
+    # presigns against its one regional endpoint.
     S3_PUBLIC_ENDPOINT_URL: str | None = None
-    S3_ACCESS_KEY_ID: str | None = None
-    S3_SECRET_ACCESS_KEY: SecretStr | None = None
 
     # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
     # baked into the flip-api image and bind-mounted in dev. The bundler walks
@@ -288,8 +283,6 @@ class Settings(BaseSettings):
         "KEYCLOAK_ADMIN_CLIENT_ID",
         "KEYCLOAK_ADMIN_CLIENT_SECRET",
         "S3_PUBLIC_ENDPOINT_URL",
-        "S3_ACCESS_KEY_ID",
-        "S3_SECRET_ACCESS_KEY",
         mode="before",
     )
     @classmethod
@@ -467,14 +460,10 @@ class DevSettings(Settings):
     KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
 
-    # The dev object store's coordinates, matching the `object-store` service
-    # in deploy/compose.development.yml (FLIP#1291): the published host port
-    # browser-bound presigned URLs are signed for, and the static keys the
-    # RustFS container is started with. Dev-only placeholders protecting
-    # nothing outside a laptop; ProdSettings pins all three to None.
+    # The dev object store's published host port, matching the `object-store`
+    # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
+    # presigned URLs are signed for. ProdSettings pins it to None.
     S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
-    S3_ACCESS_KEY_ID: str | None = "flip-dev"
-    S3_SECRET_ACCESS_KEY: SecretStr | None = SecretStr("flip-dev-object-store")  # pragma: allowlist secret
 
     # Development sends no real email, ever: the console backend logs the
     # would-be message instead (FLIP#919) and the Literal pins it, so no SES
@@ -538,14 +527,12 @@ class ProdSettings(Settings):
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
 
-    # Production reaches S3 through the task role and presigns against its
-    # one endpoint: the dev object store's static keys and public endpoint
-    # (FLIP#1291) are pinned to None, so a value set in a prod env is a
-    # boot-time ValidationError rather than a key silently outranking the
-    # role. An empty string still coerces to None (commented-out env lines).
+    # Production presigns against its one regional endpoint for every
+    # audience: the dev object store's public endpoint (FLIP#1291) is pinned to
+    # None, so a value set in a prod env is a boot-time ValidationError rather
+    # than browser URLs signed for a host that is not the bucket's. An empty
+    # string still coerces to None (commented-out env lines).
     S3_PUBLIC_ENDPOINT_URL: None = None
-    S3_ACCESS_KEY_ID: None = None
-    S3_SECRET_ACCESS_KEY: None = None
 
 
 # Eager load once (for app use)

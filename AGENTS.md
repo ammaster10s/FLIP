@@ -384,8 +384,8 @@ Cross-cutting keys and URLs live here. The rest are documented where they are co
 **FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_ORIGINS`,
 `FL_KIT_SLOT_NAMES`) in
 [`fl-services/AGENTS.md`](fl-services/AGENTS.md#environment-variables) ·
-**dev object store + AWS overlay** (`OBJECT_STORE_*`, `compose.development.aws.yml`, `AWS_PROFILE`) in
-[`deploy/AGENTS.md`](deploy/AGENTS.md#dev-object-store-and-the-aws-overlay-flip1291) ·
+**dev object store** (`OBJECT_STORE_*`) in
+[`deploy/AGENTS.md`](deploy/AGENTS.md#dev-object-store-flip1291) ·
 **multi-instance** (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) in
 [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables) ·
 **XNAT/PACS** (`XNAT_PORT`, `PACS_*`, `DQR_*`) in

@@ -97,17 +97,14 @@ class S3Client:
     def __init__(self) -> None:
         """Initialize S3 client with AWS credentials.
 
-        The endpoint comes from boto3's own ``AWS_ENDPOINT_URL_S3`` env in every environment (never
-        an ``endpoint_url`` here, which is what lets the moto tests intercept a vanilla client). The
-        credentials come from boto3's chain — the task role in production — unless the dev object
-        store's keys are set, which are scoped to this client on purpose (see ``config.py``).
+        The endpoint and credentials come from boto3's own env and chain in every environment —
+        ``AWS_ENDPOINT_URL_S3`` plus the task role in production, the dev object store's endpoint and
+        static keys in development — never an ``endpoint_url`` here, which is what lets the moto tests
+        intercept a vanilla client.
         """
         settings = get_settings()
-        self._client_kwargs: dict[str, Any] = {"region_name": settings.AWS_REGION}
-        if settings.S3_ACCESS_KEY_ID is not None and settings.S3_SECRET_ACCESS_KEY is not None:
-            self._client_kwargs["aws_access_key_id"] = settings.S3_ACCESS_KEY_ID
-            self._client_kwargs["aws_secret_access_key"] = settings.S3_SECRET_ACCESS_KEY.get_secret_value()
-        self.client = boto3.client("s3", **self._client_kwargs)
+        self._region = settings.AWS_REGION
+        self.client = boto3.client("s3", region_name=self._region)
         self._public_endpoint_url = settings.S3_PUBLIC_ENDPOINT_URL
         self._public_client: Any = None
 
@@ -120,7 +117,7 @@ class S3Client:
         if audience is PresignAudience.INTERNAL or self._public_endpoint_url is None:
             return self.client
         if self._public_client is None:
-            self._public_client = boto3.client("s3", endpoint_url=self._public_endpoint_url, **self._client_kwargs)
+            self._public_client = boto3.client("s3", region_name=self._region, endpoint_url=self._public_endpoint_url)
         return self._public_client
 
     def get_presigned_url(

@@ -238,7 +238,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 
 | Group | Required development values |
 | --- | --- |
-| AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you opt into an AWS-backed path (below) |
+| AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you run an AWS-backed target (below) |
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
@@ -254,21 +254,19 @@ download run the same code as production, against a local store. `ls object-stor
 (each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
 `deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
 `OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
-`OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). Two details are worth knowing. Presigned URLs are signed for the host they will be
-opened from: the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
-which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). And the store's keys are
-S3-scoped flip-api settings (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`), never generic `AWS_*` env, so they cannot
-shadow a mounted AWS profile. Staging and production are unchanged: real S3 buckets, the task role, the regional
-endpoint; `ProdSettings` pins the three dev settings to `None`, so they cannot be enabled there.
+`OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). One detail is worth knowing: presigned URLs are signed for the host they will be
+opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
+which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). The store's static keys
+reach flip-api and the fl-servers as plain `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, the only AWS credentials
+the dev stack holds. Staging and production are unchanged: real S3 buckets, the task role, the regional endpoint;
+`ProdSettings` pins `S3_PUBLIC_ENDPOINT_URL` to `None`, so it cannot be enabled there.
 
-**AWS credentials enter the dev stack through one overlay.** With object storage local, the hub's dev compose mounts
-nothing from `~/.aws`. The two dev opt-ins that do reach AWS — `AUTH_BACKEND=cognito` and `EMAIL_BACKEND=ses` — need
-your SSO session inside flip-api: set `AWS_PROFILE` in `.env.development` and the Makefile appends
-`deploy/compose.development.aws.yml` (the `~/.aws` mounts plus `AWS_PROFILE`, flip-api only) to every compose command.
-The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the Trusts' artifact fetches — read `AWS_PROFILE`
-as before and are guarded by `make check-aws-access`, which `make up` no longer runs. Authorised FLIP developers can
-use the shared development values for the two artifact buckets; other deployers should create their own resources
-with the [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+**The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
+object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
+Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
+no longer runs. Authorised FLIP developers can use the shared development values for the two artifact buckets; other
+deployers should create their own resources with the
+[Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
 **Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request

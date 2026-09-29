@@ -387,48 +387,31 @@ def test_production_requires_the_cognito_ids():
     assert "AWS_COGNITO_USER_POOL_ID" in str(exc_info.value)
 
 
-_S3_DEV_FIELDS = ("S3_PUBLIC_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY")
+def test_s3_public_endpoint_defaults_to_the_compose_object_store():
+    """Development signs browser-bound URLs for the RustFS container's published port with no configuration (#1291).
 
-
-def test_s3_dev_settings_default_to_the_compose_object_store():
-    """Development talks to the RustFS container in the dev compose with no configuration (#1291).
-
-    Asserted on the fields, not an instance, for the reason ``test_dev_ses_addresses_are_optional_with_defaults``
-    gives. The base declares the three as ``None`` so a bare ``Settings()`` selects no store — and so that
-    ``ProdSettings`` can pin them (below) rather than merely inherit a dev default.
+    Asserted on the field, not an instance, for the reason ``test_dev_ses_addresses_are_optional_with_defaults``
+    gives. The base declares it ``None`` (one endpoint for every audience) so that ``ProdSettings`` can pin it
+    (below) rather than merely inherit a dev default.
     """
     assert DevSettings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default == "http://localhost:9000"
-    assert DevSettings.model_fields["S3_ACCESS_KEY_ID"].default == "flip-dev"
-    assert DevSettings.model_fields["S3_SECRET_ACCESS_KEY"].default.get_secret_value() == "flip-dev-object-store"
-    for name in _S3_DEV_FIELDS:
-        assert Settings.model_fields[name].default is None, name
+    assert Settings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default is None
 
 
-def test_s3_dev_settings_tolerate_empty_strings():
-    """The env-file trap of ``coerce_empty_email_backend``, for the object-store trio (#1291)."""
-    settings = DevSettings(S3_PUBLIC_ENDPOINT_URL="", S3_ACCESS_KEY_ID="", S3_SECRET_ACCESS_KEY="")
-    assert settings.S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
-    assert settings.S3_ACCESS_KEY_ID == "flip-dev"
-    assert settings.S3_SECRET_ACCESS_KEY.get_secret_value() == "flip-dev-object-store"
-    assert Settings(S3_PUBLIC_ENDPOINT_URL="", S3_ACCESS_KEY_ID="", S3_SECRET_ACCESS_KEY="").S3_ACCESS_KEY_ID is None
+def test_s3_public_endpoint_tolerates_an_empty_string():
+    """The env-file trap of ``coerce_empty_email_backend``, for the public endpoint (#1291)."""
+    assert DevSettings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
+    assert Settings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None
 
 
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("S3_PUBLIC_ENDPOINT_URL", "http://localhost:9000"),
-        ("S3_ACCESS_KEY_ID", "flip-dev"),
-        ("S3_SECRET_ACCESS_KEY", "flip-dev-object-store"),
-    ],
-)
-def test_s3_dev_settings_are_rejected_in_production(name, value):
-    """Production reaches S3 through the task role and presigns against its one endpoint (#1291).
+def test_s3_public_endpoint_is_rejected_in_production():
+    """Production presigns against its one regional endpoint for every audience (#1291).
 
-    ``ProdSettings`` pins the three dev-only fields to ``None`` (the ``AUTH_BACKEND`` pattern), so a value
-    set in a prod env is a boot-time validation error rather than a static key silently taking over from
-    the task role, or browser URLs signed for a host that is not the bucket's.
+    ``ProdSettings`` pins the dev-only field to ``None`` (the ``AUTH_BACKEND`` pattern), so a value set in a
+    prod env is a boot-time validation error rather than browser URLs signed for a host that is not the
+    bucket's.
     """
     with pytest.raises(ValidationError) as exc_info:
-        ProdSettings(ENV="production", **_PROD_REQUIRED, **{name: value})
-    assert name in str(exc_info.value)
-    assert getattr(ProdSettings(ENV="production", **_PROD_REQUIRED, **{name: ""}), name) is None
+        ProdSettings(ENV="production", **_PROD_REQUIRED, S3_PUBLIC_ENDPOINT_URL="http://localhost:9000")
+    assert "S3_PUBLIC_ENDPOINT_URL" in str(exc_info.value)
+    assert ProdSettings(ENV="production", **_PROD_REQUIRED, S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None

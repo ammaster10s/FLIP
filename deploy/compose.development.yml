@@ -149,9 +149,9 @@ services:
       - "${OBJECT_STORE_PORT:-9000}:9000"
       - "127.0.0.1:${OBJECT_STORE_CONSOLE_PORT:-9001}:9001"
     environment:
-      # Dev-only placeholders, shared with flip-api (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY)
-      # and the fl-servers (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), all from the same
-      # two variables so one override moves every consumer.
+      # Dev-only placeholders, shared with flip-api and the fl-servers as their
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, all from the same two variables so one
+      # override moves every consumer.
       - RUSTFS_ACCESS_KEY=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - RUSTFS_SECRET_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       # The browser posts presigned uploads and fetches presigned downloads straight from
@@ -186,8 +186,8 @@ services:
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
     # Run the image as the HOST uid so it can write the host-owned bind mounts
-    # (src/, and ~/.aws under the AWS overlay). Paired with the HOME/UV_* env below
-    # so it never writes the image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
+    # (src/). Paired with the HOME/UV_* env below so it never writes the
+    # image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
     # since FLIP#1171 both bake flip/1000/1000, so neither is host-uid by itself.
     user: "${UID}:${GID}"
     build:
@@ -228,9 +228,7 @@ services:
       # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
       # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
       - ../fl-apps/:/app/fl-apps/
-      # No ~/.aws here: the dev stack reaches no AWS service (FLIP#1291). The Cognito and
-      # SES dev opt-ins get the operator's SSO session through compose.development.aws.yml,
-      # which the Makefile appends when AWS_PROFILE is set.
+      # No ~/.aws anywhere in the dev stack: it reaches no AWS service (FLIP#919/#1291).
     # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
     # credentials, and nothing on the FL data plane calls it. The traffic that looks like
     # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
@@ -245,8 +243,7 @@ services:
       - ENV=development
       # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
       # the runtime editable install (UV_NO_SYNC) so the host-uid process never
-      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME is
-      # also where the AWS overlay mounts ~/.aws, so boto3 finds a profile there.
+      # writes the image-owned .venv; keep uv's cache + HOME writable.
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises.
       # getpass.getuser() consults these first (FLIP#1171). Latent here today —
@@ -281,23 +278,12 @@ services:
       # (compose.development.<backend>.yml) names this same origin, because bundle URLs
       # are presigned against it and the fl-api admits nothing else.
       - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      # Browser- and host-bound presigned URLs are signed for the published port, and the
-      # store's keys are S3-scoped settings rather than generic AWS env so they never
-      # shadow a mounted profile (flip-api/AGENTS.md). Same variables as the store itself.
+      # The store's static keys, through boto3's own env — the only AWS credentials the
+      # dev hub ever holds, and the same variables the store itself reads. Browser- and
+      # host-bound presigned URLs are signed for the published port (flip-api/AGENTS.md).
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - S3_PUBLIC_ENDPOINT_URL=http://localhost:${OBJECT_STORE_PORT:-9000}
-      - S3_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - S3_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      # Force boto3 to mint presigned URLs against the regional S3 endpoint
-      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
-      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
-      # region can take up to ~24h to propagate on the global endpoint — see
-      # the matching note in compose.production.yml for the FLIP#24 incident
-      # that surfaced this. Regional endpoints never have this lag and are
-      # AWS's recommended path for non-us-east-1 buckets anyway.
-      # See compose.production.yml for the `:?` rationale (load-bearing guard).
-      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_HOSTS (compose.development.<backend>.yml)
-      # is exactly s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
-      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Identity provider (FLIP#919): DevSettings pins keycloak, so neither
       # AUTH_BACKEND nor the Cognito ids are passed — development needs no AWS
       # account to sign in, and cannot be pointed at the AWS provider.

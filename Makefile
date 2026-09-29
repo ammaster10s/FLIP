@@ -82,13 +82,8 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-# The host's AWS credentials enter the dev stack through one overlay, and only when the
-# env file names a profile (FLIP#1291): the stack itself needs no AWS account, and the
-# Cognito / SES dev opt-ins are what the mounted SSO session is for. Development only —
-# the production composes mount nothing and authenticate through the task role.
-AWS_OVERLAY_COMPOSE := $(if $(and $(filter development,$(ENV)),$(strip $(AWS_PROFILE))),-f deploy/compose.development.aws.yml,)
-DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(AWS_OVERLAY_COMPOSE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(AWS_OVERLAY_COMPOSE) -f deploy/compose.development.debug.override.yml
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
 # `docker logs flip-api` names nothing on any stack.
