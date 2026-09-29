@@ -180,12 +180,6 @@ def parse_policy(text: str, *, floor: int, source: str, digest: str | None = Non
     except tomllib.TOMLDecodeError as e:
         raise AccessPolicyError(f"{source} is not valid TOML: {e}") from None
 
-    if not document:
-        raise AccessPolicyError(
-            f"{source} configures nothing (empty, or every line commented out) — refusing it, since a "
-            f"truncated file would otherwise drop every rule; to run with no policy, unset ACCESS_POLICY_FILE"
-        )
-
     _reject_unknown(document.keys(), KNOWN_SECTIONS, f"{source} (top level)")
 
     disclosure = _require_mapping(document.get("disclosure", {}), f"{source} [disclosure]")
@@ -209,10 +203,12 @@ def parse_policy(text: str, *, floor: int, source: str, digest: str | None = Non
     )
 
     if min_cohort_size is None and not rules and not document.get("fl_privacy"):
-        # Empty section headers are as inert as an empty file, and as likely a half-written copy.
+        # An empty file, one with every line commented out, and one of bare section headers are
+        # all far likelier a truncated or half-written copy than an intent.
         raise AccessPolicyError(
-            f"{source} configures nothing (its sections are empty) — refusing it, since a truncated "
-            f"file would otherwise drop every rule; to run with no policy, unset ACCESS_POLICY_FILE"
+            f"{source} configures nothing (empty, only comments, or only empty sections) — refusing "
+            f"it, since a truncated file would otherwise drop every rule; to run with no policy, unset "
+            f"ACCESS_POLICY_FILE"
         )
 
     digest = digest or hashlib.sha256(text.encode("utf-8")).hexdigest()
