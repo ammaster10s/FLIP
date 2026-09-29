@@ -59,6 +59,7 @@
 <!-- Update this section if a fix lands before the cut. -->
 
 - The Helm trust-seed hook seeds again. SQLAlchemy 2.1 picks psycopg v3 for a bare `postgresql://` URL, which the omop-db seed tools do not install; they and data-access-api now name `psycopg2` in their database URLs, and the seed install honours the 72-hour dependency cooldown (#1310, #1314). A deploy whose `trustData.seed.sourceRef` predates the fix still fails to seed; the chart's `TROUBLESHOOTING.md` has the workaround.
+- `ENFORCE_MFA` fails closed on the hub. Any value other than `true` or `1` used to switch the MFA gate off, including `yes`, `on`, a padded `True ` or a typo. Now only `false`, `0`, `no` or `off` (or their capitalised forms) turn it off, and anything unrecognised keeps MFA on with a warning naming the value (#1329). A hub that leaves the variable unset, as the production Terraform does, is unaffected. A hub that set it to `yes` or `on` now enforces MFA, as intended.
 
 ## :white_check_mark: Release checks
 
@@ -70,10 +71,14 @@ Tutorial suite, on a GPU host:
 - [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
 - [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
 
+Not run for v0.10.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
 Full-platform smoke test, against a running deployment:
 
-- [ ] NVFLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Both passed on 28 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-2741573`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded.
 
 ## :file_folder: PRs merged in this release
 

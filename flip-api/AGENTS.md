@@ -87,7 +87,7 @@ make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
-                                                              # a registered-but-offline trust no longer blocks the run
+                                                              # a registered-but-offline trust does not block the run
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
@@ -103,7 +103,7 @@ confirmed complete, even when nothing was added).
 
 **Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
 volume with nowhere to live in the cohort query, so the spleen apps
-(`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted `input_*.nii.gz` with a sibling
+(`fl-tutorials/flower/3d_spleen_segmentation*`, `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`) pair each converted `input_*.nii.gz` with a sibling
 `label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
 labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
 needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
@@ -123,8 +123,8 @@ label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`.
 labels takes the run down at the zero-pairs guard. One invocation covers the roster: pass a
 space-separated `XNAT_URLS` (credentials from `XNAT_USER`/`XNAT_PASS`) or repeat `XNAT_CREDENTIALS_FILES`
 for per-trust logins. The whole mapping goes to every server and each ignores the others' studies, so no
-per-trust splitting is needed. A run that resolves **no** destination anywhere now exits non-zero, so the
-smoke can no longer walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
+per-trust splitting is needed. A run that resolves **no** destination anywhere exits non-zero, so the
+smoke cannot walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
 opts out). `TRUST=N` filters by the OMOP `source_trust` column (1=GSTT, 2=KCH) and is rarely needed —
 note that is the OMOP partition, **not** the FL kit slot of the same `Trust_N` name.
 
@@ -140,9 +140,8 @@ make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
 The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
 `HF_TRUST_DATA_REVISION=<sha|main>` overrides the dataset revision, which defaults to the tag in
 `trust/.data_version`. The uploader speaks REST to XNAT, so those URLs carry each trust's
-**`XNAT_WEB_PORT`** — 8105 (GSTT) and 8107 (KCH) since the FLIP#993 split, not 8104/8106, which are
-now the DICOM SCP receiver ports. Dialling the old numbers reaches a DIMSE listener and hangs rather
-than refusing the connection.
+**`XNAT_WEB_PORT`** — 8105 (GSTT) and 8107 (KCH), not 8104/8106, which are the DICOM SCP receiver
+ports: dialling those reaches a DIMSE listener and hangs rather than refusing the connection.
 
 Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
 in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
@@ -215,7 +214,7 @@ make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reus
 Before trusting either run, confirm the live container actually carries your code (the stack silently
 runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/upload.py`
 (the compose SERVICE name — dev containers set no `container_name`, so they are named by the project). See
-[`fl-tutorials/AGENTS.md`](../fl-tutorials/AGENTS.md) for `make build-fl` / `:dev` image details.
+[`fl-services/AGENTS.md`](../fl-services/AGENTS.md) for `make build-fl` / `:dev` image details.
 
 ## Demo Video Recorder
 
