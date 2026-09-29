@@ -568,6 +568,10 @@ make -C trust/deploy/helm validate
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
+# Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
+# without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
 # receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
 make -C trust/deploy/helm smoke-cstore
