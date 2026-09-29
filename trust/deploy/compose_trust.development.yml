@@ -194,6 +194,12 @@ services:
       # Approved-cohort snapshot store (FLIP#857): the container-side path of the bind
       # mount below. Fixed here; the HOST side is the kit's COHORT_SNAPSHOT_STORAGE_DIR.
       COHORT_SNAPSHOT_DIR: /snapshots
+      # The trust's governance document (FLIP#1259). Optional: unset means the platform
+      # defaults apply and only COHORT_QUERY_THRESHOLD above is in force. Points at the
+      # read-only mount below, not the host path, since the service resolves it inside
+      # the container. Policy may only tighten — a document that lowers the threshold is
+      # rejected and the service refuses to start.
+      ACCESS_POLICY_FILE: ${ACCESS_POLICY_FILE:+/app/governance.toml}
       # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
       # install (UV_NO_SYNC), keep uv's cache + HOME writable.
       HOME: /tmp
@@ -209,6 +215,13 @@ services:
       # the service runs non-root and disables the store if it cannot write). Holds
       # row-level patient data; gitignored, never committed.
       - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/Trust_${TRUST_NUMBER}}:/snapshots
+      # The governance document, read-only — the service must never be able to rewrite its
+      # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var
+      # above is empty, so nothing reads it. /dev/null rather than a file in the checkout
+      # because it exists on every Docker host: a relative default resolves on the machine
+      # running compose, and over a remote DOCKER_CONTEXT the daemon would create an empty
+      # root-owned directory at that path on the trust host.
+      - ${ACCESS_POLICY_FILE:-/dev/null}:/app/governance.toml:ro
 
   trust-api:
     # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live

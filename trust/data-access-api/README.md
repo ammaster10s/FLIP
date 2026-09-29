@@ -69,6 +69,8 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
 | `COHORT_SNAPSHOT_DIR` | Container path of the approved-cohort snapshot store (the compose files fix it to `/snapshots` and bind-mount the kit's host-side `COHORT_SNAPSHOT_STORAGE_DIR` there). Empty = store disabled, so row-level routes refuse every project — fail-closed. |
 | `SNAPSHOT_MAX_BYTES` | Hard cap on one serialized snapshot (default 512 MiB). An over-cap cohort is refused, never truncated. |
+| `COHORT_QUERY_THRESHOLD` | The trust's minimum cohort size in distinct subjects (default `10`; see below) |
+| `ACCESS_POLICY_FILE` | Optional path to the trust's governance document (FLIP#1259, see below). Unset = platform defaults |
 | `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
 | `CACHE_MAX_RESULT_ROWS` | Largest result (rows, default `50000`) that is cached at all — anything bigger is returned but not stored, keeping memory bounded |
 | `CACHE_MAX_ENTRIES` | Maximum number of cached results (default `64`); inserting past the limit evicts the oldest entry |
@@ -285,9 +287,30 @@ snapshot's `meta.json`; the row-level routes gate on that frozen count. A cohort
 column cannot be gated and is refused there, as a **400** naming the missing column — safe to be
 specific about because it describes the query's shape and never its contents — so no uncountable
 snapshot is ever persisted and the row-level routes' refusal stays byte-identical across a zero
-cohort and a below-threshold one. Accession numbers that resolve to no imaging study contribute no
-subject, so a query aliasing an unrelated column to that name fails closed. A failure of the count
-itself is treated as a count of zero (refused as below threshold).
+cohort and a below-threshold one. A failure of the count itself is treated as a count of zero
+(refused as below threshold).
+
+Accession numbers that resolve to no imaging study contribute no subject, so a query aliasing an
+unrelated column to that name fails closed — and they are never returned either: the snapshot also
+freezes the accession ids that resolved (`keep_imaging_accessions`) and the subjects behind them,
+and `/cohort/accession-ids` releases only that list, gated on that count, so a cohort cannot ride
+person data out under the alias alongside real accessions that clear the floor.
+
+### Governance document (FLIP#1259)
+
+A trust may raise the threshold and add permit/deny rules per project and route in a TOML document
+named by `ACCESS_POLICY_FILE` (worked example: [`../governance.example.toml`](../governance.example.toml);
+operator guide: [`../README.md`](../README.md#trust-governance-policy-optional)). The service loads it
+once, at import, and refuses to start on an invalid one (`data_access_api/policy/loader.py`); it logs
+one `[governance] policy ACTIVE from … sha256=…` line (or `[governance] no policy configured`) at
+startup. Each route asks the pure `policy.decide` (`/cohort` after `validate_query`; the two
+row-level routes, which ignore the caller's SQL, before reading the snapshot): any matching deny
+denies, otherwise the strictest matching permit sets the threshold, otherwise — for a route the
+document mentions — the request is denied. A denial answers exactly as a below-threshold cohort does
+(the fixed 403, or a suppressed `/cohort` response) and never runs the query or reads the snapshot;
+the rule id goes to the log only. The decision is taken live on every call, so a rule added after
+approval applies to an already-frozen cohort. `/cohort/snapshot` is not a policy action: it freezes
+at the kit's `COHORT_QUERY_THRESHOLD`, and a stricter rule then gates the serving routes.
 
 ### Cohort charts
 

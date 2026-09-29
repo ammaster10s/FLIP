@@ -10,13 +10,22 @@
 # limitations under the License.
 #
 
+import datetime
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
-from data_access_api.config import get_settings
+from data_access_api.config import get_policy, get_settings
+from data_access_api.policy import (
+    ACTION_COHORT_ACCESSION_IDS,
+    ACTION_COHORT_DATAFRAME,
+    ACTION_COHORT_STATISTICS,
+    Decision,
+    decide,
+    subject_attributes,
+)
 from data_access_api.routers.schema import (
     AccessionIdsResponse,
     CohortQueryInput,
@@ -25,7 +34,14 @@ from data_access_api.routers.schema import (
     SnapshotResponse,
     StatisticsResponse,
 )
-from data_access_api.services.cohort import count_distinct_subjects, get_records, get_statistics, validate_query
+from data_access_api.services.cohort import (
+    ACCESSION_ID_COLUMN,
+    count_distinct_subjects,
+    get_records,
+    get_statistics,
+    keep_imaging_accessions,
+    validate_query,
+)
 from data_access_api.services.cohort_snapshot import (
     Snapshot,
     SnapshotTooLarge,
@@ -63,6 +79,45 @@ _UNCOUNTABLE_SUBJECTS_DETAIL = (
 )
 
 
+def _evaluate(action: str, project_id: str | None) -> Decision:
+    """Ask the trust's governance policy about one cohort operation (FLIP#1259).
+
+    The single decision point for this router. Returns the decision rather than raising,
+    because each route owns its own refusal text and status code — and those must not
+    change. In particular the caller must keep answering ``_BELOW_THRESHOLD_DETAIL``:
+    naming the rule in the HTTP body would turn the refusal into a probe for the trust's
+    configuration, and on the row-level routes into a row-count oracle.
+
+    ``/cohort`` calls ``validate_query`` before this, so the query's shape is judged the same
+    whatever the policy says; deciding first made an invalid query a 400 when permitted and a
+    403 when denied. The two row-level routes ignore the caller's SQL (they serve the frozen
+    snapshot, FLIP#857) and decide before reading it, so a denied project's artefact is never
+    loaded and a denial answers the same whether or not a snapshot exists. The one difference
+    left is time: a denial answers without the query's round trip or the artefact read. That
+    tells a caller holding the trust-internal key whether its own project is denied, which its
+    training job learns anyway when every fetch is refused.
+    """
+    return decide(
+        subject_attributes(),
+        {"project_id": project_id},
+        action,
+        policy=get_policy(),
+        configured_threshold=get_settings().COHORT_QUERY_THRESHOLD,
+    )
+
+
+def _log_denial(decision: Decision, project_id: str | None, what: str) -> None:
+    """Record an attributable denial (FLIP#1259 AC 6).
+
+    ``rule_id`` goes to the log, never to the caller. This is the only place a denial
+    becomes traceable to the rule that caused it, so it carries the project too.
+    """
+    logger.warning(
+        f"Policy denied {what} for project {project_id or '<none>'}: "
+        f"rule_id={decision.rule_id} reason={decision.reason}"
+    )
+
+
 def _open_project_id(encrypted_project_id: str) -> str:
     """Open the hub-sealed project id the FL client forwards, or answer 400 with the reason.
 
@@ -84,6 +139,25 @@ def _open_project_id(encrypted_project_id: str) -> str:
         # Not the caller's payload. Name the type so an empty exception message never yields a blank reason.
         logger.exception(f"Failed to decrypt encrypted_project_id ({type(e).__name__}): {e}")
         raise HTTPException(status_code=500, detail=f"Failed to decrypt encrypted_project_id ({type(e).__name__})")
+
+
+def _project_id_for_policy(encrypted_project_id: str) -> str | None:
+    """Open the project id for a policy decision on ``/cohort``, or return ``None``.
+
+    ``/cohort`` does not otherwise need the project id, so opening the envelope here would
+    introduce a 400 this route has never returned — a visible behaviour change for trusts
+    running no policy at all. It is therefore opened only when a rule could actually use
+    it: some rule names projects for this action.
+
+    A policy that cannot be applied must not fail open, so a project-scoped rule with an
+    unopenable envelope still raises the 400 from ``_open_project_id``. When no rule is
+    project-scoped, ``None`` is correct rather than merely convenient: no rule can match on
+    a project, so the decision does not depend on the value.
+    """
+    policy = get_policy()
+    if policy is None or not policy.scopes_projects(ACTION_COHORT_STATISTICS):
+        return None
+    return _open_project_id(encrypted_project_id)
 
 
 # Two routers under the same /cohort prefix, split by privilege (FLIP#857).
@@ -121,20 +195,20 @@ def _require_snapshot(project_id: str) -> Snapshot:
     return snapshot
 
 
-def _check_frozen_threshold(project_id: str, snapshot: Snapshot) -> None:
-    """Apply ``COHORT_QUERY_THRESHOLD`` to the FROZEN distinct-subject count.
+def _check_frozen_threshold(project_id: str, subject_count: int, minimum_cohort_size: int) -> None:
+    """Apply the disclosure threshold to a FROZEN distinct-subject count.
 
-    The count is the one ``count_distinct_subjects`` took when the snapshot was created and
-    stored in its meta, so the gate counts subjects, not rows, without a round trip to OMOP.
-    The gate reads the snapshot, not live OMOP: the frozen cohort is immutable, so a project
-    that cleared the threshold at approval keeps serving even while the live database drifts
+    The count is one ``count_distinct_subjects`` took when the snapshot was created and stored
+    in its meta, so the gate counts subjects, not rows, without a round trip to OMOP. The gate
+    reads the snapshot, not live OMOP: the frozen cohort is immutable, so a project that
+    cleared the threshold at approval keeps serving even while the live database drifts
     underneath (pre-FLIP#857, the SQL was re-run on every call and the answer could change).
     The refusal reuses the fixed below-threshold text so a zero-row snapshot and a
-    below-threshold one stay indistinguishable. The threshold itself is still read live, so
-    an operator RAISING their disclosure floor takes effect on already-approved projects.
+    below-threshold one stay indistinguishable. The threshold itself is the governance
+    decision's ``effective_threshold``, taken live, so an operator RAISING their disclosure
+    floor — in the kit or in a governance rule — takes effect on already-approved projects.
     """
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
-    if snapshot.meta.subject_count < minimum_cohort_size:
+    if subject_count < minimum_cohort_size:
         logger.warning(
             f"Withholding frozen cohort for project {project_id}: "
             f"snapshot covers fewer than the minimum {minimum_cohort_size} subjects"
@@ -189,13 +263,37 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     logger.info("Received cohort query")
 
-    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    # Judged before the policy, so an invalid query is refused the same way whether or not a
+    # rule covers this project (see _evaluate).
+    safe_query = validate_query(query_input.query)
+
+    # The project id is only opened when a configured policy could actually use it. With no
+    # policy this route must behave exactly as before, and decrypting unconditionally would
+    # add a 400 failure mode (tampered/foreign envelope) that /cohort never had — a
+    # behaviour change for every trust that has not adopted a policy.
+    project_id = _project_id_for_policy(query_input.encrypted_project_id)
+    decision = _evaluate(ACTION_COHORT_STATISTICS, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "cohort statistics")
+        # Suppressed, not refused. A policy denial must be indistinguishable from a
+        # below-threshold cohort on this route, whose contract is that a shortfall comes
+        # back as a zero-count response rather than an HTTP error (issue #519) — an error
+        # here would tell the caller a policy exists. Shape matches the suppression branch
+        # in services.cohort.get_statistics exactly.
+        return StatisticsResponse(
+            query_id=query_input.query_id,
+            trust_id=query_input.trust_id,
+            record_count=0,
+            created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            data=[],
+            suppressed=True,
+        )
+
+    minimum_cohort_size = decision.effective_threshold
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
-    safe_query = validate_query(query_input.query)
-
     try:
         logger.info("Executing cohort query")
 
@@ -273,9 +371,17 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
+    decision = _evaluate(ACTION_COHORT_DATAFRAME, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "row-level data")
+        # Same fixed text as a below-threshold refusal, deliberately: a distinct message
+        # for "policy denied" would confirm the project exists and reveal that a rule
+        # covers it, and would separate a denied cohort from an empty one.
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+
     snapshot = _require_snapshot(project_id)
     _log_ignored_client_query(project_id, snapshot, query_input.query)
-    _check_frozen_threshold(project_id, snapshot)
+    _check_frozen_threshold(project_id, snapshot.meta.subject_count, decision.effective_threshold)
     logger.info(f"Serving frozen cohort snapshot for project {project_id}: {snapshot.meta.row_count} rows")
     return snapshot.df.to_dict(orient="list")
 
@@ -323,15 +429,26 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
+    decision = _evaluate(ACTION_COHORT_ACCESSION_IDS, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "accession IDs")
+        # Byte-identical to the below-threshold refusal, as on /cohort/dataframe.
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+
     snapshot = _require_snapshot(project_id)
     _log_ignored_client_query(project_id, snapshot, query_input.query)
-    # Threshold before the column check: nothing about the cohort's shape is revealed for a
-    # below-threshold snapshot.
-    _check_frozen_threshold(project_id, snapshot)
     if not snapshot.meta.has_accessions:
+        # Threshold before the column check: nothing about the cohort's shape is revealed for
+        # a below-threshold snapshot.
+        _check_frozen_threshold(project_id, snapshot.meta.subject_count, decision.effective_threshold)
         logger.info(f"Frozen cohort for project {project_id} has no accession_id column (tabular project)")
         return AccessionIdsResponse(accession_ids=[])
-    frozen_ids = [str(value) for value in snapshot.df["accession_id"].tolist()]
+    # Gated on the subjects behind the RELEASABLE accessions, not the whole cohort's count: only
+    # values that resolved through omop.image_occurrence at snapshot time are served, so a value
+    # aliased to accession_id cannot ride out alongside real accessions that clear the floor —
+    # past a cohort.dataframe deny (FLIP#1259).
+    _check_frozen_threshold(project_id, snapshot.meta.imaging_subject_count, decision.effective_threshold)
+    frozen_ids = list(snapshot.meta.imaging_accession_ids)
     logger.info(f"Serving {len(frozen_ids)} frozen accession ids for project {project_id}")
     return AccessionIdsResponse(accession_ids=frozen_ids)
 
@@ -408,8 +525,20 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     # contents — so no uncountable snapshot is ever persisted. The count sits outside the try
     # above on purpose: get_records' 400s keep their diagnostic shape, while a failure of the
     # count itself is refused exactly as a small cohort is.
+    # The releasable accession list is frozen alongside: only values that resolve through
+    # omop.image_occurrence (keep_imaging_accessions), gated at serve time on the subjects behind
+    # them. Computed here so /cohort/accession-ids never touches OMOP after approval. A failure of
+    # either lookup refuses the snapshot as below threshold, rather than freezing an accession set
+    # that the imaging pull would then read as empty for the life of the project.
+    imaging_accession_ids: list[str] = []
+    imaging_subject_count = 0
     try:
         subject_count = count_distinct_subjects(df)
+        if ACCESSION_ID_COLUMN in df.columns:
+            accessions = df.loc[:, ~df.columns.duplicated()][[ACCESSION_ID_COLUMN]]
+            imaging = keep_imaging_accessions(accessions)
+            imaging_accession_ids = [str(value) for value in imaging[ACCESSION_ID_COLUMN].tolist()]
+            imaging_subject_count = count_distinct_subjects(imaging) or 0
     except Exception:
         logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
         subject_count = 0
@@ -430,7 +559,12 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
         # The hash is of the RAW submitted SQL (not the validator's re-emission) so serving
         # can compare it against the raw query the hub injects into FL job configs.
         meta = save_snapshot(
-            project_id, df, query_hash=normalised_query_hash(query_input.query), subject_count=subject_count
+            project_id,
+            df,
+            query_hash=normalised_query_hash(query_input.query),
+            subject_count=subject_count,
+            imaging_accession_ids=imaging_accession_ids,
+            imaging_subject_count=imaging_subject_count,
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")

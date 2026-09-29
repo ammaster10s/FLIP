@@ -16,13 +16,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
-# Ensure structured logging is configured on import
-import data_access_api.utils.logger  # noqa: F401
-from data_access_api.config import get_settings
+from data_access_api.config import get_policy, get_settings
+from data_access_api.policy import describe_policy
 from data_access_api.routers.cohort import read_router as cohort_read_router
 from data_access_api.routers.cohort import write_router as cohort_write_router
 from data_access_api.routers.health import router as health_router
 from data_access_api.services.cohort_snapshot import ensure_store
+
+# Importing the logger configures structured logging.
+from data_access_api.utils.logger import logger
+
+# Which governance policy this process enforces, once, at startup (FLIP#1259). The line is the
+# operator's evidence that an edit reached the service: reload-governance waits for it, and its
+# digest matches the one check-governance prints for the same document. WARNING rather than
+# INFO so a trust running at TRUST_LOG_LEVEL=WARNING still prints it — without it
+# reload-governance would report an image that ignores the document.
+logger.warning(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
 
 
 @asynccontextmanager

@@ -207,6 +207,32 @@ def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
     assert "ACC-1001" in accession_ids
 
 
+def test_accession_ids_releases_only_values_that_are_imaging_accessions(http_client):
+    """Values aliased to ``accession_id`` that are not imaging accessions are never returned.
+
+    The real accessions clear the floor on their own, so before FLIP#1259's fix every value came
+    back — person-level data riding out under the alias, past a ``cohort.dataframe`` deny. The
+    snapshot freezes only the values that resolved through ``omop.image_occurrence``, so the
+    accession route serves those while the training frame keeps every row it was approved with.
+    """
+    project_id = "97fca5ab-0000-4000-8000-000000000006"
+    created = _create_snapshot(
+        http_client,
+        "SELECT accession_id FROM omop.image_occurrence "
+        "UNION ALL SELECT concat(p.person_id, '|', p.year_of_birth) AS accession_id FROM omop.person p",
+        project_id,
+    )
+    assert created.status_code == 200, created.text
+
+    response = http_client.post(
+        "/cohort/accession-ids", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
+    )
+    assert response.status_code == 200, response.text
+    accession_ids = response.json()["accession_ids"]
+    assert len(accession_ids) == 24
+    assert all(value.startswith("ACC-") for value in accession_ids), accession_ids
+
+
 def test_tabular_snapshot_serves_empty_accession_list(http_client):
     """A frozen cohort without accession_id is a tabular project: imaging no-ops, no error.
 

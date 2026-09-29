@@ -23,7 +23,8 @@ Layout, one directory per hub project id::
 
     <COHORT_SNAPSHOT_DIR>/<project-uuid>/
         dataframe.parquet   # the frozen cohort, dtype-faithful (parquet, no index)
-        meta.json           # row_count / subject_count / columns / query_hash / created_at / format_version
+        meta.json           # row_count / subject_count / columns / query_hash / created_at /
+                            # imaging_accession_ids / imaging_subject_count / format_version
 
 Writes are atomic at directory granularity: everything lands in a ``.tmp-*`` sibling first
 and is activated with ``os.replace`` renames, so a reader never observes a half-written
@@ -42,7 +43,7 @@ import json
 import os
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -53,7 +54,7 @@ from data_access_api.utils.logger import logger
 
 # Bumped when the on-disk layout changes; a snapshot with an unknown version is treated as
 # absent (legacy live-SQL fall-through) rather than mis-read.
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2
 _DATA_FILENAME = "dataframe.parquet"
 _META_FILENAME = "meta.json"
 # Work-in-progress / superseded directories. Never valid snapshots; swept at startup.
@@ -81,6 +82,13 @@ class SnapshotMeta:
     columns: list[str]
     query_hash: str
     created_at: str  # ISO-8601 UTC
+    # What /cohort/accession-ids releases: the cohort's accession_id values that resolved
+    # through omop.image_occurrence at creation (``keep_imaging_accessions``), in cohort order,
+    # and the distinct subjects behind them, which that route gates on. A value that is no
+    # imaging accession is never released, so nothing can ride out under the alias (FLIP#1259).
+    # Empty/0 for a cohort without an accession_id column.
+    imaging_accession_ids: list[str] = field(default_factory=list)
+    imaging_subject_count: int = 0
     format_version: int = _FORMAT_VERSION
 
     @property
@@ -171,7 +179,14 @@ def ensure_store() -> None:
     logger.info(f"Cohort snapshot store ready at {base}")
 
 
-def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str, subject_count: int) -> SnapshotMeta:
+def save_snapshot(
+    project_id: str,
+    df: pd.DataFrame,
+    query_hash: str,
+    subject_count: int,
+    imaging_accession_ids: list[str] | None = None,
+    imaging_subject_count: int = 0,
+) -> SnapshotMeta:
     """Persist the cohort dataframe for ``project_id``, atomically replacing any predecessor.
 
     Args:
@@ -180,6 +195,9 @@ def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str, subject_co
         query_hash (str): ``normalised_query_hash`` of the raw SQL that produced ``df``.
         subject_count (int): Distinct subjects ``df`` covers, as ``count_distinct_subjects``
             established them; the serve-time disclosure gate reads this.
+        imaging_accession_ids (list[str] | None): The accession ids ``/cohort/accession-ids``
+            may release — those that resolved to an imaging study. None/empty for none.
+        imaging_subject_count (int): Distinct subjects behind ``imaging_accession_ids``.
 
     Returns:
         SnapshotMeta: What was written.
@@ -216,6 +234,8 @@ def save_snapshot(project_id: str, df: pd.DataFrame, query_hash: str, subject_co
         columns=[str(column) for column in df.columns],
         query_hash=query_hash,
         created_at=datetime.now(UTC).isoformat(),
+        imaging_accession_ids=list(imaging_accession_ids or []),
+        imaging_subject_count=imaging_subject_count,
     )
 
     base.mkdir(parents=True, exist_ok=True)
