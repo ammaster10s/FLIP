@@ -73,7 +73,7 @@ min_cohort_size = 50
 #
 # The site filter runs BEFORE any filter the researcher's app configures and a job
 # cannot opt out or select a weaker scope.
-[fl_privacy]
+[fl_privacy.nvflare]
 policy = "percentile"
 percentile = 10
 gamma = 0.01

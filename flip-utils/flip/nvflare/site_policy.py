@@ -17,30 +17,38 @@ so each trust can enforce its own update-privacy filter through its kit env file
 whatever ``task_result_filters`` the submitted job carries: NVFLARE applies site scope filters *before*
 job filters and never lets a job opt out (``nvflare/apis/utils/task_utils.py::apply_filters``).
 
-Two sources, in precedence order (FLIP#1259):
+Two sources, and a trust uses one of them (FLIP#1259):
 
-1. The ``[fl_privacy]`` section of the trust governance document at ``ACCESS_POLICY_FILE`` — the same
-   file ``data-access-api`` reads for its own sections, so a trust states every runtime control in
-   one place.
+1. The ``[fl_privacy.nvflare]`` section of the trust governance document — the same document
+   ``data-access-api`` reads for its own sections, so a trust states every runtime control in one
+   place. The fl-client never mounts that whole document: researcher code runs in the client as the
+   same user, and would read every access rule. An init step runs ``--extract`` over it and the
+   client reads only the extracted ``[fl_privacy]`` table, at ``ACCESS_POLICY_FILE``.
 2. The ``FL_SITE_PRIVACY_*`` environment variables — the original #851 interface.
 
-When both are configured the document wins and a warning names the source, rather than silently
-merging two descriptions of the same filter. The env path is not deprecated: it stays the simpler
-option for a trust that wants only this one control.
+Both set is an error. Letting either win let the document weaken the kit's filter while every piece
+of documentation said the document could only tighten it; two descriptions of one filter are refused,
+not ranked.
+
+The section is nested under the backend because ``percentile``/``gamma`` are NVFLARE's
+``PercentilePrivacy`` parameters; Flower's knobs (#852) will differ. ``[fl_privacy.flower]`` is
+refused until something on Flower enforces it, and ``--check --fl-backend flower`` fails a
+configuration that would be silently ignored there.
 
 The rendered document defines exactly one scope, set as ``default_scope`` — FLIP jobs never carry a
 ``scope`` meta key, so every job lands in it, and any other scope name is rejected at deploy time.
 The stock NVFLARE filter class is used deliberately: unlike FLIP's app-level subclass it has no
 ``off`` switch, so an app config cannot disable the site filter.
 
-Stdlib-only on purpose — it must run before NVFLARE starts and never fail on framework imports. That
-constraint is why the governance document is TOML (stdlib ``tomllib``) rather than YAML.
+Stdlib-only on purpose — it must run before NVFLARE starts and never fail on framework imports, and
+``check-governance`` runs it on the trust host with a bare interpreter. That constraint is why the
+governance document is TOML (stdlib ``tomllib``) rather than YAML.
 Validation is strict because stock ``PercentilePrivacy`` fails *open* (silently forwards the update
 unfiltered) when ``gamma <= 0`` or ``percentile`` is outside ``[0, 100]``; a mis-set policy must stop
-the container, not run unprotected. An unrecognised ``FL_SITE_PRIVACY_*`` name or ``[fl_privacy]`` key
-is rejected for the same reason: a typo'd parameter would otherwise leave the weaker default silently
-in force. When no policy is configured, any previously rendered file is removed — the configuration is
-the single source of truth, and the target lives on a persistent bind mount.
+the container, not run unprotected. An unrecognised ``FL_SITE_PRIVACY_*`` name or section key is
+rejected for the same reason: a typo'd parameter would otherwise leave the weaker default silently
+in force. When no policy is configured, any previously rendered file is removed — the configuration
+is the single source of truth, and the target lives on a persistent bind mount.
 """
 
 import argparse
@@ -71,13 +79,19 @@ _GOVERNANCE_FILE_VAR = "ACCESS_POLICY_FILE"
 # validates its own section and must tolerate the other's.
 _KNOWN_SECTIONS = ("disclosure", "access", "fl_privacy")
 
-# Keys accepted inside [fl_privacy]. Same strictness as the env-var path: an unknown
+# Keys accepted inside [fl_privacy.nvflare]. Same strictness as the env-var path: an unknown
 # key is an error, because a typo'd parameter would leave the weaker default in force.
 _KNOWN_FL_PRIVACY_KEYS = ("policy", "percentile", "gamma")
 
+# The one backend whose client enforces a section today. Backends FLIP runs but cannot yet
+# enforce are named so their section is refused with the reason rather than as a typo.
+_ENFORCING_BACKEND = "nvflare"
+_UNENFORCED_BACKENDS = ("flower",)
+_SECTION = f"[fl_privacy.{_ENFORCING_BACKEND}]"
+
 
 class SitePolicyError(ValueError):
-    """Invalid ``FL_SITE_PRIVACY_*`` configuration."""
+    """Invalid site privacy configuration (``FL_SITE_PRIVACY_*`` or the governance document)."""
 
 
 @dataclass(frozen=True)
@@ -172,20 +186,8 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
     return SitePolicy(percentile=percentile, gamma=gamma)
 
 
-def parse_governance_file(path_raw: str) -> SitePolicy | None:
-    """Parses the ``[fl_privacy]`` section of the trust governance document (FLIP#1259).
-
-    Args:
-        path_raw: Path to the governance TOML document.
-
-    Returns:
-        The validated policy, or ``None`` when the document exists but defines no
-        ``[fl_privacy]`` section — a trust may use the document for disclosure rules only.
-
-    Raises:
-        SitePolicyError: If the file cannot be read, is not valid TOML, carries an unknown
-            top-level section or ``[fl_privacy]`` key, or describes an invalid filter.
-    """
+def _read_governance_document(path_raw: str) -> dict:
+    """Reads and parses the governance document, checking only its top-level shape."""
     path = Path(path_raw)
     try:
         text = path.read_text(encoding="utf-8")
@@ -199,23 +201,62 @@ def parse_governance_file(path_raw: str) -> SitePolicy | None:
     except tomllib.TOMLDecodeError as e:
         raise SitePolicyError(f"{_GOVERNANCE_FILE_VAR}={path_raw!r} is not valid TOML: {e}") from None
 
+    if not document:
+        raise SitePolicyError(
+            f"{_GOVERNANCE_FILE_VAR}={path_raw!r} configures nothing (empty, or every line commented out) — "
+            f"refusing it, since a truncated file would otherwise drop every control; unset {_GOVERNANCE_FILE_VAR} "
+            f"to run without one"
+        )
+
     unknown_sections = sorted(k for k in document if k not in _KNOWN_SECTIONS)
     if unknown_sections:
         raise SitePolicyError(
             f"unrecognised section(s) {', '.join(repr(s) for s in unknown_sections)} in {path_raw} — "
             f"expected only {', '.join(_KNOWN_SECTIONS)}; refusing to load a policy that ignores them"
         )
+    return document
 
-    section = document.get("fl_privacy")
+
+def _nvflare_section(document: dict, path_raw: str) -> dict | None:
+    """Returns the ``[fl_privacy.nvflare]`` table, or ``None`` when the document has none."""
+    fl_privacy = document.get("fl_privacy")
+    if fl_privacy is None:
+        return None
+    if not isinstance(fl_privacy, dict):
+        raise SitePolicyError(f"[fl_privacy] in {path_raw} must be a table, got {type(fl_privacy).__name__}")
+
+    flat = sorted(k for k in fl_privacy if k in _KNOWN_FL_PRIVACY_KEYS)
+    if flat:
+        raise SitePolicyError(
+            f"{', '.join(flat)} sit directly under [fl_privacy] in {path_raw} — the section is per backend "
+            f"now: move them under {_SECTION}"
+        )
+    unenforced = sorted(k for k in fl_privacy if k in _UNENFORCED_BACKENDS)
+    if unenforced:
+        raise SitePolicyError(
+            f"[fl_privacy.{unenforced[0]}] in {path_raw} is not supported: nothing enforces it on {unenforced[0]} "
+            f"yet (FLIP#852), so it would be ignored while reading as configured — remove it"
+        )
+    unknown = sorted(k for k in fl_privacy if k != _ENFORCING_BACKEND)
+    if unknown:
+        raise SitePolicyError(
+            f"unrecognised table(s) {', '.join(repr(k) for k in unknown)} under [fl_privacy] in {path_raw} — "
+            f"expected only {_SECTION}"
+        )
+
+    section = fl_privacy.get(_ENFORCING_BACKEND)
     if section is None:
         return None
     if not isinstance(section, dict):
-        raise SitePolicyError(f"[fl_privacy] in {path_raw} must be a table, got {type(section).__name__}")
+        raise SitePolicyError(f"{_SECTION} in {path_raw} must be a table, got {type(section).__name__}")
+    return section
 
+
+def _parse_section(section: dict, path_raw: str) -> SitePolicy | None:
     unknown_keys = sorted(k for k in section if k not in _KNOWN_FL_PRIVACY_KEYS)
     if unknown_keys:
         raise SitePolicyError(
-            f"unrecognised key(s) {', '.join(repr(k) for k in unknown_keys)} in [fl_privacy] of {path_raw} — "
+            f"unrecognised key(s) {', '.join(repr(k) for k in unknown_keys)} in {_SECTION} of {path_raw} — "
             f"expected only {', '.join(_KNOWN_FL_PRIVACY_KEYS)}; refusing to run a policy that ignores them"
         )
 
@@ -224,13 +265,13 @@ def parse_governance_file(path_raw: str) -> SitePolicy | None:
         stray = sorted(k for k in ("percentile", "gamma") if k in section)
         if stray:
             raise SitePolicyError(
-                f"[fl_privacy] in {path_raw} sets {', '.join(stray)} but no 'policy' — "
+                f"{_SECTION} in {path_raw} sets {', '.join(stray)} but no 'policy' — "
                 f"refusing to guess a policy; set policy or remove the parameter(s)"
             )
         return None
     if not isinstance(policy_name, str) or policy_name.lower() != "percentile":
         raise SitePolicyError(
-            f"[fl_privacy] policy={policy_name!r} in {path_raw} is not a known policy (expected: percentile)"
+            f"{_SECTION} policy={policy_name!r} in {path_raw} is not a known policy (expected: percentile)"
         )
 
     # Reuse the env path's numeric validation so both sources enforce identical bounds —
@@ -241,23 +282,45 @@ def parse_governance_file(path_raw: str) -> SitePolicy | None:
     percentile = (
         10
         if percentile_raw is None
-        else _parse_value(f"[fl_privacy] percentile in {path_raw}", str(percentile_raw), minimum=0, maximum=100)
+        else _parse_value(f"{_SECTION} percentile in {path_raw}", str(percentile_raw), minimum=0, maximum=100)
     )
     gamma = (
         0.01
         if gamma_raw is None
-        else _parse_value(f"[fl_privacy] gamma in {path_raw}", str(gamma_raw), minimum=0, minimum_exclusive=True)
+        else _parse_value(f"{_SECTION} gamma in {path_raw}", str(gamma_raw), minimum=0, minimum_exclusive=True)
     )
     return SitePolicy(percentile=percentile, gamma=gamma)
+
+
+def parse_governance_file(path_raw: str) -> SitePolicy | None:
+    """Parses the ``[fl_privacy.nvflare]`` section of the trust governance document (FLIP#1259).
+
+    Reads either the whole document or the ``[fl_privacy]`` table ``--extract`` writes from it.
+
+    Args:
+        path_raw: Path to the governance TOML document.
+
+    Returns:
+        The validated policy, or ``None`` when the document defines no ``[fl_privacy.nvflare]``
+        section — a trust may use the document for disclosure rules only.
+
+    Raises:
+        SitePolicyError: If the file cannot be read, is not valid TOML, configures nothing, carries
+            an unknown section, table or key, a section for a backend nothing enforces, or
+            describes an invalid filter.
+    """
+    document = _read_governance_document(path_raw)
+    section = _nvflare_section(document, path_raw)
+    if section is None:
+        return None
+    return _parse_section(section, path_raw)
 
 
 def resolve_policy(env: Mapping[str, str]) -> tuple[SitePolicy | None, str]:
     """Resolves the effective site privacy policy across both configuration sources.
 
-    The governance document wins over ``FL_SITE_PRIVACY_*``. Both are validated even when
-    only one is used, so a broken env var cannot hide behind a valid document — a trust
-    that later removes the document would otherwise be surprised by a service that no
-    longer starts.
+    Both are validated whichever is used, so a broken env var cannot hide behind a valid
+    document. Configuring the filter in both is an error.
 
     Args:
         env: Environment mapping (typically ``os.environ``).
@@ -267,7 +330,7 @@ def resolve_policy(env: Mapping[str, str]) -> tuple[SitePolicy | None, str]:
         one; ``source`` is a short human-readable label for the log line.
 
     Raises:
-        SitePolicyError: On invalid configuration in either source.
+        SitePolicyError: On invalid configuration in either source, or a policy in both.
     """
     env_policy = parse_env(env)
 
@@ -280,15 +343,69 @@ def resolve_policy(env: Mapping[str, str]) -> tuple[SitePolicy | None, str]:
         return env_policy, "FL_SITE_PRIVACY_* env"
 
     if env_policy is not None:
-        # Not merged and not an error: the document is the newer, broader interface and a
-        # trust migrating to it should not have to clear the env vars in the same step.
-        # Naming the loser is what keeps this from being a silent override.
-        print(
-            f"[site-privacy] WARNING: both {_GOVERNANCE_FILE_VAR} [fl_privacy] and {_POLICY_VAR} are set; "
-            f"using the governance document and IGNORING the FL_SITE_PRIVACY_* values",
-            file=sys.stderr,
+        raise SitePolicyError(
+            f"the site privacy filter is configured twice — both {_SECTION} in the governance document and "
+            f"{_POLICY_VAR} in the kit; set it in exactly one of them (a document that could override the kit "
+            f"could also weaken it)"
         )
-    return file_policy, f"{_GOVERNANCE_FILE_VAR} [fl_privacy]"
+    return file_policy, f"{_GOVERNANCE_FILE_VAR} {_SECTION}"
+
+
+def extract(source_raw: str, dest: Path) -> SitePolicy | None:
+    """Writes the governance document's ``[fl_privacy]`` table, and nothing else, to ``dest``.
+
+    The fl-client's init step: it reads the whole document, the client mounts only what this
+    writes. The section is validated first, so a document the client would refuse is refused
+    here, and nothing is written. The table is written as validated values (defaults filled
+    in), always under an ``[fl_privacy]`` header, so a document without the section extracts
+    to a file that parses to "no policy" rather than to an empty one.
+
+    Args:
+        source_raw: Path to the whole governance document.
+        dest: Where the fl-client will read the extract from.
+
+    Returns:
+        The validated policy, or ``None`` when the document carries no ``[fl_privacy.nvflare]``.
+
+    Raises:
+        SitePolicyError: On an invalid document.
+        OSError: If ``dest`` cannot be written.
+    """
+    policy = parse_governance_file(source_raw)
+    lines = [
+        "# The fl-client's section of the trust governance document, extracted at container start",
+        "# by `python -m flip.nvflare.site_policy --extract`. The rest of the document stays out of the",
+        "# client, where researcher code runs. Edit the governance document, not this file.",
+        "[fl_privacy]",
+    ]
+    if policy is not None:
+        lines += [
+            "",
+            _SECTION,
+            'policy = "percentile"',
+            f"percentile = {policy.percentile!r}",
+            f"gamma = {policy.gamma!r}",
+        ]
+    tmp_path = dest.with_name(dest.name + ".tmp")
+    tmp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp_path, dest)
+    return policy
+
+
+def check_backend(env: Mapping[str, str], backend: str) -> None:
+    """Refuses a site privacy configuration the trust's FL backend would not enforce.
+
+    Raises:
+        SitePolicyError: If ``backend`` is not NVFLARE and either source configures a filter.
+    """
+    if backend == _ENFORCING_BACKEND:
+        return
+    policy, source = resolve_policy(env)
+    if policy is not None:
+        raise SitePolicyError(
+            f"a site privacy filter is configured ({source}) but this trust runs FL_BACKEND={backend}, and "
+            f"nothing on {backend} enforces it — remove it (Flower's site privacy is FLIP#852)"
+        )
 
 
 def build_policy_json(policy: SitePolicy) -> dict:
@@ -345,20 +462,57 @@ def render(env: Mapping[str, str], out_path: Path, check_only: bool = False) -> 
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
-    """CLI entry point: ``python -m flip.nvflare.site_policy [--check] <out_path>``.
+    """CLI entry point.
+
+    ``python -m flip.nvflare.site_policy [--check [--fl-backend NAME]] <out_path>`` renders (or, with
+    ``--check``, validates) ``privacy.json``. ``python -m flip.nvflare.site_policy --extract SRC DEST``
+    is the fl-client's init step: it writes the governance document's ``[fl_privacy]`` table alone.
 
     Returns:
-        ``0`` on success (policy written, removed, or not configured), ``1`` on invalid
+        ``0`` on success (policy written, removed, extracted or not configured), ``1`` on invalid
         configuration or I/O failure — callers must treat ``1`` as fatal (fail closed).
     """
     parser = argparse.ArgumentParser(prog="flip.nvflare.site_policy", description=__doc__)
-    parser.add_argument("out_path", type=Path, help="Target privacy.json path (e.g. /app/local/privacy.json)")
+    parser.add_argument(
+        "out_path", type=Path, nargs="?", help="Target privacy.json path (e.g. /app/local/privacy.json)"
+    )
     parser.add_argument("--check", action="store_true", help="Validate the configuration without writing")
+    parser.add_argument(
+        "--fl-backend",
+        default=_ENFORCING_BACKEND,
+        help="With --check: the trust's FL_BACKEND; a filter configured for a backend that does not enforce it fails",
+    )
+    parser.add_argument(
+        "--extract",
+        nargs=2,
+        metavar=("SRC", "DEST"),
+        help="Write only the [fl_privacy] table of the governance document SRC to DEST (the fl-client's init step)",
+    )
     parsed = parser.parse_args(argv)
     if env is None:
         env = os.environ
 
+    if parsed.extract:
+        source_raw, dest_raw = parsed.extract
+        try:
+            policy = extract(source_raw, Path(dest_raw))
+        except (SitePolicyError, OSError) as e:
+            print(f"[site-privacy] FATAL: {e}", file=sys.stderr)
+            return 1
+        state = f"{_SECTION} present" if policy is not None else f"no {_SECTION}"
+        print(f"[site-privacy] extracted the fl-client's section of {source_raw} to {dest_raw} ({state})")
+        return 0
+
+    if parsed.out_path is None:
+        parser.error("out_path is required unless --extract is given")
+
+    backend = parsed.fl_backend.strip().lower()
     try:
+        if parsed.check and backend != _ENFORCING_BACKEND:
+            # Validates both sources too: an invalid document fails on every backend.
+            check_backend(env, backend)
+            print(f"[site-privacy] no site privacy policy configured — not applicable on FL_BACKEND={backend}")
+            return 0
         status, policy, source = render(env, parsed.out_path, check_only=parsed.check)
     except (SitePolicyError, OSError) as e:
         print(f"[site-privacy] FATAL: {e}", file=sys.stderr)
