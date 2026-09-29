@@ -579,9 +579,10 @@ def keep_imaging_accessions(df: pd.DataFrame) -> pd.DataFrame:
     that resolves to no imaging study contributes nothing to the floor. Releasing such values
     anyway let a cohort smuggle arbitrary columns out under the ``accession_id`` alias — real
     accessions clearing the floor, and aliased person data riding along with them — past a
-    ``cohort.dataframe`` deny (FLIP#1259). Only the values the floor counted are released. The
-    same lookup is harmless to a real imaging cohort: imaging-api can pull nothing for an
-    accession number the trust's own OMOP does not hold.
+    ``cohort.dataframe`` deny (FLIP#1259). Only the values the floor counted are released. What a
+    real imaging cohort can lose is an accession the trust's PACS holds but its
+    ``omop.image_occurrence`` does not; that value never counted towards the floor either, so the
+    route stops releasing what it was not gating.
 
     Args:
         df (pd.DataFrame): The route's ``SELECT accession_id FROM (...)`` result.

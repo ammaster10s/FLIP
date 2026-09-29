@@ -146,6 +146,10 @@ denied. So a deny list needs a permit for everyone else (the example shows one).
 actions gate: `cohort.dataframe` is the FL client's own training-data fetch, so denying it for a
 project stops that project's federated training at this trust; `cohort.accession_ids` decides whose
 imaging is pulled into XNAT, and only real accessions from `omop.image_occurrence` are ever returned.
+A `cohort.dataframe` deny does not by itself stop a caller holding the trust-internal key from
+learning about that project's subjects: it can still send predicate queries to
+`/cohort/accession-ids` and compare the accession sets that clear the floor. To close a project off
+entirely, deny `cohort.accession_ids` for it too.
 
 Validation is strict and fails closed. An unknown key, a misspelt action, a project id that is not a
 UUID, a rule with no `effect`, an empty file, or a threshold below the kit's floor stops the service

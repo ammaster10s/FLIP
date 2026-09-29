@@ -168,19 +168,27 @@ spec:
         # table to an emptyDir the client mounts read-only. An invalid document fails it, so the
         # client never starts on a policy it would refuse (fail closed). Same image as the
         # client, so the extract is validated by the same loader that later reads it.
+        # A document with no [fl_privacy] section extracts to the bare table without Python, so
+        # an fl-client image older than --extract (an FL tag held back) still starts under an
+        # [access]-only document; one with the section needs the image that can enforce it.
         - name: governance-extract
           image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           command:
-            - python
-            - -m
-            - flip.nvflare.site_policy
-            - --extract
-            - /app/governance.toml
-            - /governance/governance.fl_privacy.toml
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              out=/governance/governance.fl_privacy.toml
+              if grep -q fl_privacy /app/governance.toml; then
+                exec python -m flip.nvflare.site_policy --extract /app/governance.toml "$out"
+              fi
+              printf '[fl_privacy]\n' > "$out"
+              echo "[site-privacy] the governance document has no [fl_privacy] section — nothing to extract"
           volumeMounts:
             - name: governance
               mountPath: /app/governance.toml

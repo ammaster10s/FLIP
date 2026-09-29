@@ -20,6 +20,7 @@ IPs that rotate on recreation, so a pinned /32 would go stale. A port-only rule
 is immune to that drift and renders deterministically across runs."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -419,3 +420,38 @@ def test_stamp_helm_ownership_default_namespace(monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_a_kit_with_nothing_to_validate_never_loads_the_validators(monkeypatch):
+    """sync-kit runs on the deploy host's python3. The validators import tomllib (3.11+), so a
+    trust with no document and no FL_SITE_PRIVACY_* must not need them — on Ubuntu 22.04's 3.10
+    every sync-kit, deploy-trust-k8s and upgrade-trust-k8s would otherwise crash."""
+
+    def unavailable():
+        raise AssertionError("the validators were loaded for a kit with nothing to validate")
+
+    monkeypatch.setattr(sync_k8s_kit, "_site_policy", unavailable)
+
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+    assert "governance" not in out
+
+
+def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch):
+    """With something to validate on a 3.10 host, the sync stops with the reason, not a traceback."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_tomllib(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    monkeypatch.delitem(sys.modules, "tomllib", raising=False)
+
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="Python 3.11"):
+        sync_k8s_kit.render_override(
+            {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile"}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
+        )

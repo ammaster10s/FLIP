@@ -156,13 +156,16 @@ def _parse_rule(raw: object, *, index: int, floor: int, section: int | None, see
     return Rule(id=rule_id, action=action, effect=effect, projects=projects, min_cohort_size=min_cohort_size)
 
 
-def parse_policy(text: str, *, floor: int, source: str) -> Policy:
+def parse_policy(text: str, *, floor: int, source: str, digest: str | None = None) -> Policy:
     """Parse and validate a governance document.
 
     Args:
         text: The TOML document.
         floor: The configured ``COHORT_QUERY_THRESHOLD``; policy may not go below it.
         source: Where the text came from, recorded on the Policy for logging.
+        digest: SHA-256 of the document's bytes as stored. Defaults to the digest of ``text``
+            encoded as UTF-8; ``load_policy`` passes the file's own, so a CRLF file reports the
+            digest ``sha256sum`` prints for it.
 
     Returns:
         Policy: The validated document.
@@ -205,7 +208,14 @@ def parse_policy(text: str, *, floor: int, source: str) -> Policy:
         for index, raw in enumerate(raw_rules)
     )
 
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if min_cohort_size is None and not rules and not document.get("fl_privacy"):
+        # Empty section headers are as inert as an empty file, and as likely a half-written copy.
+        raise AccessPolicyError(
+            f"{source} configures nothing (its sections are empty) — refusing it, since a truncated "
+            f"file would otherwise drop every rule; to run with no policy, unset ACCESS_POLICY_FILE"
+        )
+
+    digest = digest or hashlib.sha256(text.encode("utf-8")).hexdigest()
     return Policy(min_cohort_size=min_cohort_size, rules=rules, source=source, digest=digest)
 
 
@@ -230,10 +240,16 @@ def load_policy(*, path: str | None, floor: int) -> Policy | None:
 
     policy_path = Path(path)
     try:
-        text = policy_path.read_text(encoding="utf-8")
+        raw = policy_path.read_bytes()
+        text = raw.decode("utf-8")
     except OSError as e:
         # A configured-but-unreadable policy is the dangerous case: the operator believes
         # rules are in force. Refuse to start rather than fall back to the defaults.
         raise AccessPolicyError(f"ACCESS_POLICY_FILE={path!r} could not be read: {e}") from None
+    except UnicodeDecodeError as e:
+        raise AccessPolicyError(f"ACCESS_POLICY_FILE={path!r} is not UTF-8: {e}") from None
 
-    return parse_policy(text, floor=floor, source=f"ACCESS_POLICY_FILE={path}")
+    # The digest is of the bytes as stored, which is what `sha256sum` prints and what
+    # reload-governance compares; hashing the decoded text would not match a CRLF file.
+    digest = hashlib.sha256(raw).hexdigest()
+    return parse_policy(text, floor=floor, source=f"ACCESS_POLICY_FILE={path}", digest=digest)

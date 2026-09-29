@@ -71,3 +71,22 @@ def test_startup_logs_which_governance_policy_is_enforced(capsys):
         logger.removeHandler(handler)
 
     assert any(line.startswith("[governance] no policy configured") for line in records), records
+
+
+def test_the_governance_line_survives_a_quiet_log_level():
+    """A trust running at TRUST_LOG_LEVEL=WARNING must still print it, or reload-governance reports
+    an image that predates governance when the policy did apply."""
+    import logging
+
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = logging.getLogger("data_access_api.utils.logger")
+    logger.addHandler(handler)
+    try:
+        importlib.reload(main)
+    finally:
+        logger.removeHandler(handler)
+
+    (line,) = [r for r in records if r.getMessage().startswith("[governance]")]
+    assert line.levelno >= logging.WARNING

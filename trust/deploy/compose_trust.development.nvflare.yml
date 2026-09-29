@@ -43,10 +43,15 @@ services:
       - |
         set -eu
         for dir in /extract/*/; do
+          out="$${dir}governance.fl_privacy.toml"
           if [ -z "$${ACCESS_POLICY_FILE:-}" ]; then
-            rm -f "$${dir}governance.fl_privacy.toml"
+            rm -f "$$out"
+          elif grep -q fl_privacy /app/governance.toml; then
+            python -m flip.nvflare.site_policy --extract /app/governance.toml "$$out"
           else
-            python -m flip.nvflare.site_policy --extract /app/governance.toml "$${dir}governance.fl_privacy.toml"
+            # No [fl_privacy] section: the bare table, without Python, so an FL image older than
+            # --extract (an FL tag held back) still starts under an [access]-only document.
+            printf '[fl_privacy]\n' > "$$out"
           fi
         done
         [ -n "$${ACCESS_POLICY_FILE:-}" ] || echo "[site-privacy] no governance document configured — nothing to extract"

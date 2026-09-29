@@ -185,8 +185,8 @@ class Decision:
 
     Attributes:
         permit: Whether the operation may proceed.
-        rule_id: Which rule decided, e.g. ``policy:no-raw-export``, ``default.unset``,
-            ``default.deny``. Log and audit only — putting it in an HTTP response would
+        rule_id: Which rule decided, e.g. ``policy:withdrawn-project-imaging``, ``default.unset``,
+            ``default.deny``, ``default.invalid_project``. Log and audit only — putting it in an HTTP response would
             turn the refusal into a probe for the trust's configuration.
         reason: Operator-facing explanation. Safe to log; NOT safe to return verbatim.
         effective_threshold: Minimum distinct subjects this operation must clear. Always

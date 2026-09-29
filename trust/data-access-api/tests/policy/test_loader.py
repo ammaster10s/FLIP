@@ -426,3 +426,34 @@ def test_the_shipped_example_leaves_fl_training_and_real_projects_alone():
     assert training.rule_id == "default.unmentioned"
     assert imaging.permit is True
     assert imaging.effective_threshold == 50
+
+
+def test_the_digest_is_of_the_files_bytes_even_with_crlf_line_endings(tmp_path):
+    """reload-governance compares the logged digest with `sha256sum` of the file. Hashing the
+    decoded text normalised CRLF to LF and made a correct reload report a different document."""
+    import hashlib
+
+    path = tmp_path / "governance.toml"
+    path.write_bytes(b"[disclosure]\r\nmin_cohort_size = 30\r\n")
+
+    policy = load_policy(path=str(path), floor=FLOOR)
+
+    assert policy is not None
+    assert policy.digest == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("text", ["[disclosure]\n", "[access]\n", "[disclosure]\n[access]\n"])
+def test_a_document_of_empty_sections_configures_nothing(text):
+    """Section headers with nothing under them are as inert as an empty file, and as likely a
+    truncated or half-written copy."""
+    with pytest.raises(AccessPolicyError, match="configures nothing"):
+        parse_policy(text, floor=FLOOR, source="test")
+
+
+def test_a_document_carrying_only_the_fl_clients_section_is_accepted():
+    """It configures the fl-client's half; data-access-api has nothing to enforce, and says so by
+    loading a policy with no rules rather than refusing to start."""
+    policy = parse_policy('[fl_privacy.nvflare]\npolicy = "percentile"\n', floor=FLOOR, source="test")
+
+    assert policy.rules == ()
+    assert policy.min_cohort_size is None

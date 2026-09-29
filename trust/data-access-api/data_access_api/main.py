@@ -23,8 +23,10 @@ from data_access_api.utils.logger import logger
 
 # Which governance policy this process enforces, once, at startup (FLIP#1259). The line is the
 # operator's evidence that an edit reached the service: reload-governance waits for it, and its
-# digest matches the one check-governance prints for the same document.
-logger.info(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
+# digest matches the one check-governance prints for the same document. WARNING rather than
+# INFO so a trust running at TRUST_LOG_LEVEL=WARNING still prints it — without it
+# reload-governance would report an image that ignores the document.
+logger.warning(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
 
 # Disable Swagger / OpenAPI / ReDoc in production. Data-access-api executes SQL
 # against OMOP under a service account; leaking its route + schema map to anyone

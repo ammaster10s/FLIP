@@ -132,7 +132,7 @@ def _governance_fragments(template: Path) -> list[str]:
         return [
             FL_CLIENT_CHECKSUM_DIRECTIVE,
             "- name: governance-extract",
-            "- --extract",
+            "site_policy --extract /app/governance.toml",
             f"mountPath: {MOUNT_PATH}",
             f"subPath: {key}",
             "- name: ACCESS_POLICY_FILE",

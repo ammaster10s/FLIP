@@ -469,6 +469,10 @@ ifeq ($(strip $(ACCESS_POLICY_FILE)),)
 	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
 	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
 	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
+	@echo "🔍 Validating FL_SITE_PRIVACY_* with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
+	@tmp=$$(mktemp -d) && trap 'rmdir "$$tmp"' EXIT && \
+	    $(SITE_PRIVACY_KIT_ENV) \
+	    $(GOVERNANCE_PYTHON) ../flip-utils/flip/nvflare/site_policy.py --check --fl-backend $(FL_BACKEND) "$$tmp/privacy.json"
 else
 	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
 	@ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
@@ -485,13 +489,16 @@ endif
 # and the daemon on the trust host then bind-mounts that path from its OWN filesystem, where it
 # does not exist, so data-access-api and the fl-client would fail closed on every start. The EC2
 # trusts (deploy-trust-ec2 / upgrade-trust-ec2, DOCKER_CONTEXT=flip-trust over ssh) are FLIP's
-# own mock trusts and do not support one; a real site runs compose on its own host.
+# own mock trusts and do not support one; a real site runs compose on its own host. The endpoint
+# is DOCKER_HOST, else the context DOCKER_CONTEXT names, else the current one (`docker context
+# use`); a tcp:// daemon on this machine's loopback is local.
 define refuse_remote_governance
 	@if [ -n "$(strip $(ACCESS_POLICY_FILE))" ]; then \
 	  host="$${DOCKER_HOST:-}"; \
-	  if [ -z "$$host" ] && [ -n "$${DOCKER_CONTEXT:-}" ]; then \
-	    host=$$(docker context inspect "$$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	  if [ -z "$$host" ]; then \
+	    host=$$(docker context inspect $${DOCKER_CONTEXT:+"$$DOCKER_CONTEXT"} --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
 	  fi; \
+	  case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
 	  case "$$host" in ssh://*|tcp://*) \
 	    echo "❌ ACCESS_POLICY_FILE is set in trust/$(KIT_FILE), but Docker points at a remote daemon ($$host)."; \
 	    echo "   Compose would resolve the document on this machine, and the trust host would mount a path"; \
@@ -541,6 +548,15 @@ reload-governance: check-governance
 	      exit 1; \
 	    fi; \
 	    services="$$services $(GOVERNANCE_INIT) $$clients"; \
+	  fi; \
+	  if [ -n "$(GOVERNANCE_INIT)" ] && [ -n "$(strip $(ACCESS_POLICY_FILE))" ] \
+	      && grep -q fl_privacy "$(abspath $(ACCESS_POLICY_FILE))" \
+	      && ! $(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) run --rm --no-deps -T --entrypoint python \
+	          $(GOVERNANCE_INIT) -m flip.nvflare.site_policy --help 2>/dev/null | grep -q -- --extract; then \
+	    echo "❌ The document carries an [fl_privacy] section, but the fl-client image (DOCKER_FL_TAG=$(DOCKER_FL_TAG))"; \
+	    echo "   predates governance support and cannot extract it — the clients would not start. Nothing was"; \
+	    echo "   recreated. Move the FL client to a release that has it, or state the filter in FL_SITE_PRIVACY_*."; \
+	    exit 1; \
 	  fi; \
 	  echo "   recreating: $$services"; \
 	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \

@@ -42,7 +42,8 @@ min_cohort_size = 25
 # How a request is decided — document order never matters:
 #   1. An action NO rule mentions keeps its existing behaviour. That is what makes partial
 #      adoption possible: this example says nothing about cohort.statistics or
-#      cohort.dataframe, so both work exactly as without a document.
+#      cohort.dataframe, so both work as without a document — apart from the raised
+#      [disclosure] floor above, which applies to every action.
 #   2. For an action the document does mention, any matching `deny` denies.
 #   3. Otherwise any matching `permit` permits, at the strictest min_cohort_size among the
 #      matching permits (never below [disclosure] or the kit floor).

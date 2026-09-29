@@ -137,8 +137,19 @@ def _site_policy() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     # @dataclass resolves its own module through sys.modules, so register before executing.
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as e:
+        del sys.modules[spec.name]
+        raise _needs_newer_python(e) from None
     return module
+
+
+def _needs_newer_python(e: ModuleNotFoundError) -> GovernanceDocumentError:
+    return GovernanceDocumentError(
+        f"validating the kit's governance configuration needs Python 3.11 or newer (tomllib), and this "
+        f"python3 is {sys.version.split()[0]} ({e})"
+    )
 
 
 def _validate_governance(kit: dict[str, str], document: Path | None) -> str | None:
@@ -159,18 +170,25 @@ def _validate_governance(kit: dict[str, str], document: Path | None) -> str | No
         GovernanceDocumentError: On an invalid document, an invalid FL_SITE_PRIVACY_* value, a
             filter set in both, or a filter on a backend that does not enforce one.
     """
-    site_policy = _site_policy()
     env = {key: value for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_")}
     backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
     floor = kit.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
     if not floor.isdigit() or int(floor) < 1:
         raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not a positive integer")
+    if document is None and not any(value.strip() for value in env.values()):
+        # Nothing to validate — and the validators need tomllib (3.11+), which a trust using
+        # neither control must not: sync-kit runs on the deploy host's own python3.
+        return None
+    site_policy = _site_policy()
 
     if document is not None:
         service_root = str(REPO_ROOT / "trust" / "data-access-api")
         if service_root not in sys.path:
             sys.path.insert(0, service_root)
-        from data_access_api.policy import AccessPolicyError, load_policy
+        try:
+            from data_access_api.policy import AccessPolicyError, load_policy
+        except ModuleNotFoundError as e:
+            raise _needs_newer_python(e) from None
 
         try:
             load_policy(path=str(document), floor=int(floor))
@@ -450,7 +468,8 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # The trust's governance document (FLIP#1259). The kit names a *path* — the same
     # ACCESS_POLICY_FILE the Compose stack mounts — but a path on the deploy host means
     # nothing inside a pod, so what travels is the document itself, which the chart renders
-    # into a read-only ConfigMap both the data-access-api and the fl-client pods mount. A
+    # into a read-only ConfigMap that data-access-api mounts and the NVFLARE fl-client's
+    # governance-extract init container reads (the client itself sees its section only). A
     # relative path resolves against the trust tree, as Compose's --project-directory trust
     # resolves its own mount. Unreadable is a hard error rather than an omission: the release
     # would otherwise install clean and quietly keep the platform defaults the operator

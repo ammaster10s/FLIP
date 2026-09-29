@@ -19,7 +19,9 @@ fails here rather than on a live site.
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -125,6 +127,34 @@ class Governance(unittest.TestCase):
         # reload-governance validates first (its prerequisite needs the real checkers), so its
         # refusal is read off the recipe instead.
         assert "points at a remote daemon" in dry_run("reload-governance", kit=GOVERNED_KIT)
+
+    def test_the_current_context_counts_when_docker_context_is_unset(self):
+        """`docker context use flip-trust` leaves no DOCKER_CONTEXT in the environment."""
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub = Path(stub_dir) / "docker"
+            stub.write_text('#!/bin/sh\ncase "$*" in "context inspect"*) echo ssh://flip-trust;; *) exit 0;; esac\n')
+            stub.chmod(0o755)
+            env = {"PATH": f"{stub_dir}:{os.environ['PATH']}", "DOCKER_HOST": "", "DOCKER_CONTEXT": ""}
+            result = run_target("upgrade-trust", "YES=1", kit=GOVERNED_KIT, env=env)
+        assert result.returncode != 0, result.stdout
+        assert "remote daemon (ssh://flip-trust)" in result.stdout, result.stdout + result.stderr
+
+    def test_a_local_tcp_daemon_is_not_remote(self):
+        result = run_target("upgrade-trust", "YES=1", kit=GOVERNED_KIT, env={"DOCKER_HOST": "tcp://localhost:2375"})
+        assert "remote daemon" not in result.stdout, result.stdout
+
+    def test_check_governance_validates_the_kits_filter_without_a_document(self):
+        """A misspelt FL_SITE_PRIVACY_* name is dropped silently by compose, so it must be caught here
+        even when the trust has no document."""
+        out = dry_run("check-governance", kit=KIT + "FL_SITE_PRIVACY_PERCENTIL=5\n")
+        assert "site_policy.py --check --fl-backend nvflare" in out, out
+        assert 'FL_SITE_PRIVACY_PERCENTIL="5"' in out, out
+
+    def test_reload_governance_refuses_an_fl_image_that_cannot_extract_before_recreating(self):
+        out = dry_run("reload-governance", kit=GOVERNED_KIT)
+        preflight = out.index("site_policy --help")
+        recreate = out.index("--force-recreate")
+        assert preflight < recreate, out
 
     def test_a_remote_daemon_without_a_document_is_not_refused(self):
         out = run_target("upgrade-trust", "YES=1", dry=True, env={"DOCKER_HOST": "ssh://flip-trust"})

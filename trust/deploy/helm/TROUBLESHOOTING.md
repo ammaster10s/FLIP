@@ -1375,9 +1375,13 @@ kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- cat /a
   from it. `helm get values <release> -n flip-trust` shows what the release holds.
 - **There is no `[governance]` line at all** → the image predates governance support (FLIP#1259) and
   ignores the document. Move the trust to a release that has it.
-- **The line's `sha256=` is not your document's** (`sha256sum trust/governance.<CODE>.toml`) → the
-  pods run an older document. Editing the ConfigMap by hand (`kubectl edit configmap`) restarts
-  nothing; redeploy with `deploy-trust-k8s KIT=`, which regenerates the override and rolls the pods.
+- **The line's `sha256=` is not the ConfigMap's** → the pod runs an older document. Compare with the
+  bytes the pod mounts, not the file on the deploy host: embedding the document in the override can
+  change its trailing blank lines and final newline, so the host file's `sha256sum` need not match.
+  `kubectl get configmap <release>-flip-trust-governance -n flip-trust -o jsonpath='{.data.governance\.toml}'
+  | sha256sum` is the digest the pod should log. Editing the ConfigMap by hand (`kubectl edit
+  configmap`) restarts nothing; redeploy with `deploy-trust-k8s KIT=`, which regenerates the override
+  and rolls the pods.
 - **The fl-client ignores `[fl_privacy.nvflare]`** → check the backend: on Flower nothing reads the
   section and the chart does not wire it (sync-kit refuses such a document). On NVFLARE the client
   reads the extract, not the document: `kubectl exec ... fl-client-<netId> -- cat

@@ -237,7 +237,11 @@ def test_the_nvflare_client_reads_only_its_extracted_section(tmp_path: Path) -> 
     assert extract_mount["mountPath"] == "/app/governance"
     assert extract_mount.get("readOnly") is True
 
-    assert "--extract" in extract["command"], extract["command"]
+    script = " ".join(extract["command"])
+    assert "site_policy --extract /app/governance.toml" in script, extract["command"]
+    # A document with no [fl_privacy] section must not need an image that knows --extract.
+    assert "grep -q fl_privacy /app/governance.toml" in script, extract["command"]
+    assert extract["imagePullPolicy"] == container["imagePullPolicy"], "the init could run a stale cached image"
     assert extract["image"] == container["image"], "the extract must be written by the loader that reads it"
     (source,) = [m for m in extract["volumeMounts"] if m["name"] == VOLUME_NAME]
     assert source["mountPath"] == MOUNT_PATH
