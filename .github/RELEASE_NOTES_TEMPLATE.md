@@ -64,6 +64,8 @@ Tutorial suite, on a GPU host:
 - [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
 - [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
 
+Not run for v0.11.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
 Full-platform smoke test, against a running deployment:
 
 - [x] NVFLARE — `make e2e_smoke`
