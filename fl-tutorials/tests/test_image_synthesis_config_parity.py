@@ -1388,3 +1388,24 @@ def test_a_simulated_site_reads_its_own_data_when_the_makefile_sets_it(
 
     monkeypatch.setenv("SITE1_IMAGES_DIR", "")
     assert trainer.site_data_paths("site-1") is None
+
+
+@pytest.mark.parametrize("stored_shape", [(40, 48), (40, 48, 3)], ids=["grayscale-mini", "rgb-arkplus"])
+@pytest.mark.parametrize("is_validation", [True, False], ids=["validation", "training"])
+def test_the_xray_chain_outputs_one_channel_in_zero_one_for_both_datasets(
+    stored_shape: tuple[int, ...], is_validation: bool
+) -> None:
+    """``xrays_mini_300`` stores grayscale, Ark+ stores RGB; both come out ``(1, *spatial_shape)`` in [0, 1]."""
+    from monai.data import MetaTensor
+
+    transforms = _load_app_module(_DIFFUSION, "transforms")
+    chain = transforms.get_xray_transforms(is_validation=is_validation)
+    after_load = chain.transforms[1:]  # skip LoadImaged: feed what PydicomReader returns
+    image = {"image": MetaTensor(torch.randint(0, 256, stored_shape, dtype=torch.uint8))}
+    for transform in after_load:
+        image = transform(image)
+    out = image["image"]
+    assert tuple(out.shape) == (1, *transforms.SPATIAL_SHAPE)
+    assert float(out.min()) >= 0.0
+    assert float(out.max()) <= 1.0
+    assert torch.isfinite(out).all()
