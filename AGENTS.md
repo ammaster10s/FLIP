@@ -80,7 +80,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 ### Running Services
 
 ```bash
-make up                    # Start all services (requires AWS access) — pulls images from GHCR
+make up                    # Start all services — pulls images from GHCR (the hub needs no AWS; the two example trusts' artifact fetches still do)
 make up BUILD=true         # Same, but rebuild repo-built services from local source instead of pulling
 make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
@@ -94,11 +94,12 @@ make ui-off                # Stop the UI container (no-op message when PROD is s
 make up-pgadmin            # Start pgadmin only
 make reset-keycloak        # Recreate the dev identity provider from deploy/keycloak/flip-realm.json (after editing it)
 make clean                 # Remove all stopped containers, networks, and images
+make clean-object-store    # Empty the dev object store (stop RustFS, remove its named volume)
 make recreate-networks     # Remove + recreate all networks (bridge, except the two trust networks: overlay, for the XNAT swarm stack)
 make ci                    # Run CI pipeline locally using act
 make central-hub           # Start flip-api + database (no UI)
 make print-docker-tag      # Print the resolved DOCKER_TAG value
-make check-aws-access      # Verify the AWS CLI is installed and credentials resolve
+make check-aws-access      # Verify the AWS CLI is installed and credentials resolve (no longer part of `make up`)
 make debug SERVICE=<name>  # Restart service in debug mode (port 5678)
 make debug-off SERVICE=<name>
 make debug-all             # Debug all API services
@@ -369,7 +370,7 @@ After changes, evaluate if docs need updating:
 1. `cp .env.development.example .env.development`
 2. Per service: `cd <service-dir> && uv sync`
 3. UI: `cd flip-ui && npm install`
-4. AWS: `aws configure sso` (required for flip-api and `make up`)
+4. AWS: `aws configure sso` (only for the example trusts' artifact fetches, the AWS deploy targets and the Cognito/SES dev opt-ins — the hub itself needs no AWS, FLIP#919/#1291)
 5. Install AWS Session Manager plugin
 6. `make create-networks`
 
@@ -379,6 +380,8 @@ Cross-cutting keys and URLs live here. The rest are documented where they are co
 **FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_ORIGINS`,
 `FL_KIT_SLOT_NAMES`) in
 [`fl-services/AGENTS.md`](fl-services/AGENTS.md#environment-variables) ·
+**dev object store + AWS overlay** (`OBJECT_STORE_*`, `compose.development.aws.yml`, `AWS_PROFILE`) in
+[`deploy/AGENTS.md`](deploy/AGENTS.md#dev-object-store-and-the-aws-overlay-flip1291) ·
 **multi-instance** (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) in
 [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables) ·
 **XNAT/PACS** (`XNAT_PORT`, `PACS_*`, `DQR_*`) in

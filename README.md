@@ -40,9 +40,10 @@ For the platform architecture, workflows, deployment guides, and user documentat
 ## Quickstart: Central Hub with two example Trusts
 
 This developer quickstart starts the Central Hub and the shipped GSTT and KCH example Trust nodes on one Linux host.
-Signing in needs no cloud account: the hub authenticates against a local Keycloak container seeded with the
-development admin user. The full stack additionally uses the development AWS S3 buckets and XNAT artifacts
-maintained for authorised FLIP developers. If you do not have access to those, begin with the
+The hub needs no cloud account: sign-in is a local Keycloak container seeded with the development admin user, and
+model files, FL app bundles and results live in a local S3-compatible object store. The two example Trusts still
+fetch their XNAT artifacts and OMOP vocabulary from AWS buckets maintained for authorised FLIP developers. If you do
+not have access to those, begin with the
 [Central Hub deployment guide](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) to create your
 own environment.
 
@@ -51,9 +52,9 @@ own environment.
 - Docker Engine with Compose and Swarm mode, plus the NVIDIA Container Toolkit on GPU hosts
 - GNU Make, `jq`, and [uv](https://docs.astral.sh/uv/)
 - GitHub Container Registry access for the published FLIP images
-- For the full stack (`make up`): the AWS CLI and an SSO profile with access to the development S3 buckets, which
-  hold model-file uploads, FL results and app bundles. AWS Cognito is needed only with `AUTH_BACKEND=cognito`; the
-  default local identity provider is Keycloak
+- For the two example Trusts (`make up`): the AWS CLI and an SSO profile with access to the development XNAT
+  artifacts and OMOP vocabulary buckets. The hub itself reaches no AWS service: sign-in is the local Keycloak, object
+  storage is the local RustFS container; AWS Cognito is needed only with `AUTH_BACKEND=cognito`
 
 The complete tool list and environment-variable checklist are in [CONTRIBUTING.md](CONTRIBUTING.md#prerequisites).
 
@@ -61,9 +62,10 @@ The complete tool list and environment-variable checklist are in [CONTRIBUTING.m
 
 ```bash
 cp .env.development.example .env.development
-# Fill the required AWS, database, encryption, and S3 values (the Cognito ids stay commented out).
+# Fill the required region, database, encryption and artifact-bucket values (the Cognito ids and
+# AWS_PROFILE stay commented out; the object store needs nothing).
 
-aws sso login --profile <your-profile>   # for S3; sign-in itself is local
+aws sso login --profile <your-profile>   # for the Trusts' XNAT artifacts and OMOP vocabulary only
 docker login ghcr.io
 
 # Required once per Docker host.
@@ -87,9 +89,11 @@ loads but every API call fails CORS; the Keycloak realm is described in
 [deploy/keycloak/README.md](deploy/keycloak/README.md) and, for `AUTH_BACKEND=cognito`, see "Browser-usable
 UI ports" in [deploy/providers/AWS/dev/README.md](deploy/providers/AWS/dev/README.md).
 
-To boot only the hub — Keycloak, the database and the API, enough to sign in and develop against — with no
-AWS account at all, use `make central-hub` (or `make up-no-trust` to include the FL server side). `make up`
-still checks for AWS access because model-file uploads and FL bundles live in S3.
+To boot only the hub — Keycloak, the database, the object store and the API, enough to sign in, upload model
+files and develop against — use `make central-hub` (or `make up-no-trust` to include the FL server side). Neither
+needs an AWS account, and neither does the hub half of `make up`: the AWS CLI is only for the Trusts' artifact
+fetches. Model files, app bundles and results sit in the `object-store` container (browse it at
+`http://localhost:9001` with the keys from the compose; `make clean-object-store` empties it).
 
 ### Load the OMOP vocabulary
 

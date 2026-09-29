@@ -68,9 +68,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment — `make up` needs it for the
-  development S3 buckets, not to sign in: the local identity provider is Keycloak (see
-  [Environment variables](#environment-variables)), and `make central-hub` boots the hub with no AWS account
+- The AWS CLI configured for SSO access to the development environment — only the two example Trusts need
+  it (`make up` fetches their XNAT artifacts and OMOP vocabulary from AWS buckets). The hub reaches no AWS
+  service: sign-in is the local Keycloak and object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
+  AWS account
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -236,16 +238,36 @@ For the full local stack, replace every placeholder in these minimum groups befo
 
 | Group | Required development values |
 | --- | --- |
-| AWS session | `AWS_PROFILE`, `AWS_REGION` |
+| AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you opt into an AWS-backed path (below) |
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it; the dev Cognito pool's seed admin logs in with it). Leave `AUTH_BACKEND` unset: dev defaults to `keycloak`, the identity-provider container in `deploy/compose.development.yml`, so no AWS account is needed to sign in |
 | Cognito (optional) | `AUTH_BACKEND=cognito` plus `AWS_COGNITO_USER_POOL_ID` and `AWS_COGNITO_APP_CLIENT_ID` — only to develop against the dev Cognito pool, with an AWS SSO session. Staging and production accept no other value |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
-| Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
-| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
+| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
+| XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
 
-Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
-can use the shared development values. Other deployers should create their own resources with the
-[Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+**Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
+[RustFS](https://github.com/rustfs/rustfs) container, and `object-store-init`, a one-shot that creates the three
+buckets; flip-api, both fl-servers and the fl-apis reach it through boto3's native `AWS_ENDPOINT_URL_S3` with static
+dev keys, so model uploads and scanning, FL app bundles, training and results download run the same code as
+production, against a local store. Browse it at `http://localhost:9001` (sign in with the two keys from
+`deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
+`OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
+`OBJECT_STORE_CONSOLE_PORT`. Two details are worth knowing. Presigned URLs are signed for the host they will be
+opened from: the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
+which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). And the store's keys are
+S3-scoped flip-api settings (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`), never generic `AWS_*` env, so they cannot
+shadow a mounted AWS profile. Staging and production are unchanged: real S3 buckets, the task role, the regional
+endpoint; `ProdSettings` pins the three dev settings to `None`, so they cannot be enabled there.
+
+**AWS credentials enter the dev stack through one overlay.** With object storage local, the hub's dev compose mounts
+nothing from `~/.aws`. The two dev opt-ins that do reach AWS — `AUTH_BACKEND=cognito` and `EMAIL_BACKEND=ses` — need
+your SSO session inside flip-api: set `AWS_PROFILE` in `.env.development` and the Makefile appends
+`deploy/compose.development.aws.yml` (the `~/.aws` mounts plus `AWS_PROFILE`, flip-api only) to every compose command.
+The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the Trusts' artifact fetches — read `AWS_PROFILE`
+as before and are guarded by `make check-aws-access`, which `make up` no longer runs. Authorised FLIP developers can
+use the shared development values for the two artifact buckets; other deployers should create their own resources
+with the [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
 **Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request

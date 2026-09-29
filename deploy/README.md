@@ -36,8 +36,15 @@ they are filed by two different rules:
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 `keycloak` (development only: the local identity provider, ephemeral — no volume — importing
 [`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`; a realm edit
-needs `make reset-keycloak`, since the import skips a realm that already exists), and the `fl-api-net-*` /
-`fl-server-net-*` FL server side. No trust service is defined here. The one place
+needs `make reset-keycloak`, since the import skips a realm that already exists), `object-store` and
+`object-store-init` (development only, FLIP#1291: an S3-compatible RustFS container on the named volume
+`object_store_data`, standing in for the S3 buckets, and the one-shot that creates the three buckets in it
+from [`object-store/create_buckets.py`](object-store/create_buckets.py); every service reaches it through
+`AWS_ENDPOINT_URL_S3`, the fl-apis admit it as `BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and
+`make clean-object-store` empties it), and the `fl-api-net-*` / `fl-server-net-*` FL server side.
+`compose.development.aws.yml` is the one overlay: the `~/.aws` mounts and `AWS_PROFILE` for flip-api, which
+the root Makefile appends only in development and only when `AWS_PROFILE` is set — the door through which
+the `AUTH_BACKEND=cognito` and `EMAIL_BACKEND=ses` dev opt-ins get an SSO session, and nothing else needs one. No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**
