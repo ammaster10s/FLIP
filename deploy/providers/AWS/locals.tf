@@ -117,7 +117,7 @@ locals {
   # (FLIP#905): flip-api presigns bundle URLs against it as AWS_ENDPOINT_URL_S3,
   # and pinning boto3 to a regional endpoint makes those URLs PATH-STYLE — the
   # bucket in the path, the host exactly this — so it is also the one host the
-  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_HOSTS) admits. Derived
+  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_ORIGINS) admits. Derived
   # once so the two cannot drift: a change here moves both, and a change to
   # either alone would 400 every bundle download.
   s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
@@ -197,9 +197,9 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
-      # The only host the server-side bundle fetch may download from: the
+      # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
-      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
     }
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
@@ -229,7 +229,7 @@ locals {
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
       # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905).
-      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
     }
   }
 }

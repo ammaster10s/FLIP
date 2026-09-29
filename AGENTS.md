@@ -376,7 +376,7 @@ After changes, evaluate if docs need updating:
 ### Key Environment Variables
 
 Cross-cutting keys and URLs live here. The rest are documented where they are consumed:
-**FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_HOSTS`,
+**FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_ORIGINS`,
 `FL_KIT_SLOT_NAMES`) in
 [`fl-services/AGENTS.md`](fl-services/AGENTS.md#environment-variables) ·
 **multi-instance** (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) in
