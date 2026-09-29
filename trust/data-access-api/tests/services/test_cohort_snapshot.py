@@ -14,12 +14,14 @@
 
 import json
 import uuid
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from data_access_api.services import cohort_snapshot
 from data_access_api.services.cohort_snapshot import (
+    Snapshot,
     SnapshotStoreDisabled,
     SnapshotTooLarge,
     delete_snapshot,
@@ -43,8 +45,8 @@ def store(tmp_path):
         yield tmp_path
 
 
-def _save(project_id: str = PROJECT_ID, **overrides):
-    kwargs = {
+def _save(project_id: str = PROJECT_ID, **overrides: Any) -> Snapshot:
+    kwargs: dict[str, Any] = {
         "query": QUERY,
         "person_ids": ["1", "2", "3"],
         "accession_ids": ["A1", "A2", "A3"],
