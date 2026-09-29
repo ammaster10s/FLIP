@@ -14,10 +14,10 @@
 The Kubernetes trust was the deployment shape that silently ignored a trust's governance
 document: the Compose stack mounts it and points ``ACCESS_POLICY_FILE`` at it, the chart did
 that for nothing, and the two shapes looked equally healthy. These tests render the chart and
-assert the whole contract — the ConfigMap carrying the document verbatim, a READ-ONLY mount at
-the same path on both the data-access-api and the fl-client pods, the env var that makes the
-services read it, and a pod-template annotation that changes with the document so an edit
-rolls the pods rather than leaving the previous rules in force.
+assert the whole contract — the ConfigMap carrying the document verbatim, a READ-ONLY mount on
+data-access-api, the NVFLARE fl-client reading only the section its init container extracts
+(never the whole document, since researcher code runs there), nothing at all on the Flower
+client, and pod-template annotations that change with what each pod reads.
 
 They also pin the other half: with no document configured, none of it renders — the feature is
 opt-in and a default install's pod specs must be the ones they were before it existed.
@@ -56,11 +56,12 @@ id = "no-raw-export"
 action = "cohort.dataframe"
 effect = "deny"
 
-[fl_privacy]
+[fl_privacy.nvflare]
 policy = "percentile"
 percentile = 10
 gamma = 0.01
 """
+EXTRACT_PATH = "/app/governance/governance.fl_privacy.toml"
 
 
 def _render(*extra: str) -> str:
@@ -190,13 +191,15 @@ def test_without_a_document_no_governance_object_renders() -> None:
             assert _env(container, "ACCESS_POLICY_FILE") is None
 
 
-def test_a_document_reaches_both_pods_read_only_as_a_configmap_file(tmp_path: Path) -> None:
-    """The whole wiring on one render: ConfigMap content, env var, read-only subPath mount.
+def _init_container(pod: dict, name: str) -> dict:
+    for container in pod["spec"].get("initContainers", []):
+        if container["name"] == name:
+            return container
+    raise AssertionError(f"no init container {name!r} in the pod")
 
-    Both pods because the document has two readers — data-access-api for [disclosure]/[access],
-    the NVFLARE client for [fl_privacy]. The mount is read-only and the env var points at the
-    mounted path (not a host path, which means nothing inside the pod).
-    """
+
+def test_a_document_reaches_data_access_api_read_only_as_a_configmap_file(tmp_path: Path) -> None:
+    """ConfigMap content, env var and read-only subPath mount on the pod that enforces [access]."""
     rendered = _render("--set-file", f"governance.document={_document_file(tmp_path)}")
     configmap = _governance_configmap(rendered)
 
@@ -205,37 +208,50 @@ def test_a_document_reaches_both_pods_read_only_as_a_configmap_file(tmp_path: Pa
         "the rendered ConfigMap does not carry the document verbatim — the mounted policy is not the one configured"
     )
 
-    pods = _pods(rendered)
-    for component, container_name in (("data-access-api", "data-access-api"), ("fl-client", "fl-client")):
-        pod = pods[component]
-        container = _container(pod, container_name)
+    pod = _pods(rendered)["data-access-api"]
+    container = _container(pod, "data-access-api")
+    assert _env(container, "ACCESS_POLICY_FILE") == MOUNT_PATH
+    (mount,) = [m for m in container.get("volumeMounts", []) if m["name"] == VOLUME_NAME]
+    assert mount["mountPath"] == MOUNT_PATH, mount
+    assert mount["subPath"] == "governance.toml", (
+        "the mount is not a subPath of the ConfigMap key, so it would hide /app"
+    )
+    assert mount.get("readOnly") is True, "the policy mount is writable — a site could rewrite it"
+    (volume,) = [v for v in pod["spec"].get("volumes", []) if v["name"] == VOLUME_NAME]
+    assert volume["configMap"]["name"] == configmap["metadata"]["name"]
 
-        assert _env(container, "ACCESS_POLICY_FILE") == MOUNT_PATH, (
-            f"{component}: ACCESS_POLICY_FILE is not {MOUNT_PATH} — the service would fall back to the platform "
-            "defaults while the operator believes the document is in force"
-        )
-        mounts = [m for m in container.get("volumeMounts", []) if m["name"] == VOLUME_NAME]
-        assert len(mounts) == 1, f"{component}: expected one {VOLUME_NAME} volumeMount, found {mounts}"
-        mount = mounts[0]
-        assert mount["mountPath"] == MOUNT_PATH, mount
-        assert mount["subPath"] == "governance.toml", (
-            f"{component}: the mount is not a subPath of the ConfigMap key, so it would hide /app or the kit"
-        )
-        assert mount.get("readOnly") is True, f"{component}: the policy mount is writable — a site could rewrite it"
 
-        volumes = [v for v in pod["spec"].get("volumes", []) if v["name"] == VOLUME_NAME]
-        assert len(volumes) == 1, f"{component}: expected one {VOLUME_NAME} volume, found {volumes}"
-        assert volumes[0]["configMap"]["name"] == configmap["metadata"]["name"], (
-            f"{component}: the volume does not reference the rendered ConfigMap"
-        )
+def test_the_nvflare_client_reads_only_its_extracted_section(tmp_path: Path) -> None:
+    """The client container never sees the whole document: researcher code runs there as the
+    client's own user. governance-extract reads it and writes the [fl_privacy] table alone."""
+    rendered = _render("--set-file", f"governance.document={_document_file(tmp_path)}")
+    pod = _pods(rendered)["fl-client"]
+    container = _container(pod, "fl-client")
+    extract = _init_container(pod, "governance-extract")
+
+    assert _env(container, "ACCESS_POLICY_FILE") == EXTRACT_PATH
+    assert not [m for m in container["volumeMounts"] if m["name"] == VOLUME_NAME], (
+        "the fl-client container mounts the whole governance document"
+    )
+    (extract_mount,) = [m for m in container["volumeMounts"] if m["name"] == "governance-extract"]
+    assert extract_mount["mountPath"] == "/app/governance"
+    assert extract_mount.get("readOnly") is True
+
+    assert "--extract" in extract["command"], extract["command"]
+    assert extract["image"] == container["image"], "the extract must be written by the loader that reads it"
+    (source,) = [m for m in extract["volumeMounts"] if m["name"] == VOLUME_NAME]
+    assert source["mountPath"] == MOUNT_PATH
+    assert source.get("readOnly") is True
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    assert "emptyDir" in volumes["governance-extract"], volumes["governance-extract"]
 
 
 def test_editing_the_document_changes_the_rollout_checksum_on_both_pods(tmp_path: Path) -> None:
     """A ConfigMap edit restarts nothing; this annotation is what rolls the pod.
 
     Without it a trust could edit its access rules, watch the ConfigMap update, and keep
-    serving the old policy until something unrelated restarted the pod — the failure the
-    FL_SITE_PRIVACY_* comment in templates/fl-client.yaml already documents for its own values.
+    serving the old policy until something unrelated restarted the pod. With no digest from
+    sync-kit the fl-client falls back to the whole document's checksum, as data-access-api uses.
     """
     first = _render("--set-file", f"governance.document={_document_file(tmp_path, DOCUMENT, 'a.toml')}")
     second = _render(
@@ -260,33 +276,43 @@ def test_editing_the_document_changes_the_rollout_checksum_on_both_pods(tmp_path
         assert before[component] == again[component], f"{component}: the annotation is not deterministic"
 
 
-def test_the_flower_client_gets_the_same_mount_and_env(tmp_path: Path) -> None:
-    """Both backends carry the document, even though only the NVFLARE client reads it today.
+def test_the_fl_client_rolls_on_its_own_sections_digest(tmp_path: Path) -> None:
+    """sync-kit's digest of the client's section drives the client's rollout, so an [access]-only
+    edit — which changes the ConfigMap — leaves a running FL job alone."""
+    digest = "ab" * 32
+    rendered = _render(
+        "--set-file",
+        f"governance.document={_document_file(tmp_path)}",
+        "--set",
+        f"governance.flPrivacyChecksum={digest}",
+    )
+    pods = _pods(rendered)
 
-    The Flower SuperNode has no site_policy hook, so the file is inert there — but the shape
-    must not differ by backend. A release whose document is present on one backend's pod and
-    silently absent on the other is the class of defect this wiring exists to remove, and the
-    [disclosure]/[access] halves are enforced for a Flower trust exactly as for an NVFLARE one
-    (they are data-access-api's).
-    """
+    assert pods["fl-client"]["metadata"]["annotations"][CHECKSUM_ANNOTATION] == digest
+    assert pods["data-access-api"]["metadata"]["annotations"][CHECKSUM_ANNOTATION] != digest
+
+
+def test_the_flower_client_gets_none_of_the_document(tmp_path: Path) -> None:
+    """Nothing on Flower reads a site privacy section. Mounting the document there reported a
+    policy nothing enforced, and rolling the pod on every edit killed its jobs for nothing. The
+    [disclosure]/[access] halves still reach data-access-api, as on NVFLARE."""
     rendered = _render("--set", "flBackend=flower", "--set-file", f"governance.document={_document_file(tmp_path)}")
-    pod = _pods(rendered)["fl-client"]
+    pods = _pods(rendered)
+    pod = pods["fl-client"]
     container = _container(pod, "fl-client")
 
     # Positive control: the backend switch really happened.
     assert container["image"].endswith("flower-supernode:stag"), container["image"]
-    assert _env(container, "ACCESS_POLICY_FILE") == MOUNT_PATH
-    assert [m["mountPath"] for m in container["volumeMounts"] if m["name"] == VOLUME_NAME] == [MOUNT_PATH]
-    assert pod["metadata"]["annotations"].get(CHECKSUM_ANNOTATION), f"no {CHECKSUM_ANNOTATION} on the flower client"
+    assert _env(container, "ACCESS_POLICY_FILE") is None
+    assert not [m for m in container["volumeMounts"] if m["name"] in (VOLUME_NAME, "governance-extract")]
+    assert not [c for c in pod["spec"].get("initContainers", []) if c["name"] == "governance-extract"]
+    assert CHECKSUM_ANNOTATION not in pod["metadata"].get("annotations", {})
+    assert _env(_container(pods["data-access-api"], "data-access-api"), "ACCESS_POLICY_FILE") == MOUNT_PATH
 
 
 def test_the_document_does_not_disturb_the_fl_site_privacy_env_wiring(tmp_path: Path) -> None:
-    """The two sources stay independent in the chart: the document wins at runtime, not here.
-
-    site_policy.py resolves precedence (the document's [fl_privacy] wins, and the client warns
-    which source it used), so the chart must keep rendering FL_SITE_PRIVACY_* for a trust that
-    has not migrated — dropping them here would change the meaning of an existing values file.
-    """
+    """The chart renders both sources as given; setting both is refused at runtime by the
+    client and before deploy by sync-kit, not silently resolved here."""
     rendered = _render(
         "--set",
         "flClient.nvflare.sitePrivacy.policy=percentile",
@@ -296,4 +322,16 @@ def test_the_document_does_not_disturb_the_fl_site_privacy_env_wiring(tmp_path: 
     container = _container(_pods(rendered)["fl-client"], "fl-client")
 
     assert _env(container, "FL_SITE_PRIVACY_POLICY") == "percentile"
-    assert _env(container, "ACCESS_POLICY_FILE") == MOUNT_PATH
+    assert _env(container, "ACCESS_POLICY_FILE") == EXTRACT_PATH
+
+
+def test_data_access_api_runs_at_the_kits_disclosure_floor() -> None:
+    """The chart passed no COHORT_QUERY_THRESHOLD, so every chart-deployed trust ran at 10 whatever
+    its kit said, while check-governance validated the document against the kit's value."""
+    default = _container(_pods(_render())["data-access-api"], "data-access-api")
+    raised = _container(
+        _pods(_render("--set", "dataAccessApi.cohortQueryThreshold=25"))["data-access-api"], "data-access-api"
+    )
+
+    assert _env(default, "COHORT_QUERY_THRESHOLD") == "10"
+    assert _env(raised, "COHORT_QUERY_THRESHOLD") == "25"

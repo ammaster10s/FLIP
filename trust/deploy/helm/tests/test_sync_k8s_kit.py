@@ -173,6 +173,25 @@ def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
     assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
 
 
+_DOCUMENT = (
+    "[disclosure]\nmin_cohort_size = 25\n\n"
+    '[[access.rule]]\nid = "withdrawn"\naction = "cohort.accession_ids"\neffect = "deny"\n'
+    'projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"]\n\n'
+    '[fl_privacy.nvflare]\npolicy = "percentile"\n'
+)
+
+
+def _override(tmp_path, document: str = _DOCUMENT, **kit: str) -> str:
+    (tmp_path / "governance.toml").write_text(document)
+    return sync_k8s_kit.render_override(
+        {**_FL_KIT, "ACCESS_POLICY_FILE": "governance.toml", **kit}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
+    )
+
+
+def _checksum(override: str) -> str:
+    return next(line.split(": ", 1)[1] for line in override.splitlines() if "flPrivacyChecksum:" in line)
+
+
 def test_render_override_embeds_the_governance_document(tmp_path):
     """The kit's ACCESS_POLICY_FILE names a path on the deploy host; the chart needs the
     document ITSELF (it is rendered into a ConfigMap and mounted read-only — a host path
@@ -183,15 +202,16 @@ def test_render_override_embeds_the_governance_document(tmp_path):
     become an empty string."""
     (tmp_path / "policies").mkdir()
     (tmp_path / "policies" / "governance.Trust_K8s.toml").write_text(
-        '[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy]\npolicy = "percentile"\n'
+        '[disclosure]\nmin_cohort_size = 25\n\n[fl_privacy.nvflare]\npolicy = "percentile"\n'
     )
     kit = {**_FL_KIT, "ACCESS_POLICY_FILE": "policies/governance.Trust_K8s.toml"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path)
 
     assert (
-        "\ngovernance:\n  document: |\n"
-        '    [disclosure]\n    min_cohort_size = 25\n\n    [fl_privacy]\n    policy = "percentile"\n'
+        "  document: |\n"
+        '    [disclosure]\n    min_cohort_size = 25\n\n    [fl_privacy.nvflare]\n    policy = "percentile"\n'
     ) in out
+    assert "\ngovernance:\n  flPrivacyChecksum: " in out
 
 
 def test_render_override_accepts_an_absolute_governance_path(tmp_path):
@@ -199,11 +219,11 @@ def test_render_override_accepts_an_absolute_governance_path(tmp_path):
     resolving it against the trust tree would append a relative path to it and read
     something else entirely."""
     document = tmp_path / "governance.toml"
-    document.write_text('[access.rule]\nid = "x"\n')
+    document.write_text("[disclosure]\nmin_cohort_size = 30\n")
     kit = {**_FL_KIT, "ACCESS_POLICY_FILE": str(document)}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2", trust_dir=tmp_path / "elsewhere")
 
-    assert '\n    id = "x"\n' in out
+    assert "\n    min_cohort_size = 30\n" in out
 
 
 def test_render_override_fails_loudly_on_an_unreadable_governance_document(tmp_path):
@@ -218,6 +238,71 @@ def test_render_override_fails_loudly_on_an_unreadable_governance_document(tmp_p
 
     assert "ACCESS_POLICY_FILE" in str(excinfo.value)
     assert "governance.Missing.toml" in str(excinfo.value)
+
+
+def test_render_override_refuses_a_document_data_access_api_would_refuse(tmp_path):
+    """Validated with data-access-api's own loader against the kit's floor, so the pods never
+    crash-loop on a document the deploy accepted."""
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="below the configured COHORT_QUERY_THRESHOLD"):
+        _override(tmp_path, "[disclosure]\nmin_cohort_size = 20\n", COHORT_QUERY_THRESHOLD="25")
+
+
+def test_render_override_refuses_a_site_privacy_section_on_flower(tmp_path):
+    """Nothing on Flower enforces [fl_privacy.nvflare]; deploying it would read as active."""
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="nothing on flower enforces it"):
+        _override(tmp_path, FL_BACKEND="flower")
+
+
+def test_render_override_refuses_a_filter_in_both_the_document_and_the_kit(tmp_path):
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="configured twice"):
+        _override(tmp_path, FL_SITE_PRIVACY_POLICY="percentile")
+
+
+def test_render_override_refuses_a_misspelt_site_privacy_variable():
+    with pytest.raises(sync_k8s_kit.GovernanceDocumentError, match="FL_SITE_PRIVACY_PERCENTIL"):
+        sync_k8s_kit.render_override(
+            {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTIL": "5"},
+            "Trust_K8s",
+            "eu-west-2",
+        )
+
+
+def test_render_override_passes_the_kits_site_privacy_filter_to_the_chart():
+    """The chart's flClient.nvflare.sitePrivacy was never filled from the kit, so a Helm trust
+    ran unfiltered while check-governance validated the kit's filter."""
+    out = sync_k8s_kit.render_override(
+        {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "25"},
+        "Trust_K8s",
+        "eu-west-2",
+    )
+
+    assert '\n  nvflare:\n    sitePrivacy:\n      policy: "percentile"\n      percentile: "25"\n' in out
+
+
+def test_render_override_passes_the_kits_disclosure_floor_to_the_chart():
+    """The chart never passed COHORT_QUERY_THRESHOLD, so every chart-deployed trust ran at 10."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "COHORT_QUERY_THRESHOLD": "15"}, "Trust_K8s", "eu-west-2")
+
+    assert "\ndataAccessApi:\n  cohortQueryThreshold: 15\n" in out
+
+
+def test_the_fl_client_checksum_tracks_its_section_only(tmp_path):
+    """An [access]-only edit must not roll the fl-client (it interrupts a running job); an edit
+    to its own section must."""
+    base = _checksum(_override(tmp_path))
+    access_edit = _checksum(_override(tmp_path, _DOCUMENT.replace("min_cohort_size = 25", "min_cohort_size = 40")))
+    fl_edit = _checksum(_override(tmp_path, _DOCUMENT + "percentile = 30\n"))
+
+    assert base == access_edit
+    assert base != fl_edit
+
+
+def test_a_flower_trust_gets_no_fl_client_checksum(tmp_path):
+    """Nothing on the Flower client reads the document, so nothing there should roll with it."""
+    out = _override(tmp_path, "[disclosure]\nmin_cohort_size = 25\n", FL_BACKEND="flower")
+
+    assert "flPrivacyChecksum" not in out
+    assert "\ngovernance:\n  document: |\n" in out
 
 
 def test_render_override_omits_governance_without_the_kit_variable():

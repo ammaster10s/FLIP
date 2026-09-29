@@ -50,12 +50,18 @@ Usage:
 
 import argparse
 import base64
+import hashlib
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from types import ModuleType
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Maps kit env-var name -> Kubernetes Secret key. Only the per-trust secrets
 # the kit owns; infra secrets (xnat-*, omop-*, s3-*) are left as the chart
@@ -117,7 +123,72 @@ IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha
 
 
 class GovernanceDocumentError(RuntimeError):
-    """The governance document the kit names at ``ACCESS_POLICY_FILE`` could not be read."""
+    """The kit's governance configuration cannot be deployed: its document is unreadable or
+    invalid, or its site privacy filter is invalid or one this trust's backend would not
+    enforce."""
+
+
+def _site_policy() -> ModuleType:
+    """``flip.nvflare.site_policy``, loaded by path — stdlib-only, and the loader the fl-client runs."""
+    path = REPO_ROOT / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
+    spec = importlib.util.spec_from_file_location("_flip_site_policy", path)
+    if spec is None or spec.loader is None:
+        raise GovernanceDocumentError(f"cannot load the site privacy validator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    # @dataclass resolves its own module through sys.modules, so register before executing.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate_governance(kit: dict[str, str], document: Path | None) -> str | None:
+    """Validate what the pods will enforce, with the services' own loaders, before deploying it.
+
+    A chart-deployed trust otherwise learns of an invalid document from a crash-looping pod, and
+    of a filter its backend ignores from nothing at all. Both loaders are stdlib-only.
+
+    Args:
+        kit: The trust's kit file as a mapping.
+        document: The governance document, or ``None`` when the kit names none.
+
+    Returns:
+        str | None: sha256 of the fl-client's extracted section on NVFLARE (what rolls the
+        fl-client), or ``None`` when there is no document or the backend is not NVFLARE.
+
+    Raises:
+        GovernanceDocumentError: On an invalid document, an invalid FL_SITE_PRIVACY_* value, a
+            filter set in both, or a filter on a backend that does not enforce one.
+    """
+    site_policy = _site_policy()
+    env = {key: value for key, value in kit.items() if key.startswith("FL_SITE_PRIVACY_")}
+    backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
+    floor = kit.get("COHORT_QUERY_THRESHOLD", "").strip() or "10"
+    if not floor.isdigit() or int(floor) < 1:
+        raise GovernanceDocumentError(f"COHORT_QUERY_THRESHOLD={floor!r} is not a positive integer")
+
+    if document is not None:
+        service_root = str(REPO_ROOT / "trust" / "data-access-api")
+        if service_root not in sys.path:
+            sys.path.insert(0, service_root)
+        from data_access_api.policy import AccessPolicyError, load_policy
+
+        try:
+            load_policy(path=str(document), floor=int(floor))
+        except AccessPolicyError as e:
+            raise GovernanceDocumentError(str(e)) from None
+        env["ACCESS_POLICY_FILE"] = str(document)
+
+    try:
+        site_policy.check_backend(env, backend)
+        site_policy.resolve_policy(env)
+        if document is None or backend != "nvflare":
+            return None
+        with tempfile.TemporaryDirectory() as tmp:
+            extract = Path(tmp) / "governance.fl_privacy.toml"
+            site_policy.extract(str(document), extract)
+            return hashlib.sha256(extract.read_bytes()).hexdigest()
+    except site_policy.SitePolicyError as e:
+        raise GovernanceDocumentError(str(e)) from None
 
 
 def _kubectl_ns(namespace: str) -> list[str]:
@@ -226,7 +297,9 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
         str: The override file's contents.
 
     Raises:
-        GovernanceDocumentError: If the kit names an ``ACCESS_POLICY_FILE`` that cannot be read.
+        GovernanceDocumentError: If the kit's governance configuration cannot be deployed — an
+            ``ACCESS_POLICY_FILE`` that cannot be read or is invalid, or a site privacy filter
+            that is invalid or would be ignored by this trust's backend.
     """
     trust_name = kit.get("TRUST_NAME", code)
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
@@ -318,7 +391,26 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     ]
     if fl_client_pin:
         fl_section += ["  image:", f"    pin: {fl_client_pin}"]
+    # The kit's FL_SITE_PRIVACY_* (FLIP#851) reach the chart's flClient.nvflare.sitePrivacy, as
+    # they reach the Compose client, so check-governance's view of the filter is what runs.
+    site_privacy = [
+        (value_key, kit.get(kit_key, "").strip())
+        for value_key, kit_key in (
+            ("policy", "FL_SITE_PRIVACY_POLICY"),
+            ("percentile", "FL_SITE_PRIVACY_PERCENTILE"),
+            ("gamma", "FL_SITE_PRIVACY_GAMMA"),
+        )
+    ]
+    if any(value for _, value in site_privacy):
+        fl_section += ["  nvflare:", "    sitePrivacy:"]
+        fl_section += [f'      {value_key}: "{value}"' for value_key, value in site_privacy if value]
     lines += fl_section
+
+    # The trust's own disclosure floor. The chart passed none before, so every chart-deployed
+    # trust ran at the default 10 while check-governance validated against the kit's value.
+    threshold = kit.get("COHORT_QUERY_THRESHOLD", "").strip()
+    if threshold:
+        lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
     # drops the fl-client's outbound gRPC to the FL server unless FL_SERVER_PORT
@@ -364,6 +456,8 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # would otherwise install clean and quietly keep the platform defaults the operator
     # believes their rules replaced.
     policy_ref = kit.get("ACCESS_POLICY_FILE", "").strip()
+    policy_path: Path | None = None
+    document = ""
     if policy_ref:
         policy_path = Path(policy_ref)
         if not policy_path.is_absolute():
@@ -374,7 +468,13 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
             raise GovernanceDocumentError(
                 f"ACCESS_POLICY_FILE={policy_ref!r} (resolved to {policy_path}) could not be read: {e}"
             ) from None
-        lines += ["", f"# The governance document itself, read from {policy_ref}:", "governance:", "  document: |"]
+    fl_privacy_checksum = _validate_governance(kit, policy_path)
+    if policy_path is not None:
+        lines += ["", f"# The governance document itself, read from {policy_ref}:", "governance:"]
+        if fl_privacy_checksum:
+            # Rolls the fl-client only when its own section changes (templates/fl-client.yaml).
+            lines.append(f"  flPrivacyChecksum: {fl_privacy_checksum}")
+        lines.append("  document: |")
         lines += [f"    {line}" if line.strip() else "" for line in document.splitlines()]
 
     lines.append("")
@@ -393,7 +493,7 @@ def main(
     release_name: str | None = None,
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = REPO_ROOT
     kit_path = repo_root / "trust" / f".env.{code}.{env}"
 
     print(f"🔧 Syncing K8s trust kit: {code}  (env={env})")
@@ -452,9 +552,9 @@ def main(
             override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
-            print("   A relative ACCESS_POLICY_FILE resolves against trust/, as the Compose stack's")
-            print("   --project-directory trust does; an absolute path is used as given. Fix the path,")
-            print("   or unset ACCESS_POLICY_FILE in the kit to deploy with no governance document.")
+            print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
+            print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
+            print(f"   KIT={code} PROD={env}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
             sys.exit(1)
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")

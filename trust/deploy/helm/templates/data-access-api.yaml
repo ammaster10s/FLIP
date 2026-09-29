@@ -109,6 +109,12 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+            # The trust's own disclosure floor, from the kit's COHORT_QUERY_THRESHOLD via sync-kit.
+            # In the pod template rather than the ConfigMap so a change rolls the pod. The
+            # governance document below is validated against it, so the two must agree with
+            # what check-governance checked — before this, every chart-deployed trust ran at 10.
+            - name: COHORT_QUERY_THRESHOLD
+              value: {{ .Values.dataAccessApi.cohortQueryThreshold | quote }}
             {{- if .Values.governance.document }}
             # The trust's governance document (FLIP#1259), mounted read-only below. Present
             # only when governance.document is set: unset leaves this service on the
