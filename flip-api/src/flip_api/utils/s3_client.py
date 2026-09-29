@@ -12,6 +12,7 @@
 
 import hashlib
 from collections import defaultdict
+from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -43,6 +44,20 @@ _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 # typical link, and an expired policy aborts the transfer at the S3 edge.
 # Moving this value requires a security review.
 MAX_PRESIGNED_URL_TTL_SECONDS = 1800
+
+
+class PresignAudience(StrEnum):
+    """Who will open a presigned URL, and therefore which endpoint host it is signed for.
+
+    SigV4 covers the ``Host`` header, so a URL is only valid at the host it was signed for. On AWS
+    every consumer reaches the one regional endpoint and the distinction is moot. In development the
+    object store is a compose service: the browser and host-side scripts reach it on the published
+    port (``S3_PUBLIC_ENDPOINT_URL``), the fl-api fetches bundles over the docker network
+    (``AWS_ENDPOINT_URL_S3``) — two hosts, two signatures (FLIP#1291).
+    """
+
+    BROWSER = "browser"
+    INTERNAL = "internal"
 
 
 class S3PreconditionFailedError(Exception):
@@ -80,14 +95,40 @@ class S3Client:
     """S3 client wrapper for S3 operations."""
 
     def __init__(self) -> None:
-        """Initialize S3 client with AWS credentials."""
-        self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
+        """Initialize S3 client with AWS credentials.
+
+        The endpoint comes from boto3's own ``AWS_ENDPOINT_URL_S3`` env in every environment (never
+        an ``endpoint_url`` here, which is what lets the moto tests intercept a vanilla client). The
+        credentials come from boto3's chain — the task role in production — unless the dev object
+        store's keys are set, which are scoped to this client on purpose (see ``config.py``).
+        """
+        settings = get_settings()
+        self._client_kwargs: dict[str, Any] = {"region_name": settings.AWS_REGION}
+        if settings.S3_ACCESS_KEY_ID is not None and settings.S3_SECRET_ACCESS_KEY is not None:
+            self._client_kwargs["aws_access_key_id"] = settings.S3_ACCESS_KEY_ID
+            self._client_kwargs["aws_secret_access_key"] = settings.S3_SECRET_ACCESS_KEY.get_secret_value()
+        self.client = boto3.client("s3", **self._client_kwargs)
+        self._public_endpoint_url = settings.S3_PUBLIC_ENDPOINT_URL
+        self._public_client: Any = None
+
+    def _presigner(self, audience: PresignAudience) -> Any:
+        """The client whose endpoint host a presigned URL for ``audience`` must be signed for.
+
+        Without a public endpoint (production) every audience signs against ``self.client``. With
+        one (development), browser-bound URLs come from a second client pointed at it, built once.
+        """
+        if audience is PresignAudience.INTERNAL or self._public_endpoint_url is None:
+            return self.client
+        if self._public_client is None:
+            self._public_client = boto3.client("s3", endpoint_url=self._public_endpoint_url, **self._client_kwargs)
+        return self._public_client
 
     def get_presigned_url(
         self,
         s3_path: str,
         expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
         response_content_disposition: str | None = None,
+        audience: PresignAudience = PresignAudience.BROWSER,
     ) -> str:
         """
         Generate a pre-signed URL for downloading a file from S3.
@@ -106,6 +147,9 @@ class S3Client:
                 this GET — lets the browser save the file under the right
                 name even though the client never touches flip-api's own
                 response headers for the transfer itself.
+            audience: Who opens the URL — the browser or a host-side script
+                (the default), or the fl-api over the docker network. Decides
+                which endpoint host the URL is signed for (``PresignAudience``).
 
         Returns:
             str: Pre-signed URL string
@@ -125,7 +169,7 @@ class S3Client:
         if response_content_disposition is not None:
             params["ResponseContentDisposition"] = response_content_disposition
 
-        url = self.client.generate_presigned_url(
+        url = self._presigner(audience).generate_presigned_url(
             "get_object",
             Params=params,
             ExpiresIn=ttl,
@@ -188,7 +232,8 @@ class S3Client:
                 conditions.append({"Content-Type": content_type})
                 fields["Content-Type"] = content_type
 
-            response = self.client.generate_presigned_post(
+            # Always the browser (or a host-side script) posting the form, never a hub service.
+            response = self._presigner(PresignAudience.BROWSER).generate_presigned_post(
                 Bucket=bucket,
                 Key=key,
                 Fields=fields,

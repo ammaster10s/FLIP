@@ -39,6 +39,7 @@ from flip_api.config import Settings
 from flip_api.utils.s3_client import (
     _MULTIPART_OVERHEAD_BUFFER_BYTES,
     MAX_PRESIGNED_URL_TTL_SECONDS,
+    PresignAudience,
     S3Client,
 )
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
@@ -57,9 +58,75 @@ def s3_client_with_mock_boto():
         mock_boto.return_value = boto_instance
         with patch(
             "flip_api.utils.s3_client.get_settings",
-            return_value=MagicMock(AWS_REGION="us-east-1"),
+            return_value=_settings(),
         ):
             yield S3Client(), boto_instance
+
+
+def _settings(**overrides):
+    """Settings double: production shape (no dev object-store fields) unless overridden."""
+    values = {"AWS_REGION": "us-east-1", "S3_PUBLIC_ENDPOINT_URL": None, "S3_ACCESS_KEY_ID": None}
+    values["S3_SECRET_ACCESS_KEY"] = None
+    values.update(overrides)
+    return MagicMock(**values)
+
+
+def test_client_is_built_without_credentials_or_endpoint_when_unset(s3_client_with_mock_boto):
+    """Production shape: boto3's own credential chain (the task role) and the AWS_ENDPOINT_URL_S3 env."""
+    with patch("flip_api.utils.s3_client.boto3.client") as mock_boto:
+        with patch("flip_api.utils.s3_client.get_settings", return_value=_settings()):
+            S3Client()
+    mock_boto.assert_called_once_with("s3", region_name="us-east-1")
+
+
+def test_dev_credentials_are_passed_only_to_the_s3_client():
+    """The dev store's static keys go to this client alone, never into the generic AWS env (#1291).
+
+    Generic ``AWS_ACCESS_KEY_ID`` env would outrank a profile in boto3's chain and silently shadow the
+    credentials of every other dev opt-in (``AUTH_BACKEND=cognito``, ``EMAIL_BACKEND=ses``).
+    """
+    settings = _settings(S3_ACCESS_KEY_ID="flip-dev", S3_SECRET_ACCESS_KEY=MagicMock())
+    settings.S3_SECRET_ACCESS_KEY.get_secret_value.return_value = "flip-dev-object-store"
+    with patch("flip_api.utils.s3_client.boto3.client") as mock_boto:
+        with patch("flip_api.utils.s3_client.get_settings", return_value=settings):
+            S3Client()
+    mock_boto.assert_called_once_with(
+        "s3", region_name="us-east-1", aws_access_key_id="flip-dev", aws_secret_access_key="flip-dev-object-store"
+    )
+
+
+def test_browser_presigns_use_the_public_endpoint_and_internal_ones_do_not():
+    """SigV4 signs the host: a URL the browser or the host opens must be signed for the published port,
+    one the fl-api fetches over the docker network for the service name (#1291)."""
+    internal, public = MagicMock(name="internal"), MagicMock(name="public")
+    with patch("flip_api.utils.s3_client.boto3.client", side_effect=[internal, public]) as mock_boto:
+        with patch(
+            "flip_api.utils.s3_client.get_settings",
+            return_value=_settings(S3_PUBLIC_ENDPOINT_URL="http://localhost:9000"),
+        ):
+            client = S3Client()
+            client.get_presigned_url("s3://bucket/key", audience=PresignAudience.INTERNAL)
+            internal.generate_presigned_url.assert_called_once()
+            public.generate_presigned_url.assert_not_called()
+
+            client.get_presigned_url("s3://bucket/key")
+            client.get_put_presigned_post("s3://bucket/key", max_bytes=10)
+    assert mock_boto.call_args_list[1].kwargs["endpoint_url"] == "http://localhost:9000"
+    public.generate_presigned_url.assert_called_once()
+    public.generate_presigned_post.assert_called_once()
+    internal.generate_presigned_post.assert_not_called()
+
+
+def test_presign_audiences_share_one_client_without_a_public_endpoint(s3_client_with_mock_boto):
+    """Production: no public endpoint, so both audiences sign against the one client — no second boto3 client."""
+    client, boto_instance = s3_client_with_mock_boto
+    with patch("flip_api.utils.s3_client.boto3.client") as mock_boto:
+        client.get_presigned_url("s3://bucket/key")
+        client.get_presigned_url("s3://bucket/key", audience=PresignAudience.INTERNAL)
+        client.get_put_presigned_post("s3://bucket/key", max_bytes=10)
+    mock_boto.assert_not_called()
+    assert boto_instance.generate_presigned_url.call_count == 2
+    boto_instance.generate_presigned_post.assert_called_once()
 
 
 def test_get_put_presigned_post_passes_size_cap_into_conditions(s3_client_with_mock_boto):
