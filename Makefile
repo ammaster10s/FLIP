@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
+.PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
@@ -75,8 +75,13 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
+# The host's AWS credentials enter the dev stack through one overlay, and only when the
+# env file names a profile (FLIP#1291): the stack itself needs no AWS account, and the
+# Cognito / SES dev opt-ins are what the mounted SSO session is for. Development only —
+# the production composes mount nothing and authenticate through the task role.
+AWS_OVERLAY_COMPOSE := $(if $(and $(filter development,$(ENV)),$(strip $(AWS_PROFILE))),-f deploy/compose.development.aws.yml,)
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(AWS_OVERLAY_COMPOSE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(AWS_OVERLAY_COMPOSE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
 # `docker logs flip-api` names nothing on any stack.
@@ -133,7 +138,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -265,6 +270,12 @@ down:
 
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
+
+# Empty the dev object store (FLIP#1291): stop the RustFS service and remove its named
+# volume. `make down` keeps the volume, like every other one; this is the purge knob.
+clean-object-store:
+	${DOCKER_COMMAND} rm -sf object-store object-store-init
+	docker volume rm $(COMPOSE_PROJECT)_object_store_data
 
 # Clean Docker resources
 clean:
@@ -627,8 +638,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
-		echo "   (S3 still needs AWS for the full stack. Sign-in does not: 'make central-hub' boots"; \
-		echo "    the hub against the local Keycloak with no AWS account — see AUTH_BACKEND in .env.development.example.)"; \
+		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. It guards the"; \
+		echo "    AWS-backed targets — deploy/providers/AWS, FL kit uploads, the trusts' artifact fetches.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

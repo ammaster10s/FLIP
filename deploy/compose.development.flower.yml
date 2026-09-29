@@ -29,13 +29,11 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
-      # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the FL API
-      # may download an app bundle from. flip-api pins AWS_ENDPOINT_URL_S3 to the regional
-      # endpoint (see its service block), which makes boto3 presign PATH-STYLE URLs — host
-      # exactly s3.<region>.amazonaws.com, bucket in the path — so the same AWS_REGION derives
-      # the one origin to admit. The two lines must move together, or every bundle download 400s.
-      # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
-      - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+      # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
+      # FL API may download an app bundle from — the dev object store flip-api presigns bundle
+      # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
+      # object-store:9000). The two lines must move together, or every bundle download 400s.
+      - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
@@ -70,8 +68,8 @@ services:
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
-      # Bundle-fetch origin allow-list, derived from AWS_REGION like fl-api-net-1 (FLIP#905).
-      - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+      # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
+      - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app/src
@@ -95,24 +93,14 @@ services:
 
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read BOTH the host-provisioned
-    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
-    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
-    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
-    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
-    # see deploy/compose.development.nvflare.yml) rather than running as root
-    # — that approach doesn't apply here because it's the 0640 TLS keys, not
-    # just the SSO cache, that need the override. Prod uses an ECS task IAM
-    # role (no mounted creds), so this root override is confined to dev compose.
+    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
+    # keys, which the app user (uid 49999) cannot. The other reason this override
+    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
+    # object store with static keys (FLIP#1291), so a group_add on the kit's gid
+    # could now replace root here; that is a follow-up, not this change. Prod uses
+    # an ECS task IAM role, so the override is confined to the dev compose.
     user: "0:0"
     volumes:
-      # Mount the host AWS credentials (needed to upload model results to S3). The image
-      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
-      # Running as root with DAC_OVERRIDE (granted below — cap_drop: ALL strips root's
-      # implicit DAC bypass), it reads the 0640 key + 0600 SSO token there.
-      # sso/cache is rw so boto3 can refresh the cached token in place.
-      - ~/.aws/config:/app/.aws/config:ro
-      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
@@ -127,7 +115,16 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
+      # env is right here, the fl-server has no other AWS use. Same variables as the store.
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      - AWS_DEFAULT_REGION=${AWS_REGION}
+    depends_on:
+      # The results bucket must exist before the first upload (FLIP#1291).
+      object-store-init:
+        condition: service_completed_successfully
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -147,8 +144,8 @@ services:
     cap_add:
       - CHOWN
       # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
-      # bypass is itself a capability, and it is dropped here (FLIP#485).
+      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
+      # capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
@@ -195,24 +192,14 @@ services:
 
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read BOTH the host-provisioned
-    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
-    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
-    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
-    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
-    # see deploy/compose.development.nvflare.yml) rather than running as root
-    # — that approach doesn't apply here because it's the 0640 TLS keys, not
-    # just the SSO cache, that need the override. Prod uses an ECS task IAM
-    # role (no mounted creds), so this root override is confined to dev compose.
+    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
+    # keys, which the app user (uid 49999) cannot. The other reason this override
+    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
+    # object store with static keys (FLIP#1291), so a group_add on the kit's gid
+    # could now replace root here; that is a follow-up, not this change. Prod uses
+    # an ECS task IAM role, so the override is confined to the dev compose.
     user: "0:0"
     volumes:
-      # Mount the host AWS credentials (needed to upload model results to S3). The image
-      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
-      # Running as root with DAC_OVERRIDE (granted below — cap_drop: ALL strips root's
-      # implicit DAC bypass), it reads the 0640 key + 0600 SSO token there.
-      # sso/cache is rw so boto3 can refresh the cached token in place.
-      - ~/.aws/config:/app/.aws/config:ro
-      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
@@ -227,7 +214,16 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
+      # env is right here, the fl-server has no other AWS use. Same variables as the store.
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      - AWS_DEFAULT_REGION=${AWS_REGION}
+    depends_on:
+      # The results bucket must exist before the first upload (FLIP#1291).
+      object-store-init:
+        condition: service_completed_successfully
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -247,8 +243,8 @@ services:
     cap_add:
       - CHOWN
       # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
-      # bypass is itself a capability, and it is dropped here (FLIP#485).
+      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
+      # capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
     # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:

@@ -129,6 +129,83 @@ services:
     networks:
       - default
 
+  # The dev object store (FLIP#1291): an S3-compatible RustFS container standing in for
+  # the AWS S3 buckets, so model uploads and scanning, FL app bundles, and results need no
+  # AWS account. Every service reaches it through boto3's native AWS_ENDPOINT_URL_S3 with
+  # the static keys below — the same code paths production runs against S3, nothing
+  # dev-specific in flip-api or flip-utils beyond the two S3_* settings (flip-api/AGENTS.md).
+  # Port 9000 is published because SigV4 signs the host: a presigned URL the browser or a
+  # host-side script opens is signed for localhost:${OBJECT_STORE_PORT} (flip-api's
+  # S3_PUBLIC_ENDPOINT_URL), while the fl-api fetches bundles at object-store:9000 over the
+  # docker network. The console on 9001 (loopback only; sign in with the two keys) is how
+  # to browse objects — RustFS's on-disk layout is erasure-coded, not plain files, which is
+  # also why the data lives in a named volume rather than a host directory.
+  # `make clean-object-store` empties it; `make down` keeps it, like every other volume.
+  object-store:
+    image: rustfs/rustfs:1.0.0
+    ports:
+      - "${OBJECT_STORE_PORT:-9000}:9000"
+      - "127.0.0.1:${OBJECT_STORE_CONSOLE_PORT:-9001}:9001"
+    environment:
+      # Dev-only placeholders, shared with flip-api (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY),
+      # the fl-servers (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) and object-store-init
+      # below, all from the same two variables so one override moves every consumer.
+      - RUSTFS_ACCESS_KEY=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - RUSTFS_SECRET_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      # The browser posts presigned uploads and fetches presigned downloads straight from
+      # the store, so it must answer CORS for the UI origin. RustFS sends no CORS headers
+      # unless told to (MinIO used to reflect any origin).
+      - RUSTFS_CORS_ALLOWED_ORIGINS=http://localhost:${UI_PORT:?UI_PORT must be set in the env file}
+    volumes:
+      - object_store_data:/data
+    healthcheck:
+      # The image ships curl; /health answers 200 once the store serves requests.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    networks:
+      - default
+
+  # One-shot: create the three buckets the *_BUCKET settings name, then exit. RustFS has no
+  # "default buckets" setting, so this stands in for it. It runs the flip-api image (boto3
+  # is already there) with the bootstrap script bind-mounted, the way the Keycloak realm
+  # file is — no product code, and nothing dev-only inside the image. flip-api and both
+  # fl-servers wait for it to complete successfully, so a store that refuses the keys
+  # stops the stack here, with the reason in this service's log, rather than at the first
+  # upload.
+  object-store-init:
+    image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
+    pull_policy: always
+    build:
+      context: ../flip-api
+      additional_contexts:
+        fl_apps: ../fl-apps
+      dockerfile: Dockerfile
+      target: development
+    user: "${UID}:${GID}"
+    entrypoint: ["python", "/create_buckets.py"]
+    volumes:
+      - ./object-store/create_buckets.py:/create_buckets.py:ro
+    environment:
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      - AWS_DEFAULT_REGION=${AWS_REGION}
+      - BUCKETS=${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME},${FLIP_FL_RESULTS_BUCKET_NAME},${FLIP_APP_BUNDLES_BUCKET_NAME}
+    depends_on:
+      object-store:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+
   flip-api:
     platform: linux/x86_64
     # Pull the pre-built GHCR image by default (pull_policy: always); the local
@@ -139,8 +216,8 @@ services:
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
     # Run the image as the HOST uid so it can write the host-owned bind mounts
-    # (src/, ~/.aws). Paired with the HOME/UV_* env below so it never writes the
-    # image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
+    # (src/, and ~/.aws under the AWS overlay). Paired with the HOME/UV_* env below
+    # so it never writes the image-owned .venv. Applies equally to a pulled image and a BUILD=true one:
     # since FLIP#1171 both bake flip/1000/1000, so neither is host-uid by itself.
     user: "${UID}:${GID}"
     build:
@@ -172,6 +249,9 @@ services:
       keycloak:
         condition: service_healthy
         required: false
+      # The buckets must exist before the first upload or bundle write (FLIP#1291).
+      object-store-init:
+        condition: service_completed_successfully
     volumes:
       - ../flip-api/src/:/app/src/
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
@@ -180,8 +260,9 @@ services:
       # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
       # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
       - ../fl-apps/:/app/fl-apps/
-      - ~/.aws/config:/home/flip/.aws/config:ro
-      - ~/.aws/sso/cache:/home/flip/.aws/sso/cache:rw
+      # No ~/.aws here: the dev stack reaches no AWS service (FLIP#1291). The Cognito and
+      # SES dev opt-ins get the operator's SSO session through compose.development.aws.yml,
+      # which the Makefile appends when AWS_PROFILE is set.
     # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
     # credentials, and nothing on the FL data plane calls it. The traffic that looks like
     # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
@@ -196,8 +277,8 @@ services:
       - ENV=development
       # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
       # the runtime editable install (UV_NO_SYNC) so the host-uid process never
-      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
-      # matches the ~/.aws mount path below so boto3 still finds credentials.
+      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME is
+      # also where the AWS overlay mounts ~/.aws, so boto3 finds a profile there.
       - HOME=/home/flip
       # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises.
       # getpass.getuser() consults these first (FLIP#1171). Latent here today —
@@ -224,19 +305,20 @@ services:
       # diagnostics are still visible during development.
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - DEBUG=${DEBUG}
-      - AWS_PROFILE=${AWS_PROFILE}
+      # SigV4 needs a region even against RustFS, which accepts any.
       - AWS_REGION=${AWS_REGION}
-      # Force boto3 to mint presigned URLs against the regional S3 endpoint
-      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
-      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
-      # region can take up to ~24h to propagate on the global endpoint — see
-      # the matching note in compose.production.yml for the FLIP#24 incident
-      # that surfaced this. Regional endpoints never have this lag and are
-      # AWS's recommended path for non-us-east-1 buckets anyway.
-      # See compose.production.yml for the `:?` rationale (load-bearing guard).
-      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_ORIGINS (compose.development.<backend>.yml)
-      # is exactly s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
-      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+      # Object storage is the RustFS service above (FLIP#1291), reached through boto3's
+      # native endpoint env — the production composes point the same variable at the
+      # regional S3 endpoint. The fl-api's BUNDLE_URL_ALLOWED_ORIGINS
+      # (compose.development.<backend>.yml) names this same origin, because bundle URLs
+      # are presigned against it and the fl-api admits nothing else.
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      # Browser- and host-bound presigned URLs are signed for the published port, and the
+      # store's keys are S3-scoped settings rather than generic AWS env so they never
+      # shadow a mounted profile (flip-api/AGENTS.md). Same variables as the store itself.
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:${OBJECT_STORE_PORT:-9000}
+      - S3_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - S3_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       # Identity provider (FLIP#919). Left unset, DevSettings picks the local
       # Keycloak below and needs no AWS account to sign in; AUTH_BACKEND=cognito
       # in .env.development selects the dev Cognito pool instead (then the two
@@ -367,6 +449,7 @@ services:
 
 volumes:
   pgadmin_data:
+  object_store_data:
 
 # Every network here is created outside compose by `make create-networks` —
 # trust-network-* as swarm overlays (`--driver overlay --attachable`) because the
