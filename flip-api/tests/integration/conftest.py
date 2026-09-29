@@ -132,12 +132,19 @@ def aws_mock() -> Generator[None, None, None]:
     settings = get_settings()
     prior_region = settings.AWS_REGION
     settings.AWS_REGION = "us-east-1"
+    # DevSettings signs browser-bound presigned URLs for the dev object store's published
+    # port (S3_PUBLIC_ENDPOINT_URL, FLIP#1291) through a second client with an explicit
+    # endpoint, which moto — an interceptor on the vanilla client — never sees. Unset it so
+    # every audience signs against the intercepted client, as production does.
+    prior_public_endpoint = settings.S3_PUBLIC_ENDPOINT_URL
+    settings.S3_PUBLIC_ENDPOINT_URL = None
 
     with mock_aws():
         try:
             yield
         finally:
             settings.AWS_REGION = prior_region
+            settings.S3_PUBLIC_ENDPOINT_URL = prior_public_endpoint
             for k, v in prior.items():
                 if v is None:
                     os.environ.pop(k, None)
