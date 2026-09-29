@@ -28,7 +28,6 @@ on:
       - "fl-apps/**"
       - "deploy/compose.development.yml"
       - "deploy/keycloak/**"
-      - "deploy/object-store/**"
       - "deploy/instance.mk"
       - "deploy/env_mode.mk"
       - "deploy/fl_backend.mk"
@@ -56,7 +55,6 @@ jobs:
         fl-apps/**
         deploy/compose.development.yml
         deploy/keycloak/**
-        deploy/object-store/**
         deploy/instance.mk
         deploy/env_mode.mk
         deploy/fl_backend.mk
@@ -106,14 +104,19 @@ jobs:
 
       - name: Build flip-api from this checkout
         # Not the GHCR image: a dependency change in pyproject/uv.lock lives in the image
-        # layer, and this job must test the branch. No registry login needed. The
-        # object-store-init one-shot runs the same image (same name and tag), so one build
-        # covers both.
+        # layer, and this job must test the branch. No registry login needed.
         run: $COMPOSE --env-file .env.development build flip-api
 
+      - name: Object store bucket directories
+        # A top-level directory under RustFS's data dir is a bucket. `make up` does this
+        # (_ensure-object-store-dir); this job drives compose directly, so it does it here.
+        run: |
+          for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do
+            mkdir -p "object-store/$(sed -n "s/^$var=//p" .env.development)"
+          done
+
       - name: Start flip-db, keycloak, the object store and flip-api
-        # flip-api waits for object-store-init (the bucket bootstrap) to complete.
-        run: $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak object-store object-store-init flip-api
+        run: $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak object-store flip-api
 
       - name: Wait for the hub
         run: |

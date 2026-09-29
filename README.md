@@ -92,8 +92,9 @@ UI ports" in [deploy/providers/AWS/dev/README.md](deploy/providers/AWS/dev/READM
 To boot only the hub — Keycloak, the database, the object store and the API, enough to sign in, upload model
 files and develop against — use `make central-hub` (or `make up-no-trust` to include the FL server side). Neither
 needs an AWS account, and neither does the hub half of `make up`: the AWS CLI is only for the Trusts' artifact
-fetches. Model files, app bundles and results sit in the `object-store` container (browse it at
-`http://localhost:9001` with the keys from the compose; `make clean-object-store` empties it).
+fetches. Model files, app bundles and results sit in the `object-store` container, whose data is
+`./object-store/` (one directory per bucket; browse it at `http://localhost:9001` with the keys from the
+compose; `make clean-object-store` empties it).
 
 ### Load the OMOP vocabulary
 

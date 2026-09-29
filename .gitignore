@@ -427,6 +427,8 @@ CONTEXT.md
 
 # Federated learning runtime directories (at repo root)
 jobs/
+# The dev object store's data (FLIP#1291): one directory per bucket, host-owned.
+object-store/
 
 trust/orthanc/orthanc-storage/
 

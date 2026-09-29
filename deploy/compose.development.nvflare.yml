@@ -128,9 +128,9 @@ services:
       - USER=flip
       - LOGNAME=flip
     depends_on:
-      # The results bucket must exist before the first upload (FLIP#1291).
-      object-store-init:
-        condition: service_completed_successfully
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
     # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
     # matching uid can read and write it (the 0600 SSO token that once shared this
@@ -194,9 +194,9 @@ services:
       - USER=flip
       - LOGNAME=flip
     depends_on:
-      # The results bucket must exist before the first upload (FLIP#1291).
-      object-store-init:
-        condition: service_completed_successfully
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
     # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
     # matching uid can read and write it (the 0600 SSO token that once shared this

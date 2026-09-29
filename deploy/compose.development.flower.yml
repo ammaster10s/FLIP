@@ -122,9 +122,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION}
     depends_on:
-      # The results bucket must exist before the first upload (FLIP#1291).
-      object-store-init:
-        condition: service_completed_successfully
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -221,9 +221,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION}
     depends_on:
-      # The results bucket must exist before the first upload (FLIP#1291).
-      object-store-init:
-        condition: service_completed_successfully
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt

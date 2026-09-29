@@ -134,22 +134,26 @@ services:
   # AWS account. Every service reaches it through boto3's native AWS_ENDPOINT_URL_S3 with
   # the static keys below — the same code paths production runs against S3, nothing
   # dev-specific in flip-api or flip-utils beyond the two S3_* settings (flip-api/AGENTS.md).
+  # Its data dir is the host-owned ./object-store/ (gitignored; OBJECT_STORE_DIR): a
+  # top-level directory there IS a bucket, so `make up` pre-creates one per *_BUCKET_NAME
+  # (_ensure-object-store-dir, the jobs/ idiom) and no bootstrap service is needed; the
+  # container runs as the host uid so it can write what the host created, and
+  # `ls object-store/<bucket>/` shows the key tree (each object in RustFS's own format).
   # Port 9000 is published because SigV4 signs the host: a presigned URL the browser or a
   # host-side script opens is signed for localhost:${OBJECT_STORE_PORT} (flip-api's
   # S3_PUBLIC_ENDPOINT_URL), while the fl-api fetches bundles at object-store:9000 over the
-  # docker network. The console on 9001 (loopback only; sign in with the two keys) is how
-  # to browse objects — RustFS's on-disk layout is erasure-coded, not plain files, which is
-  # also why the data lives in a named volume rather than a host directory.
-  # `make clean-object-store` empties it; `make down` keeps it, like every other volume.
+  # docker network. The console on 9001 (loopback only; sign in with the two keys) browses
+  # objects. `make clean-object-store` empties the directory; `make down` keeps it.
   object-store:
     image: rustfs/rustfs:1.0.0
+    user: "${UID}:${GID}"
     ports:
       - "${OBJECT_STORE_PORT:-9000}:9000"
       - "127.0.0.1:${OBJECT_STORE_CONSOLE_PORT:-9001}:9001"
     environment:
-      # Dev-only placeholders, shared with flip-api (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY),
-      # the fl-servers (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) and object-store-init
-      # below, all from the same two variables so one override moves every consumer.
+      # Dev-only placeholders, shared with flip-api (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY)
+      # and the fl-servers (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), all from the same
+      # two variables so one override moves every consumer.
       - RUSTFS_ACCESS_KEY=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - RUSTFS_SECRET_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       # The browser posts presigned uploads and fetches presigned downloads straight from
@@ -157,9 +161,12 @@ services:
       # unless told to (MinIO used to reflect any origin).
       - RUSTFS_CORS_ALLOWED_ORIGINS=http://localhost:${UI_PORT:?UI_PORT must be set in the env file}
     volumes:
-      - object_store_data:/data
+      # Relative to this file's directory, like the other bind mounts; make passes it absolute.
+      - ${OBJECT_STORE_DIR:-../object-store}:/data
     healthcheck:
-      # The image ships curl; /health answers 200 once the store serves requests.
+      # The image ships curl; /health answers 200 once the store serves requests. (Under the
+      # host uid the image's /logs is not writable — RustFS then logs to stdout, which is
+      # what `docker compose logs` wants anyway; the one WARN at boot says so.)
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 3s
       timeout: 3s
@@ -168,41 +175,6 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
-    networks:
-      - default
-
-  # One-shot: create the three buckets the *_BUCKET settings name, then exit. RustFS has no
-  # "default buckets" setting, so this stands in for it. It runs the flip-api image (boto3
-  # is already there) with the bootstrap script bind-mounted, the way the Keycloak realm
-  # file is — no product code, and nothing dev-only inside the image. flip-api and both
-  # fl-servers wait for it to complete successfully, so a store that refuses the keys
-  # stops the stack here, with the reason in this service's log, rather than at the first
-  # upload.
-  object-store-init:
-    image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
-    pull_policy: always
-    build:
-      context: ../flip-api
-      additional_contexts:
-        fl_apps: ../fl-apps
-      dockerfile: Dockerfile
-      target: development
-    user: "${UID}:${GID}"
-    entrypoint: ["python", "/create_buckets.py"]
-    volumes:
-      - ./object-store/create_buckets.py:/create_buckets.py:ro
-    environment:
-      - AWS_ENDPOINT_URL_S3=http://object-store:9000
-      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
-      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
-      - AWS_DEFAULT_REGION=${AWS_REGION}
-      - BUCKETS=${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME},${FLIP_FL_RESULTS_BUCKET_NAME},${FLIP_APP_BUNDLES_BUCKET_NAME}
-    depends_on:
-      object-store:
-        condition: service_healthy
-    restart: "no"
-    security_opt:
-      - no-new-privileges:true
     networks:
       - default
 
@@ -249,9 +221,9 @@ services:
       keycloak:
         condition: service_healthy
         required: false
-      # The buckets must exist before the first upload or bundle write (FLIP#1291).
-      object-store-init:
-        condition: service_completed_successfully
+      # The store must serve before the first upload or bundle write (FLIP#1291).
+      object-store:
+        condition: service_healthy
     volumes:
       - ../flip-api/src/:/app/src/
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
@@ -449,7 +421,6 @@ services:
 
 volumes:
   pgadmin_data:
-  object_store_data:
 
 # Every network here is created outside compose by `make create-networks` —
 # trust-network-* as swarm overlays (`--driver overlay --attachable`) because the

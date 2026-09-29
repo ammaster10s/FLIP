@@ -58,6 +58,13 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
+# The dev object store's data directory (FLIP#1291), bind-mounted into the RustFS
+# container: one sub-directory per bucket — that is how RustFS defines a bucket — created
+# by _ensure-object-store-dir before the store starts, the jobs/ idiom. Exported so the
+# compose sees the absolute path.
+OBJECT_STORE_DIR ?= object-store
+override OBJECT_STORE_DIR := $(call abs_or_relative_to,$(OBJECT_STORE_DIR),$(MAKEFILE_DIR))
+export OBJECT_STORE_DIR
 
 # Service configuration
 define SERVICE_CONFIG
@@ -138,7 +145,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -183,7 +190,7 @@ _check-fl-provisioned:
 		scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -202,7 +209,7 @@ up-trust-ec2: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-central-hub: create-networks-centralhub
+central-hub: create-networks-centralhub _ensure-object-store-dir
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
@@ -271,11 +278,22 @@ down:
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
-# Empty the dev object store (FLIP#1291): stop the RustFS service and remove its named
-# volume. `make down` keeps the volume, like every other one; this is the purge knob.
+# Pre-create the object store's bucket directories, host-owned, before RustFS starts
+# (FLIP#1291): a top-level directory under its data dir IS a bucket, the container runs as
+# the host uid (`user:` in the compose) so it can write what the host created, and docker
+# would otherwise create the mount source root-owned. Idempotent; the three names are the
+# *_BUCKET_NAME values the hub's s3:// settings are built from.
+_ensure-object-store-dir:
+	@for bucket in "$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)" "$(FLIP_FL_RESULTS_BUCKET_NAME)" "$(FLIP_APP_BUNDLES_BUCKET_NAME)"; do \
+		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: a *_BUCKET_NAME is empty in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
+		mkdir -p "$(OBJECT_STORE_DIR)/$$bucket"; \
+	done
+
+# Empty the dev object store (FLIP#1291): stop the RustFS service and remove its host
+# directory. `make down` keeps the directory, like the jobs/ dir; this is the purge knob.
 clean-object-store:
-	${DOCKER_COMMAND} rm -sf object-store object-store-init
-	docker volume rm $(COMPOSE_PROJECT)_object_store_data
+	${DOCKER_COMMAND} rm -sf object-store
+	rm -rf "$(OBJECT_STORE_DIR)"
 
 # Clean Docker resources
 clean:

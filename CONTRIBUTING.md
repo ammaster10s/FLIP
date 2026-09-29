@@ -247,13 +247,15 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
-[RustFS](https://github.com/rustfs/rustfs) container, and `object-store-init`, a one-shot that creates the three
-buckets; flip-api, both fl-servers and the fl-apis reach it through boto3's native `AWS_ENDPOINT_URL_S3` with static
-dev keys, so model uploads and scanning, FL app bundles, training and results download run the same code as
-production, against a local store. Browse it at `http://localhost:9001` (sign in with the two keys from
+[RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
+top-level directory there is a bucket, so `make up` pre-creates one per bucket name before the store starts, the way
+it pre-creates `jobs/`. flip-api, both fl-servers and the fl-apis reach it through boto3's native
+`AWS_ENDPOINT_URL_S3` with static dev keys, so model uploads and scanning, FL app bundles, training and results
+download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
+(each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
 `deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
 `OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
-`OBJECT_STORE_CONSOLE_PORT`. Two details are worth knowing. Presigned URLs are signed for the host they will be
+`OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). Two details are worth knowing. Presigned URLs are signed for the host they will be
 opened from: the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
 which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). And the store's keys are
 S3-scoped flip-api settings (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`), never generic `AWS_*` env, so they cannot
