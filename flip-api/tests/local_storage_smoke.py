@@ -65,6 +65,8 @@ def _json_request(method: str, url: str, *, bearer: dict[str, str], body: Any = 
             raw, status = response.read(), response.status
     except urllib.error.HTTPError as exc:
         raw, status = exc.read(), exc.code
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SmokeFailure(f"{method} {url}: could not connect — {exc}") from exc
     try:
         return status, json.loads(raw) if raw else None
     except ValueError:
@@ -77,8 +79,11 @@ def _expect_created(status: int, what: str, body: Any) -> None:
         raise SmokeFailure(f"{what}: expected HTTP 200/201, got {status}: {body}")
 
 
-def _post_multipart(url: str, fields: dict[str, str], file_name: str, content: bytes) -> int:
-    """POST a presigned policy's fields plus the file, the file last, as the browser's FormData does."""
+def _post_multipart(url: str, fields: dict[str, str], file_name: str, content: bytes, origin: str) -> int:
+    """POST a presigned policy's fields plus the file, the file last, as the browser's FormData does.
+
+    Sent with the UI's ``Origin`` like a browser would, so the store's CORS answer is checked on the way.
+    """
     boundary = f"----flip-smoke-{uuid.uuid4().hex}"
     parts = []
     for name, value in fields.items():
@@ -91,28 +96,60 @@ def _post_multipart(url: str, fields: dict[str, str], file_name: str, content: b
     )
     parts.append(f"--{boundary}--\r\n".encode())
     request = urllib.request.Request(
-        url, data=b"".join(parts), method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        url,
+        data=b"".join(parts),
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": origin},
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
+            _expect_cors(response.headers.get("Access-Control-Allow-Origin"), origin, "presigned POST")
             return response.status
     except urllib.error.HTTPError as exc:
         print(exc.read().decode(errors="replace")[:500])
         return exc.code
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SmokeFailure(f"POST {url}: could not connect (is OBJECT_STORE_PORT published there?) — {exc}") from exc
 
 
-def _fetch(url: str) -> tuple[int, bytes]:
+def _expect_cors(allow_origin: str | None, origin: str, what: str) -> None:
+    """The browser is the only consumer that sends a preflight, and it is not in CI: check the header here."""
+    if allow_origin != origin:
+        raise SmokeFailure(
+            f"{what}: Access-Control-Allow-Origin is {allow_origin!r}, expected {origin!r} — "
+            "the store's RUSTFS_CORS_ALLOWED_ORIGINS does not carry the UI origin"
+        )
+
+
+def _preflight(url: str, origin: str, method: str) -> str | None:
+    """A browser's CORS preflight for ``method`` on ``url``; returns the allow-origin header (None when refused)."""
+    request = urllib.request.Request(
+        url, method="OPTIONS", headers={"Origin": origin, "Access-Control-Request-Method": method}
+    )
     try:
-        with urllib.request.urlopen(urllib.request.Request(url), timeout=60) as response:
-            return response.status, response.read()
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.headers.get("Access-Control-Allow-Origin")
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
+        return exc.headers.get("Access-Control-Allow-Origin")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SmokeFailure(f"OPTIONS {url}: could not connect — {exc}") from exc
+
+
+def _fetch(url: str, origin: str) -> tuple[int, bytes, str | None]:
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"Origin": origin}), timeout=60) as response:
+            return response.status, response.read(), response.headers.get("Access-Control-Allow-Origin")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers.get("Access-Control-Allow-Origin")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SmokeFailure(f"GET {url}: could not connect — {exc}") from exc
 
 
 def _file_status(api: str, bearer: dict[str, str], model_id: str) -> str | None:
+    """The file's scan status, or None while the hub has no row for it yet; any non-200 is a failure, not a wait."""
     status, step = _json_request("POST", f"{api}/step/model/{model_id}", bearer=bearer, body={})
     if status != 200:
-        return None
+        raise SmokeFailure(f"POST /step/model/{{id}} while waiting for the scan: HTTP {status}: {step}")
     return {f["name"]: f.get("status") for f in step.get("files", [])}.get(FILE_NAME)
 
 
@@ -175,7 +212,11 @@ def run(args: argparse.Namespace) -> None:
     _expect(status, 200, "POST /files/preSignedUrl", policy)
     if not policy["url"].startswith(args.public_store_url):
         raise SmokeFailure(f"upload URL {policy['url']!r} is not signed for {args.public_store_url!r}")
-    upload_status = _post_multipart(policy["url"], policy["fields"], FILE_NAME, FILE_BODY)
+    print("  🌐 The store answers the browser's CORS preflight for the UI origin only")
+    _expect_cors(_preflight(policy["url"], args.ui_origin, "POST"), args.ui_origin, "preflight")
+    if _preflight(policy["url"], "http://evil.example", "POST") == "http://evil.example":
+        raise SmokeFailure("the store reflects a foreign Origin: RUSTFS_CORS_ALLOWED_ORIGINS is too wide")
+    upload_status = _post_multipart(policy["url"], policy["fields"], FILE_NAME, FILE_BODY, args.ui_origin)
     if upload_status != 204:
         raise SmokeFailure(f"presigned POST: expected HTTP 204 from the store, got {upload_status}")
     print(f"  ✅ stored at {policy['url']}")
@@ -195,7 +236,10 @@ def run(args: argparse.Namespace) -> None:
             break
         time.sleep(3)
     if file_status != "COMPLETED":
-        raise SmokeFailure(f"file did not reach COMPLETED within {SCAN_TIMEOUT_S}s (last: {file_status!r})")
+        raise SmokeFailure(
+            f"file did not reach COMPLETED within {SCAN_TIMEOUT_S}s (last: {file_status!r}) — a promotion that "
+            "failed against the store stays SCANNING until the reconcile sweep; check `docker compose logs flip-api`"
+        )
     print("  ✅ COMPLETED")
 
     print("📥 Presigned GET returns the bytes that were uploaded")
@@ -203,15 +247,16 @@ def run(args: argparse.Namespace) -> None:
     _expect(status, 200, "GET /files/model/{id}/{file}", download)
     if not download["url"].startswith(args.public_store_url):
         raise SmokeFailure(f"download URL {download['url']!r} is not signed for {args.public_store_url!r}")
-    status, content = _fetch(download["url"])
+    status, content, allow_origin = _fetch(download["url"], args.ui_origin)
     if status != 200 or content != FILE_BODY:
         raise SmokeFailure(f"presigned GET: HTTP {status}, {len(content)} bytes (expected {len(FILE_BODY)})")
-    print("  ✅ bytes match")
+    _expect_cors(allow_origin, args.ui_origin, "presigned GET")
+    print("  ✅ bytes match, CORS answered for the UI origin")
 
     print("🗑️  Delete removes it from the store")
     status, body = _json_request("DELETE", f"{api}/files/model/{model_id}/{FILE_NAME}", bearer=bearer)
     _expect(status, 200, "DELETE /files/model/{id}/{file}", body)
-    status, _content = _fetch(download["url"])
+    status, _content, _allow_origin = _fetch(download["url"], args.ui_origin)
     if status != 404:
         raise SmokeFailure(f"object still served after delete: HTTP {status}")
     print("  ✅ gone")
@@ -230,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
     phase = parser.add_mutually_exclusive_group(required=True)
     phase.add_argument("--create-project", action="store_true", help="create the smoke project, print its id, exit")
     phase.add_argument("--project-id", help="an APPROVED project to run the file round trip on")
+    parser.add_argument(
+        "--ui-origin",
+        default="http://localhost:443",
+        help="the UI's browser origin (http://localhost:<UI_PORT>): the store must answer CORS for it, and only it",
+    )
     parser.add_argument(
         "--public-store-url",
         default="http://localhost:9000",
