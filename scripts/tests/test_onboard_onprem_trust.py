@@ -177,7 +177,7 @@ def test_7_site_privacy_rejects_unsupported_backend() -> None:
         SCRIPTS_DIR.parent,
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
-    _assert("ignored" in result.detail, "detail explains that Flower ignores the policy")
+    _assert("nothing on flower enforces it" in result.detail, "detail explains that Flower ignores the policy")
 
 
 def test_8_site_privacy_not_configured_reports_cleanly() -> None:
@@ -396,6 +396,83 @@ def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
     _assert(other.status == mod.Status.WARN, "an unrelated sha is still reported", other.detail)
 
 
+EXAMPLE_DOCUMENT = SCRIPTS_DIR.parent / "trust" / "governance.example.toml"
+
+
+def _document(text: str) -> str:
+    handle = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8")
+    handle.write(text)
+    handle.close()
+    return handle.name
+
+
+def test_20_governance_document_valid_passes_with_its_digest() -> None:
+    """The checklist that gates upgrade-onprem-trust validates the [disclosure]/[access] half."""
+    print("▶ valid governance document -> PASS, names the digest")
+    result = mod.check_governance_document(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("sha256 " in result.detail, "detail carries the digest the service logs", result.detail)
+
+
+def test_21_governance_document_below_the_floor_fails() -> None:
+    print("▶ governance document lowering the kit floor -> FAIL")
+    document = _document("[disclosure]\nmin_cohort_size = 5\n")
+    result = mod.check_governance_document(
+        {"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": "10"}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("below the configured COHORT_QUERY_THRESHOLD" in result.detail, "detail is the loader's", result.detail)
+
+
+def test_22_governance_document_not_configured_passes() -> None:
+    print("▶ no governance document -> PASS, platform defaults")
+    result = mod.check_governance_document({"COHORT_QUERY_THRESHOLD": "12"}, True, "TEST", SCRIPTS_DIR.parent)
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("COHORT_QUERY_THRESHOLD=12" in result.detail, "detail names the floor in force", result.detail)
+
+
+def test_23_site_privacy_reads_the_documents_section() -> None:
+    """A document with gamma = 0 used to PASS "no site privacy policy configured" here, then crash-loop the client."""
+    print("▶ fail-open gamma in the document -> FAIL")
+    document = _document('[fl_privacy.nvflare]\npolicy = "percentile"\ngamma = 0\n')
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": document}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("gamma" in result.detail, "detail names the parameter", result.detail)
+
+
+def test_24_site_privacy_in_both_sources_fails() -> None:
+    print("▶ filter in both the document and the kit -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT), "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("configured twice" in result.detail, "detail says why", result.detail)
+
+
+def test_25_documents_nvflare_section_on_flower_fails() -> None:
+    print("▶ [fl_privacy.nvflare] on a Flower trust -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "flower", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+
+
+def test_26_a_relative_document_resolves_against_trust() -> None:
+    """Compose resolves ACCESS_POLICY_FILE against trust/ (--project-directory trust); so does the checklist."""
+    print("▶ relative ACCESS_POLICY_FILE -> resolved against trust/")
+    result = mod.check_governance_document(
+        {"ACCESS_POLICY_FILE": "./governance.example.toml"}, True, "TEST", SCRIPTS_DIR.parent
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -419,6 +496,13 @@ def main() -> None:
     test_17_hub_shared_current_judges_the_kit_not_the_running_key()
     test_18_a_gate_never_suggests_a_command()
     test_19_hub_on_its_release_sha_build_is_not_behind()
+    test_20_governance_document_valid_passes_with_its_digest()
+    test_21_governance_document_below_the_floor_fails()
+    test_22_governance_document_not_configured_passes()
+    test_23_site_privacy_reads_the_documents_section()
+    test_24_site_privacy_in_both_sources_fails()
+    test_25_documents_nvflare_section_on_flower_fails()
+    test_26_a_relative_document_resolves_against_trust()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
