@@ -33,7 +33,7 @@ when not.
 import os
 import sys
 
-from data_access_api.policy import AccessPolicyError, describe_policy, load_policy
+from data_access_api.policy import AccessPolicyError, load_policy
 
 
 def main() -> int:
@@ -60,8 +60,6 @@ def main() -> int:
         scope = f"{len(rule.projects)} project(s)" if rule.projects else "all projects"
         extra = f", min_cohort_size={rule.min_cohort_size}" if rule.min_cohort_size is not None else ""
         print(f"     - {rule.id}: {rule.effect} {rule.action} for {scope}{extra}")
-    # The same line the service logs, so the two can be compared by eye after a reload.
-    print(f"   expect in data-access-api's startup log: {describe_policy(policy, floor=floor)}")
     return 0
 
 

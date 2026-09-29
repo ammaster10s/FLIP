@@ -75,7 +75,6 @@ def test_the_digest_printed_is_the_documents(monkeypatch, capsys, tmp_path) -> N
     assert code == 0, out
     digest = hashlib.sha256(document.read_bytes()).hexdigest()
     assert f"sha256: {digest}" in out
-    assert f"sha256={digest[:12]}" in out
 
 
 def test_an_invalid_document_fails_with_the_loaders_message(monkeypatch, capsys, tmp_path) -> None:

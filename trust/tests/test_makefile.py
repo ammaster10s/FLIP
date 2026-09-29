@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
-from make_dry_run import assert_data_safe, dry_run, kit_with, main  # noqa: E402
+from make_dry_run import KIT, assert_data_safe, dry_run, kit_with, main, run_target  # noqa: E402
 
 
 class UpgradeTrust(unittest.TestCase):
@@ -61,6 +61,74 @@ class UpgradeTrust(unittest.TestCase):
         out = dry_run("up-trust")
         assert "ensure-seeded" in out, out
         assert "up-xnat" in out, out
+
+
+GOVERNED_KIT = KIT + "ACCESS_POLICY_FILE=./governance.SCR.toml\n"
+FLOWER_GOVERNED_KIT = GOVERNED_KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower")
+
+
+class Governance(unittest.TestCase):
+    """check-governance / reload-governance and the remote-daemon refusal (FLIP#1259)."""
+
+    def test_check_governance_runs_both_checkers_without_syncing_a_project(self):
+        """`uv run` in a service directory installed nvflare/pandas/fastapi onto the trust host to
+        run stdlib-only modules. Both halves now run as files on a bare interpreter."""
+        out = dry_run("check-governance", kit=GOVERNED_KIT)
+        assert out.count("--no-project") == 2, out
+        assert "data-access-api/scripts/check_governance.py" in out, out
+        assert "flip-utils/flip/nvflare/site_policy.py --check --fl-backend nvflare" in out, out
+        assert "cd ../flip-utils" not in out, out
+        assert "cd data-access-api" not in out, out
+
+    def test_check_governance_forwards_every_site_privacy_name(self):
+        """Only the three known names were forwarded, so a misspelt one was never seen."""
+        kit = GOVERNED_KIT + "FL_SITE_PRIVACY_PERCENTIL=5\n"
+        out = dry_run("check-governance", kit=kit)
+        assert 'FL_SITE_PRIVACY_PERCENTIL="5"' in out, out
+
+    def test_check_governance_tells_the_renderer_the_backend(self):
+        out = dry_run("check-governance", kit=FLOWER_GOVERNED_KIT)
+        assert "--fl-backend flower" in out, out
+
+    def test_reload_governance_on_nvflare_re_extracts_for_the_clients(self):
+        out = dry_run("reload-governance", kit=GOVERNED_KIT)
+        assert "fl-governance-init" in out, out
+        assert "--force-recreate --pull never" in out, out
+        assert "[governance]" in out, out  # waits for the startup line
+        assert_data_safe(out, "reload-governance")
+
+    def test_reload_governance_on_flower_leaves_the_clients_alone(self):
+        """Nothing on Flower reads the document, so recreating its clients only killed their jobs."""
+        out = dry_run("reload-governance", kit=FLOWER_GOVERNED_KIT)
+        assert "fl-governance-init" not in out, out
+        assert 'services="data-access-api"' in out, out
+        assert 'if [ -n "" ]' in out, out  # the client branch is compiled out
+
+    def test_reload_governance_neither_pulls_nor_prepares_data_dirs(self):
+        """A policy edit must not swap the image (dev pull_policy: always) or touch data dirs."""
+        out = dry_run("reload-governance", kit=GOVERNED_KIT)
+        assert 'mkdir -p "$base/net-1"' not in out, out
+        assert " pull" not in out.replace("--pull never", ""), out
+
+    def test_up_fl_clients_kit_runs_the_extract_first(self):
+        """--no-deps skips dependencies, so the init must be named or the clients start on a stale extract."""
+        out = dry_run("up-fl-clients-kit", kit=GOVERNED_KIT)
+        assert "fl-governance-init fl-client-net-1 fl-client-net-2" in out, out
+
+    def test_a_governance_document_is_refused_over_a_remote_daemon(self):
+        """Compose resolves the document on this machine and the trust host would mount a path it
+        does not have (EC2 over DOCKER_CONTEXT=flip-trust)."""
+        for target in ("upgrade-trust", "up-trust-ec2"):
+            result = run_target(target, "YES=1", kit=GOVERNED_KIT, env={"DOCKER_HOST": "ssh://flip-trust"})
+            assert result.returncode != 0, (target, result.stdout)
+            assert "remote daemon (ssh://flip-trust)" in result.stdout, (target, result.stdout, result.stderr)
+        # reload-governance validates first (its prerequisite needs the real checkers), so its
+        # refusal is read off the recipe instead.
+        assert "points at a remote daemon" in dry_run("reload-governance", kit=GOVERNED_KIT)
+
+    def test_a_remote_daemon_without_a_document_is_not_refused(self):
+        out = run_target("upgrade-trust", "YES=1", dry=True, env={"DOCKER_HOST": "ssh://flip-trust"})
+        assert out.returncode == 0, out.stdout + out.stderr
 
 
 if __name__ == "__main__":

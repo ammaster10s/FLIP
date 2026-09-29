@@ -430,6 +430,7 @@ up-trust: require-xnat-aetitle create-networks
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(check_slot_not_taken)
+	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	@echo "$(GPU_STATUS_MSG)"
@@ -441,80 +442,134 @@ up-trust: require-xnat-aetitle create-networks
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
 # error here rather than from a container that refuses to come back up. Runs the real
-# loaders — the same code paths the services use at startup — so this cannot drift from
-# what is actually enforced.
+# loaders — the same code the services run at startup — so this cannot drift from what
+# is actually enforced.
 #
-# Both halves and both sources. The [disclosure]/[access] sections go through
-# data-access-api's loader, which accepts EITHER ACCESS_POLICY_FILE or the inline
-# ACCESS_POLICY — branching on the file alone reported an inline kit as having no document
-# at all, so its rules skipped validation entirely. [fl_privacy] goes through the
-# fl-client's own site_policy module, because it used to pass here and then fail closed
-# from a container that would not restart (as `[site-privacy] FATAL`).
+# Both halves: [disclosure]/[access] through data-access-api's loader, and the fl-client's
+# [fl_privacy.nvflare] through flip.nvflare.site_policy, which also fails a filter this
+# trust's FL_BACKEND would not enforce (Flower enforces none yet) and a filter set in both
+# the document and FL_SITE_PRIVACY_*. Every FL_SITE_PRIVACY_* name is forwarded, not only
+# the three the renderer knows, so a misspelt one is caught here.
 #
-# [fl_privacy] cannot be stated inline: the fl-client reads the document from
-# ACCESS_POLICY_FILE only, so check_governance.py refuses an inline document that carries
-# the section rather than let the fl-client ignore it silently.
+# The interpreter is the host's own Python >= 3.11 (tomllib) with no project sync: `uv run`
+# inside a service directory would first install that project's whole dependency set onto
+# the trust host — nvflare, pandas and boto3 for flip-utils; fastapi, sqlalchemy and
+# psycopg2 for data-access-api — to run modules that import only the standard library, and
+# on a firewalled host it fails instead. Both checkers are stdlib-only and run as files, as
+# `onboard-onprem-trust` runs the renderer.
+GOVERNANCE_PYTHON = uv run --no-config --no-project --python '>=3.11' python
+SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLES))),$(v)="$($(v))")
+# NVFLARE's fl-clients read their section through the one-shot fl-governance-init service
+# (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
+GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
+
 check-governance:
 	$(require_kit_file)
-ifeq ($(strip $(ACCESS_POLICY_FILE)$(ACCESS_POLICY)),)
-	@echo "ℹ️  No ACCESS_POLICY_FILE or ACCESS_POLICY set in trust/$(KIT_FILE) — no governance document to check."
+ifeq ($(strip $(ACCESS_POLICY_FILE)),)
+	@echo "ℹ️  No ACCESS_POLICY_FILE set in trust/$(KIT_FILE) — no governance document to check."
 	@echo "   Platform defaults apply: COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10) and FL_SITE_PRIVACY_* only."
 	@echo "   To adopt one, copy trust/governance.example.toml and point ACCESS_POLICY_FILE at it."
 else
 	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
-	@cd data-access-api && \
-	    ACCESS_POLICY_FILE="$(if $(strip $(ACCESS_POLICY_FILE)),$(abspath $(ACCESS_POLICY_FILE)),)" \
-	    ACCESS_POLICY="$(ACCESS_POLICY)" \
+	@ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
 	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
-	    PYTHONPATH=. uv run python scripts/check_governance.py
-	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader..."
-	@cd ../flip-utils && \
-	    ACCESS_POLICY_FILE="$(if $(strip $(ACCESS_POLICY_FILE)),$(abspath $(ACCESS_POLICY_FILE)),)" \
-	    FL_SITE_PRIVACY_POLICY="$(FL_SITE_PRIVACY_POLICY)" \
-	    FL_SITE_PRIVACY_PERCENTILE="$(FL_SITE_PRIVACY_PERCENTILE)" \
-	    FL_SITE_PRIVACY_GAMMA="$(FL_SITE_PRIVACY_GAMMA)" \
-	    uv run python -m flip.nvflare.site_policy --check /app/local/privacy.json
+	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/scripts/check_governance.py
+	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
+	@tmp=$$(mktemp -d) && trap 'rmdir "$$tmp"' EXIT && \
+	    ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" $(SITE_PRIVACY_KIT_ENV) \
+	    $(GOVERNANCE_PYTHON) ../flip-utils/flip/nvflare/site_policy.py --check --fl-backend $(FL_BACKEND) "$$tmp/privacy.json"
 endif
+
+# A governance document cannot reach a trust driven over a remote Docker endpoint (FLIP#1259).
+# Compose resolves ACCESS_POLICY_FILE on the machine running it — the operator's workstation —
+# and the daemon on the trust host then bind-mounts that path from its OWN filesystem, where it
+# does not exist, so data-access-api and the fl-client would fail closed on every start. The EC2
+# trusts (deploy-trust-ec2 / upgrade-trust-ec2, DOCKER_CONTEXT=flip-trust over ssh) are FLIP's
+# own mock trusts and do not support one; a real site runs compose on its own host.
+define refuse_remote_governance
+	@if [ -n "$(strip $(ACCESS_POLICY_FILE))" ]; then \
+	  host="$${DOCKER_HOST:-}"; \
+	  if [ -z "$$host" ] && [ -n "$${DOCKER_CONTEXT:-}" ]; then \
+	    host=$$(docker context inspect "$$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	  fi; \
+	  case "$$host" in ssh://*|tcp://*) \
+	    echo "❌ ACCESS_POLICY_FILE is set in trust/$(KIT_FILE), but Docker points at a remote daemon ($$host)."; \
+	    echo "   Compose would resolve the document on this machine, and the trust host would mount a path"; \
+	    echo "   it does not have. A governance document is not supported on a remotely driven trust (EC2):"; \
+	    echo "   run compose on the trust host itself, or unset ACCESS_POLICY_FILE."; \
+	    exit 1;; \
+	  esac; \
+	fi
+endef
 
 # Re-apply a changed governance document to a LIVE trust (FLIP#1259), touching no data.
 #
 # Deliberately NOT up-trust, and not restart-trust: up-trust is the first-install verb,
 # whose up-xnat step runs xnat-reset (wiping the XNAT archive and database) and whose
 # ensure-seeded step can replace the data volumes. A policy edit has no business going
-# anywhere near either.
+# anywhere near either. Nor does it pull images or pre-create data dirs: --pull never keeps
+# a dev compose's pull_policy: always from swapping the image under the edit, and the net
+# dirs of a live trust already exist (as in _upgrade-trust-apply).
 #
-# Only the two services that actually read the document are recreated — data-access-api
-# and the fl-clients; trust-api and imaging-api never open it. Each reads it at container
-# start, so a restart is what applies it.
+# Only the services that read the document are recreated: data-access-api, plus on NVFLARE
+# fl-governance-init and the fl-clients it extracts for. On Flower nothing else reads it, so
+# its clients — and their running jobs — are left alone. Each reads it at container start.
 #
 # --force-recreate, not a plain `up -d`: compose decides whether to recreate from the
 # service *config*, and an edited document changes the contents of a mounted file, not the
-# config. A plain `up -d` answers "up to date" and leaves the previous policy in memory —
-# the trust would keep enforcing the rules the operator has just replaced, which is the
-# one failure this feature cannot tolerate.
+# config. A plain `up -d` answers "up to date" and leaves the previous policy in memory.
 #
 # Validated first (check-governance is a prerequisite), so a document the services would
-# refuse never reaches them. Interrupts any job the fl-clients are running: apply between
-# runs.
+# refuse never reaches them. Then it waits for data-access-api's `[governance]` startup line
+# and compares its digest with the document's: an image that predates governance support
+# prints no such line, and a mismatch means the service is not reading this file — either is
+# a failure, not a ✅. On NVFLARE this interrupts any job the fl-clients are running: apply
+# between runs.
 reload-governance: check-governance
 	$(require_kit_file)
 	$(check_slot_not_taken)
+	$(refuse_remote_governance)
 	@echo "♻️  Re-applying the governance document to $(KIT)'s enforcing services (no data is touched)..."
-	$(ensure_net_dirs)
-	@clients=$$(${DOCKER_COMPOSE_CMD} config --services 2>/dev/null | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
-	  if [ -z "$$clients" ]; then \
-	    echo "❌ Could not resolve this deployment's fl-client services from the composed config,"; \
-	    echo "   so the [fl_privacy] half would not be re-applied — refusing to half-apply a policy."; \
-	    echo "   Check the stack resolves: docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
-	    echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
+	@services="data-access-api"; \
+	  if [ -n "$(GOVERNANCE_INIT)" ]; then \
+	    clients=$$(${DOCKER_COMPOSE_CMD} config --services 2>/dev/null | grep -x 'fl-client-net-[0-9]*' | tr '\n' ' '); \
+	    if [ -z "$$clients" ]; then \
+	      echo "❌ Could not resolve this deployment's fl-client services from the composed config,"; \
+	      echo "   so the [fl_privacy] half would not be re-applied — refusing to half-apply a policy."; \
+	      echo "   Check the stack resolves: docker compose --env-file $(KIT_FILE) --project-directory . \\"; \
+	      echo "       -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) config --services"; \
+	      exit 1; \
+	    fi; \
+	    services="$$services $(GOVERNANCE_INIT) $$clients"; \
+	  fi; \
+	  echo "   recreating: $$services"; \
+	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
+	    up -d --no-deps --force-recreate --pull never $$services
+	@echo "⏳ Waiting for data-access-api to report the policy it loaded..."
+	@doc="$(if $(strip $(ACCESS_POLICY_FILE)),$(abspath $(ACCESS_POLICY_FILE)))"; \
+	  want=""; \
+	  if [ -n "$$doc" ]; then want=$$( (sha256sum "$$doc" 2>/dev/null || shasum -a 256 "$$doc") | cut -c1-12); fi; \
+	  line=""; \
+	  for _ in $$(seq 1 30); do \
+	    line=$$($(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) logs --no-log-prefix data-access-api 2>/dev/null \
+	      | grep -o '\[governance\][^"]*' | tail -1); \
+	    [ -n "$$line" ] && break; \
+	    sleep 2; \
+	  done; \
+	  if [ -z "$$line" ]; then \
+	    echo "❌ data-access-api logged no [governance] line within 60 s. Either it failed to start, or its image"; \
+	    echo "   (DOCKER_TAG=$(DOCKER_TAG)) predates governance support and is ignoring the document. Look at:"; \
+	    echo "     docker compose -p $(TRUST_PROJECT) logs data-access-api"; \
 	    exit 1; \
 	  fi; \
-	  echo "   recreating: data-access-api $$clients"; \
-	  $(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) \
-	    up -d --no-deps --force-recreate data-access-api $$clients
-	@echo "✅ data-access-api and the fl-clients restarted against the current document."
-	@echo "   Confirm which source each is using: the data-access-api startup line names"
-	@echo "   ACCESS_POLICY/ACCESS_POLICY_FILE, and the fl-client logs '[site-privacy] ...'."
+	  echo "   $$line"; \
+	  if [ -z "$$want" ]; then \
+	    case "$$line" in *"no policy configured"*) echo "✅ No governance document: data-access-api runs on the platform defaults.";; \
+	      *) echo "❌ ACCESS_POLICY_FILE is unset, but data-access-api still reports a policy."; exit 1;; esac; \
+	  else \
+	    case "$$line" in *"sha256=$$want"*) echo "✅ data-access-api enforces the document you validated (sha256 $$want…)$(if $(GOVERNANCE_INIT),; the fl-clients re-read its [fl_privacy.nvflare] section (their logs name it as '[site-privacy] …').)";; \
+	      *) echo "❌ data-access-api reports a different document than $$doc (sha256 $$want…)."; exit 1;; esac; \
+	  fi
 
 down-trust:
 	$(require_kit)
@@ -548,6 +603,7 @@ restart-trust: down-trust up-trust
 upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
+	$(refuse_remote_governance)
 	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) PROD=$(PROD) DEBUG=$(DEBUG)
 
@@ -588,6 +644,7 @@ _upgrade-trust-apply:
 up-trust-ec2: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
+	$(refuse_remote_governance)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -641,7 +698,7 @@ up-fl-clients-kit:
 	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(ensure_net_dirs)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) $(GOVERNANCE_INIT) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
