@@ -276,6 +276,8 @@ make -C trust down-fl-clients-kit KIT=<CODE>  # Same, one kit
 make -C trust down-trust-ec2 KIT=<CODE>       # Stop trust services + XNAT on an EC2-hosted trust
 make -C trust debug-<SVC>          # Debug mode for one trust-internal service directly (SVC one of data-access-api, imaging-api, trust-api — what root `make debug` forwards to)
 make -C trust debug-<SVC>-off      # Stop it
+make -C trust check-governance KIT=<CODE>   # Validate the trust's governance document (FLIP#1259) — both halves, host Python, starts nothing
+make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ NVFLARE clients), checks the logged digest
 ```
 
 ### Site release upgrades (FLIP#1204)

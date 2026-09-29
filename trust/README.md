@@ -132,7 +132,7 @@ One file, three sections, each read by the service that enforces it:
 |---|---|---|
 | `[disclosure]` | data-access-api | `COHORT_QUERY_THRESHOLD` (may raise it, never lower it) |
 | `[access]` | data-access-api | nothing — new: permit/deny rules over project + operation |
-| `[fl_privacy]` | fl-client | `FL_SITE_PRIVACY_*` (wins when both are set; the log names the source) |
+| `[fl_privacy.nvflare]` | NVFLARE fl-client | `FL_SITE_PRIVACY_*` — an alternative to them, not an override: set the filter in one place, since both set stops the client |
 
 The document is **optional and additive**. Unset means the platform defaults apply and behaviour is
 exactly as before — the two variables above stay the only controls, so no existing trust has to
@@ -140,32 +140,46 @@ change anything. Nothing here can weaken a trust's posture: `min_cohort_size` ma
 threshold, and an action no rule mentions keeps its existing behaviour (which is what lets a trust
 adopt one rule without enumerating everything).
 
-Validation is strict and fails closed. An unknown key, a misspelt action, or a threshold below the
-kit's floor stops the service at startup rather than being ignored — a silently-dropped access rule
-is worse than no rule, because the operator believes it is in force. `check-governance` runs both
-halves through the loaders the services themselves use (data-access-api's for
-`[disclosure]`/`[access]`, the fl-client's own site-policy module for `[fl_privacy]`), so it cannot
-disagree with what the containers enforce — and the fl-client half can no longer pass here and then
-fail closed from a container that will not restart. Validate, then apply:
+Rules are decided the same way whatever their order: for an action the document mentions, any
+matching `deny` denies; otherwise the strictest matching `permit` permits; otherwise the request is
+denied. So a deny list needs a permit for everyone else (the example shows one). Mind what the
+actions gate: `cohort.dataframe` is the FL client's own training-data fetch, so denying it for a
+project stops that project's federated training at this trust; `cohort.accession_ids` decides whose
+imaging is pulled into XNAT, and only real accessions from `omop.image_occurrence` are ever returned.
+
+Validation is strict and fails closed. An unknown key, a misspelt action, a project id that is not a
+UUID, a rule with no `effect`, an empty file, or a threshold below the kit's floor stops the service
+at startup rather than being ignored — a silently-dropped access rule is worse than no rule, because
+the operator believes it is in force. `check-governance` runs both halves through the loaders the
+services themselves use (data-access-api's for `[disclosure]`/`[access]`, the fl-client's own
+site-policy module for `[fl_privacy.nvflare]`) on the host's own Python, installing nothing. It also
+fails a site privacy section on a Flower trust, where nothing enforces it yet (FLIP#852), and a
+filter set in both the document and `FL_SITE_PRIVACY_*`. Validate, then apply:
 
 ```sh
 make -C trust check-governance KIT=<CODE>
 make -C trust reload-governance KIT=<CODE>
 ```
 
-`reload-governance` is how an edit is applied: it recreates exactly the two services that read the
-document — data-access-api and the fl-clients — and touches no data. **Do not apply a policy change
-with `up-trust` or `restart-trust`**: both are first-install verbs, and on a live trust either can
-destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT archive and database, and
-its seeding step can replace the data volumes. Recreating the fl-clients does interrupt any job they
-are running, so apply between runs.
+`reload-governance` is how an edit is applied: it recreates data-access-api and, on NVFLARE, the
+fl-clients (with the step that extracts their section), and touches no data. It then waits for
+data-access-api's `[governance] policy ACTIVE … sha256=…` startup line and checks the digest is the
+document's, so an image too old to read the document fails the reload instead of passing it. **Do
+not apply a policy change with `up-trust` or `restart-trust`**: both are first-install verbs, and on
+a live trust either can destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT
+archive and database, and its seeding step can replace the data volumes. Recreating the fl-clients
+does interrupt any job they are running, so apply between runs.
 
-The document is mounted read-only — a service can never rewrite its own policy — and is
-operator-owned: the hub cannot set, read, or override it. On Kubernetes the chart carries the same
-document as its `governance.document` value, mounted read-only into the same two pods (see
-[deploy/helm/README.md](deploy/helm/README.md)). A denied request is answered with the same fixed
-refusal as a below-threshold cohort, so a caller cannot use it to probe the trust's configuration;
-the rule id that caused the denial goes to the trust's own log.
+The document is mounted read-only into data-access-api — a service can never rewrite its own policy —
+and is operator-owned: the hub cannot set, read, or override it. The fl-client never mounts it:
+researcher code runs there, so a one-shot `fl-governance-init` step writes only the
+`[fl_privacy]` section into the client's kit `local/` directory. On Kubernetes, `sync-kit` embeds the
+document from the kit's `ACCESS_POLICY_FILE` as the chart's `governance.document` (see
+[deploy/helm/README.md](deploy/helm/README.md)). A remotely driven trust (the EC2 path, over an ssh
+`DOCKER_CONTEXT`) cannot use a document: Compose would resolve the path on the workstation, so those
+targets refuse one. A denied request is answered with the same fixed refusal as a below-threshold
+cohort, so a caller cannot use it to probe the trust's configuration; the rule id that caused the
+denial goes to the trust's own log.
 
 ### 3. Start the trust against the hub
 

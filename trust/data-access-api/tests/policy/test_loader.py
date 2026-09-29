@@ -404,4 +404,25 @@ def test_shipped_example_document_is_valid():
     policy = parse_policy(example.read_text(encoding="utf-8"), floor=FLOOR, source=str(example))
 
     assert policy.min_cohort_size == 25
-    assert [r.id for r in policy.rules] == ["no-raw-export", "imaging-approved-projects"]
+    assert [r.id for r in policy.rules] == ["withdrawn-project-imaging", "imaging-for-everyone-else"]
+
+
+def test_the_shipped_example_leaves_fl_training_and_real_projects_alone():
+    """The example's first version denied cohort.dataframe — the FL client's own training fetch —
+    and allowlisted two placeholder projects for imaging, so a trust that copied it stopped FL
+    and every real imaging pull while its comments said training still worked."""
+    from pathlib import Path
+
+    from data_access_api.policy import ACTION_COHORT_ACCESSION_IDS, ACTION_COHORT_DATAFRAME, decide
+
+    example = Path(__file__).resolve().parents[3] / "governance.example.toml"
+    policy = parse_policy(example.read_text(encoding="utf-8"), floor=FLOOR, source=str(example))
+    real_project = {"project_id": P1}
+
+    training = decide({}, real_project, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    imaging = decide({}, real_project, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
+
+    assert training.permit is True
+    assert training.rule_id == "default.unmentioned"
+    assert imaging.permit is True
+    assert imaging.effective_threshold == 50

@@ -387,48 +387,53 @@ individual settings above. Three sections, each read by the service that enforce
 | Section | Read by | Effect |
 | ------- | ------- | ------ |
 | `[disclosure]` | data-access-api | `min_cohort_size` — may RAISE the kit's `COHORT_QUERY_THRESHOLD`, never lower it |
-| `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`) |
-| `[fl_privacy]` | fl-client (NVFLARE) | the site update-privacy filter — wins over `FL_SITE_PRIVACY_*`, and the client logs which source it used |
+| `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`), decided the same way whatever their order |
+| `[fl_privacy.nvflare]` | fl-client (NVFLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
 
 The document is **optional and additive**. Left empty — the default — the platform defaults apply
 exactly as before: no ConfigMap, no volume, no mount, no env var, and a default install's pod specs
 are the ones they were before this value existed. [`../../governance.example.toml`](../../governance.example.toml)
-is a worked example of every section.
+is a worked example of every section; [`trust/README.md`](../../README.md#trust-governance-policy-optional)
+explains how rules are decided.
 
 **How it reaches the pods.** The value is the document *itself*, not a path — a path on the deploy
 host means nothing inside a pod. The chart renders it into a ConfigMap
-(`<release>-flip-trust-governance`) and mounts it **read-only** at `/app/governance.toml` in both
-the `data-access-api` and the fl-client pods, with `ACCESS_POLICY_FILE` pointing at that path. The
-same filename is what the Compose stack mounts, so one document reads identically on either
-deployment shape; the file is operator-owned, and the hub can neither set nor read it. Both pod
-templates carry a `checksum/governance` annotation of the rendered ConfigMap, so editing the
-document rolls the pods — a ConfigMap content change restarts nothing by itself.
+(`<release>-flip-trust-governance`). `data-access-api` mounts it **read-only** at `/app/governance.toml`,
+with `ACCESS_POLICY_FILE` pointing there. The NVFLARE fl-client never mounts it — researcher code runs
+in that container — but its `governance-extract` init container, in the same image, writes the
+`[fl_privacy]` table alone to an emptyDir the client reads read-only; an invalid document fails the
+init container and the client does not start. The Flower client gets none of it. The file is
+operator-owned, and the hub can neither set nor read it.
 
-**To deploy one:**
+Pods roll on what they read: `data-access-api` carries a `checksum/governance` of the whole ConfigMap;
+the fl-client carries `governance.flPrivacyChecksum`, which sync-kit sets to the digest of its section
+alone, so an `[access]`-only edit leaves a running FL job alone. An edit to `[fl_privacy.nvflare]`
+does roll the fl-client and interrupts its job: apply one between runs.
+
+**To deploy one** — through the kit, not by hand:
 
 ```sh
-# 1. Validate first: the services fail closed, so find a typo here rather than in a container that
-#    then refuses to come back up. Covers both halves, through the loaders the services themselves
-#    run ([disclosure]/[access] via data-access-api, [fl_privacy] via the fl-client's site_policy).
-make -C trust check-governance KIT=<CODE>
+# 1. Point ACCESS_POLICY_FILE at the document in trust/.env.<CODE>.<env> (a path resolved against
+#    trust/, as Compose resolves it), then validate: both halves, through the loaders the services
+#    themselves run, including a site privacy section on a Flower trust and a filter in both places.
+make -C trust check-governance KIT=<CODE> PROD=<env>
 
-# 2. Carry the document in your own values override, then upgrade. --set-file reads the file's
-#    contents into the value; a values override with a `governance:` block works too.
-helm upgrade --install trust-release ./trust/deploy/helm/ -n flip-trust \
-  --set-file governance.document=trust/governance.<CODE>.toml
+# 2. Deploy. Both targets regenerate k8s-trust-<CODE>.yaml from the kit first: sync-kit embeds the
+#    document as governance.document, validates it again, writes flPrivacyChecksum, and carries the
+#    kit's COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* to the chart.
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>    # or upgrade-trust-k8s
 ```
 
-`make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` carries it as well: the kit's
-`ACCESS_POLICY_FILE` (a path resolved against `trust/` — the same base Compose's
-`--project-directory trust` resolves its own mount against) is read and embedded as
-`governance.document` in the generated `k8s-trust-<CODE>.yaml`. A document the sync cannot read
-fails the sync by name, rather than deploying a release that quietly keeps the platform defaults the
-operator believes their rules replaced.
+Do not set the document with `helm upgrade --set-file governance.document=…`. The next
+`deploy-trust-k8s` or `upgrade-trust-k8s` passes the `-f` files without `--reuse-values`, and a policy
+set that way silently disappears from the release. A document the sync cannot read, or one the
+services would refuse, fails the sync by name, so nothing is deployed.
 
-Only a tighter policy is accepted: an unknown section or key, a misspelt action, or a
-`min_cohort_size` below the kit's floor stops the service at startup rather than being ignored. On a
-running trust that reads as a `data-access-api` pod that will not come back up, and as a crash-looping
-NVFLARE client whose log carries `[site-privacy] FATAL: ...` — see
+Only a tighter policy is accepted: an unknown section or key, a misspelt action, a project id that is
+not a UUID, a rule without an `effect`, an empty document, or a `min_cohort_size` below the kit's
+floor stops the service at startup rather than being ignored. On a running trust that reads as a
+`data-access-api` pod that will not come back up, or a `governance-extract` init container whose log
+carries `[site-privacy] FATAL: ...` — see
 [TROUBLESHOOTING §8](TROUBLESHOOTING.md#8-trust-governance-policy-flip1259).
 
 ### Service-Specific Settings

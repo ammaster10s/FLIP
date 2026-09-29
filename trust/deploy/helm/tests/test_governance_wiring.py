@@ -52,7 +52,7 @@ FL_CLIENT_GUARD = "{{- if $governed }}"
 FL_CLIENT_GUARD_DEFINITION = '{{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}'
 #: Where the fl-client reads its extracted section.
 EXTRACT_PATH = "/app/governance/governance.fl_privacy.toml"
-#: The path both services read — the same one Compose mounts at /app/governance.toml.
+#: Where data-access-api and the fl-client's extract step read the document — the path Compose uses.
 MOUNT_PATH = "/app/governance.toml"
 #: The name both pod templates must reference to hash the ConfigMap they mount.
 CONFIGMAP_TEMPLATE_NAME = "governance-configmap.yaml"
