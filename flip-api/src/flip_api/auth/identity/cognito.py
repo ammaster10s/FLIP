@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""AWS Cognito as the identity provider (stag/prod, and dev with ``AUTH_BACKEND=cognito``)."""
+"""AWS Cognito as the identity provider (stag/prod; development is Keycloak only)."""
 
 import logging
 from typing import Any

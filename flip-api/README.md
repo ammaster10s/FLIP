@@ -78,10 +78,10 @@ The flip-api is configured via environment variables. In development these are s
 | `DB_PORT` | PostgreSQL port |
 | `POSTGRES_USER` | PostgreSQL username |
 | `POSTGRES_DB` | PostgreSQL database name |
-| `AWS_REGION` | AWS region for S3 (and Cognito under `AUTH_BACKEND=cognito`) |
-| `AUTH_BACKEND` | Identity provider: `keycloak` (dev default — the `keycloak` service in `deploy/compose.development.yml`) or `cognito` (staging and production, the only value `ProdSettings` accepts) |
-| `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID (`AUTH_BACKEND=cognito` only) |
-| `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID (`AUTH_BACKEND=cognito` only) |
+| `AWS_REGION` | AWS region for S3 (and Cognito in staging/production) |
+| `AUTH_BACKEND` | Identity provider: `keycloak` (development — the `keycloak` service in `deploy/compose.development.yml`, the only value `DevSettings` accepts) or `cognito` (staging and production, the only value `ProdSettings` accepts) |
+| `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID (staging/production only) |
+| `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID (staging/production only) |
 | `KEYCLOAK_URL` | Keycloak base URL as flip-api reaches it over the Docker network (JWKS + Admin REST API); dev default `http://keycloak:8080` |
 | `KEYCLOAK_PUBLIC_URL` | Keycloak base URL as the browser reaches it, hence the `iss` every token carries; dev default `http://localhost:8180` (follows `KEYCLOAK_PORT`) |
 | `KEYCLOAK_REALM` | Realm name (default `flip`) |
@@ -225,7 +225,7 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
 - `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`, `make demo-users` from the repo root —
   runs inside the flip-api container) — provisions the demo users the recorder signs in as in the configured
-  identity provider (the local Keycloak realm, or the Cognito pool under `AUTH_BACKEND=cognito`;
+  identity provider (the local Keycloak realm in development, the Cognito pool in staging/production;
   `DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart flip-api afterwards so
   boot seeding grants their roles. Before any write it names the target (pool name/region/AWS account, or
   Keycloak realm + URL) and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong SSO

@@ -104,29 +104,35 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
 
 
 def test_email_backend_defaults_per_environment_class():
-    """Dev logs, prod sends, and prod cannot be narrowed any wider (#919).
+    """Dev logs, prod sends, and neither can choose otherwise (#919).
 
     Asserted on the fields rather than instances, for the same reason as
-    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer
-    may set ``EMAIL_BACKEND=ses`` in their own ``.env.development`` (the
-    config comment invites exactly that), which an instance would pick up.
+    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer's
+    own ``.env.development`` may carry stale lines an instance would pick up.
 
     Note the base default is *not* a safety net for a misconfigured deploy —
     an unset ``ENV`` resolves to ``DevSettings`` and therefore ``console``.
-    It exists so the field is declared for ``ProdSettings`` to narrow.
+    It exists so the field is declared for the subclasses to pin.
     """
     assert Settings.model_fields["EMAIL_BACKEND"].default == "ses"
     assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
     assert ProdSettings.model_fields["EMAIL_BACKEND"].default == "ses"
 
 
+def test_ses_email_backend_is_rejected_in_development():
+    """The dev stack reaches no AWS service: SES is a boot-time validation error there, not an opt-in."""
+    with pytest.raises(ValidationError) as exc_info:
+        DevSettings(EMAIL_BACKEND="ses")
+    assert "EMAIL_BACKEND" in str(exc_info.value)
+
+
 def test_email_backend_empty_string_falls_back_to_the_per_class_default():
     """Same env-file empty-string trap as the scan ints, resolved per class.
 
-    Not hypothetical: ``.env.development.example`` carries a commented
-    ``# EMAIL_BACKEND=ses`` line, and the root Makefile's unanchored
-    ``sed 's/=.*//'`` exports the bare name from it, so a copied example
-    hands flip-api an empty ``EMAIL_BACKEND``.
+    Not hypothetical: a stale developer ``.env.development`` may still carry a
+    commented ``# EMAIL_BACKEND=`` line, and the root Makefile's unanchored
+    ``sed 's/=.*//'`` exports the bare name from it, so the file hands flip-api
+    an empty ``EMAIL_BACKEND``.
     """
     assert Settings(EMAIL_BACKEND="").EMAIL_BACKEND == "ses"
     assert DevSettings(EMAIL_BACKEND="").EMAIL_BACKEND == "console"
@@ -357,10 +363,17 @@ def test_keycloak_development_needs_no_cognito_ids():
     assert settings.AWS_COGNITO_USER_POOL_ID is None
 
 
-def test_cognito_development_requires_both_ids():
+def test_cognito_backend_is_rejected_in_development():
+    """Development is Keycloak only: the AWS provider is a boot-time validation error there, ids or no ids."""
+    with pytest.raises(ValidationError) as exc_info:
+        DevSettings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="pool", AWS_COGNITO_APP_CLIENT_ID="client")
+    assert "AUTH_BACKEND" in str(exc_info.value)
+
+
+def test_cognito_backend_requires_both_ids():
     """An empty id is a missing id: without this the hub boots and fails at the first sign-in instead."""
     with pytest.raises(ValidationError) as exc_info:
-        DevSettings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+        Settings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
     message = str(exc_info.value)
     assert "AWS_COGNITO_USER_POOL_ID" in message
     assert "AWS_COGNITO_APP_CLIENT_ID" in message

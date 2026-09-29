@@ -626,7 +626,7 @@ instead — the Cognito identity provider's `allowed_origins()` (`flip_api/auth/
 `CORSMiddleware` serves that list with
 `allow_credentials=true`. Every browser origin that must call the API has to be listed, and removing
 one silently blocks that origin — in the browser only, with nothing red in CI or in the ECS console.
-This applies to Cognito-backed environments (stag/prod, and dev under `AUTH_BACKEND=cognito`); the
+This applies to the Cognito-backed environments (stag/prod); the
 default dev stack authenticates against Keycloak and derives the same allowlist from the realm's `flip-ui`
 client redirect URIs (`deploy/keycloak/flip-realm.json`, `IdentityProvider.allowed_origins()`), so a local
 UI port is registered there, not here.

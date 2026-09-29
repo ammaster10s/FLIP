@@ -239,8 +239,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Group | Required development values |
 | --- | --- |
 | AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you opt into an AWS-backed path (below) |
-| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it; the dev Cognito pool's seed admin logs in with it). Leave `AUTH_BACKEND` unset: dev defaults to `keycloak`, the identity-provider container in `deploy/compose.development.yml`, so no AWS account is needed to sign in |
-| Cognito (optional) | `AUTH_BACKEND=cognito` plus `AWS_COGNITO_USER_POOL_ID` and `AWS_COGNITO_APP_CLIENT_ID` — only to develop against the dev Cognito pool, with an AWS SSO session. Staging and production accept no other value |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
 | FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
@@ -280,7 +279,7 @@ provider's own, not SES's: under the default Keycloak backend dev has no mail se
 Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
 never the password) — they sign in once with it, Keycloak's account console
 (`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
-"Account is not fully set up"), then they sign in to FLIP. Under `AUTH_BACKEND=cognito` the user pool still sends
+"Account is not fully set up"), then they sign in to FLIP. In staging and production the Cognito user pool sends
 real invite and password-reset emails.
 
 **Sign-in in development goes through Keycloak** (FLIP#919). `make up` starts a `keycloak` service that imports the
@@ -905,8 +904,8 @@ To create projects in various pipeline stages (`unstaged`, `staged`, `approved`)
 make -C flip-api create_testing_projects
 ```
 
-The script signs in through the configured identity provider: the local Keycloak needs no AWS session,
-`AUTH_BACKEND=cognito` does.
+The script signs in through the configured identity provider — in development the local Keycloak, so it needs
+no AWS session.
 
 To clean up the test data:
 

@@ -53,8 +53,8 @@ own environment.
 - GNU Make, `jq`, and [uv](https://docs.astral.sh/uv/)
 - GitHub Container Registry access for the published FLIP images
 - For the two example Trusts (`make up`): the AWS CLI and an SSO profile with access to the development XNAT
-  artifacts and OMOP vocabulary buckets. The hub itself reaches no AWS service: sign-in is the local Keycloak, object
-  storage is the local RustFS container; AWS Cognito is needed only with `AUTH_BACKEND=cognito`
+  artifacts and OMOP vocabulary buckets. The hub itself reaches no AWS service: sign-in is the local Keycloak
+  container (Cognito is staging and production only), object storage is the local RustFS container
 
 The complete tool list and environment-variable checklist are in [CONTRIBUTING.md](CONTRIBUTING.md#prerequisites).
 
@@ -83,11 +83,9 @@ make up
 If Swarm is already active, `docker swarm init` reports that and can be skipped. Open
 `http://localhost:<UI_PORT>` for the UI and `http://localhost:8080/api/docs` for the Central Hub API
 documentation, and sign in as `aicentreflip@gmail.com` (or any other well-known dev identity from
-`flip-api/src/flip_api/utils/constants.py`) with the `ADMIN_USER_PASSWORD` from your env file. Set `UI_PORT`
-to a port the identity provider registers as a browser origin — 44350–44359 under either backend — or the UI
-loads but every API call fails CORS; the Keycloak realm is described in
-[deploy/keycloak/README.md](deploy/keycloak/README.md) and, for `AUTH_BACKEND=cognito`, see "Browser-usable
-UI ports" in [deploy/providers/AWS/dev/README.md](deploy/providers/AWS/dev/README.md).
+`flip-api/src/flip_api/utils/constants.py`) with the `ADMIN_USER_PASSWORD` from your env file. Any free
+`UI_PORT` works: the Keycloak realm registers whatever the env file sets as a browser origin (the realm is
+described in [deploy/keycloak/README.md](deploy/keycloak/README.md)).
 
 To boot only the hub — Keycloak, the database, the object store and the API, enough to sign in, upload model
 files and develop against — use `make central-hub` (or `make up-no-trust` to include the FL server side). Neither
