@@ -19,9 +19,11 @@ default silently in force, and the operator would have no way to tell. The same 
 applies with more force here, where the silently-ignored line is an access rule.
 
 Unset is not an error: no document means today's behaviour exactly. Invalid means the
-service refuses to start.
+service refuses to start — and so does a document that configures nothing, which is far
+likelier a truncated copy than an intent.
 """
 
+import hashlib
 import tomllib
 from collections.abc import Iterable
 from pathlib import Path
@@ -35,6 +37,7 @@ from data_access_api.policy.model import (
     AccessPolicyError,
     Policy,
     Rule,
+    normalise_project_id,
 )
 
 # Keys accepted inside [disclosure]. `fl_privacy` is validated by the fl-client, not here.
@@ -59,7 +62,7 @@ def _reject_unknown(keys: Iterable[str], known: frozenset[str], where: str) -> N
 
 
 def _parse_threshold(value: object, *, floor: int, where: str) -> int:
-    """Validate a threshold, enforcing the monotonic floor (#870, plan Decision 4).
+    """Validate a threshold, enforcing the monotonic floor (FLIP#870).
 
     ``bool`` is rejected explicitly: it is an ``int`` subclass in Python, so ``True``
     would otherwise sail through as the threshold 1 and quietly disable the check.
@@ -74,7 +77,7 @@ def _parse_threshold(value: object, *, floor: int, where: str) -> int:
     return value
 
 
-def _parse_rule(raw: object, *, index: int, floor: int, seen_ids: set[str]) -> Rule:
+def _parse_rule(raw: object, *, index: int, floor: int, section: int | None, seen_ids: set[str]) -> Rule:
     where = f"[[access.rule]] #{index + 1}"
     table = _require_mapping(raw, where)
     _reject_unknown(table.keys(), KNOWN_RULE_FIELDS, where)
@@ -94,7 +97,14 @@ def _parse_rule(raw: object, *, index: int, floor: int, seen_ids: set[str]) -> R
             f"expected one of {', '.join(sorted(KNOWN_ACTIONS))}"
         )
 
-    effect = table.get("effect", EFFECT_PERMIT)
+    # No default. Defaulting to permit turned a dropped `effect` line into a permit — the
+    # opposite of what a rule written to deny meant.
+    if "effect" not in table:
+        raise AccessPolicyError(
+            f"{where} (id {rule_id!r}) needs an 'effect' — one of {', '.join(sorted(KNOWN_EFFECTS))}; "
+            f"there is no default"
+        )
+    effect = table["effect"]
     if effect not in KNOWN_EFFECTS:
         raise AccessPolicyError(
             f"{where} (id {rule_id!r}) has effect {effect!r} — expected one of {', '.join(sorted(KNOWN_EFFECTS))}"
@@ -112,7 +122,18 @@ def _parse_rule(raw: object, *, index: int, floor: int, seen_ids: set[str]) -> R
                 f"{where} (id {rule_id!r}) has an empty 'projects' list, which would match nothing; "
                 f"omit the key to apply the rule to every project"
             )
-        projects = frozenset(projects_raw)
+        normalised = set()
+        for entry in projects_raw:
+            try:
+                normalised.add(normalise_project_id(entry))
+            except ValueError:
+                # The hub seals str(uuid.UUID). Any other string can never match a request, so a
+                # deny list naming one would deny nothing while reading as if it did.
+                raise AccessPolicyError(
+                    f"{where} (id {rule_id!r}) lists {entry!r}, which is not a project UUID — "
+                    f"use the project id the hub shows (e.g. 3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15)"
+                ) from None
+        projects = frozenset(normalised)
 
     min_cohort_size: int | None = None
     if "min_cohort_size" in table:
@@ -124,6 +145,13 @@ def _parse_rule(raw: object, *, index: int, floor: int, seen_ids: set[str]) -> R
         min_cohort_size = _parse_threshold(
             table["min_cohort_size"], floor=floor, where=f"{where} (id {rule_id!r}) min_cohort_size"
         )
+        if section is not None and min_cohort_size < section:
+            # decide() takes the larger of the two, so this value could never apply. Accepting it
+            # would describe a policy that is not the one enforced.
+            raise AccessPolicyError(
+                f"{where} (id {rule_id!r}) min_cohort_size={min_cohort_size} is below the document's "
+                f"[disclosure] min_cohort_size={section}, so it would never apply — raise it or remove it"
+            )
 
     return Rule(id=rule_id, action=action, effect=effect, projects=projects, min_cohort_size=min_cohort_size)
 
@@ -140,13 +168,20 @@ def parse_policy(text: str, *, floor: int, source: str) -> Policy:
         Policy: The validated document.
 
     Raises:
-        AccessPolicyError: On malformed TOML, an unknown section, an unknown key, an
-            unknown action, a duplicate rule id, or a threshold below the floor.
+        AccessPolicyError: On malformed TOML, a document that configures nothing, an unknown
+            section, an unknown key, an unknown action or effect, a missing effect, a project id
+            that is not a UUID, a duplicate rule id, or a threshold below the floor.
     """
     try:
         document = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise AccessPolicyError(f"{source} is not valid TOML: {e}") from None
+
+    if not document:
+        raise AccessPolicyError(
+            f"{source} configures nothing (empty, or every line commented out) — refusing it, since a "
+            f"truncated file would otherwise drop every rule; to run with no policy, unset ACCESS_POLICY_FILE"
+        )
 
     _reject_unknown(document.keys(), KNOWN_SECTIONS, f"{source} (top level)")
 
@@ -165,20 +200,19 @@ def parse_policy(text: str, *, floor: int, source: str) -> Policy:
         raise AccessPolicyError(f"{source} [[access.rule]] must be an array of tables")
 
     seen_ids: set[str] = set()
-    rules = tuple(_parse_rule(raw, index=index, floor=floor, seen_ids=seen_ids) for index, raw in enumerate(raw_rules))
+    rules = tuple(
+        _parse_rule(raw, index=index, floor=floor, section=min_cohort_size, seen_ids=seen_ids)
+        for index, raw in enumerate(raw_rules)
+    )
 
-    return Policy(min_cohort_size=min_cohort_size, rules=rules, source=source)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return Policy(min_cohort_size=min_cohort_size, rules=rules, source=source, digest=digest)
 
 
-def load_policy(*, inline: str | None, path: str | None, floor: int) -> Policy | None:
-    """Load the governance policy from settings.
-
-    Exactly one source may be configured. Both set is an error rather than a silent
-    precedence rule: an operator who sets both has a mistaken belief about which one is
-    in force, and guessing would leave the wrong policy running.
+def load_policy(*, path: str | None, floor: int) -> Policy | None:
+    """Load the governance policy named by ``ACCESS_POLICY_FILE``.
 
     Args:
-        inline: Contents of ``ACCESS_POLICY``, or ``None``/empty when unset.
         path: Value of ``ACCESS_POLICY_FILE``, or ``None``/empty when unset.
         floor: The configured ``COHORT_QUERY_THRESHOLD``.
 
@@ -190,18 +224,7 @@ def load_policy(*, inline: str | None, path: str | None, floor: int) -> Policy |
     """
     # The service Makefile exports kit-file names with `sed 's/=.*//'`, so a commented-out
     # entry arrives as KEY="". Empty must behave exactly like absent.
-    inline = (inline or "").strip() or None
     path = (path or "").strip() or None
-
-    if inline is not None and path is not None:
-        raise AccessPolicyError(
-            "both ACCESS_POLICY and ACCESS_POLICY_FILE are set — set exactly one, "
-            "so there is no ambiguity about which policy is in force"
-        )
-
-    if inline is not None:
-        return parse_policy(inline, floor=floor, source="ACCESS_POLICY")
-
     if path is None:
         return None
 

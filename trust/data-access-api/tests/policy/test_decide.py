@@ -29,6 +29,11 @@ from data_access_api.policy import (
 
 FLOOR = 10
 
+# Project ids are UUIDs: the hub seals str(uuid.UUID), and the loader rejects anything else.
+P1 = "3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"
+P2 = "9b7e2d48-1a36-4c92-8f05-6d3b1e7a4c28"
+VIP = "c0ffee00-0000-4000-8000-000000000001"
+
 
 def _policy(text: str, floor: int = FLOOR):
     return parse_policy(text, floor=floor, source="test")
@@ -36,7 +41,7 @@ def _policy(text: str, floor: int = FLOOR):
 
 def test_no_policy_permits_at_configured_threshold():
     """The unconfigured path: permit, at exactly the configured floor (AC 4)."""
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_DATAFRAME, policy=None, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=None, configured_threshold=FLOOR)
 
     assert decision.permit is True
     assert decision.effective_threshold == FLOOR
@@ -59,7 +64,7 @@ def test_unmentioned_action_falls_through_to_existing_behaviour():
         """
     )
 
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_STATISTICS, policy=policy, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_STATISTICS, policy=policy, configured_threshold=FLOOR)
 
     assert decision.permit is True
     assert decision.rule_id == "default.unmentioned"
@@ -73,11 +78,11 @@ def test_mentioned_action_with_no_match_is_denied():
         id = "allowlist"
         action = "cohort.dataframe"
         effect = "permit"
-        projects = ["p1"]
+        projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"]
         """
     )
 
-    decision = decide({}, {"project_id": "p2"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P2}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
 
     assert decision.permit is False
     assert decision.rule_id == "default.deny"
@@ -94,37 +99,172 @@ def test_deny_rule_denies_and_is_attributable():
         """
     )
 
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
 
     assert decision.permit is False
     assert decision.rule_id == "policy:no-raw-export"
     assert "no-raw-export" in decision.reason
 
 
-def test_first_matching_rule_wins():
-    """Document order decides, so an operator can put a narrow exception above a broad deny."""
+def test_a_matching_deny_wins_wherever_it_sits():
+    """Deny overrides permit, independent of document order.
+
+    Under first-match-wins a deny placed below a broad permit never fired, and nothing
+    detected the shadowing — the operator believed the deny was in force. Order must not
+    change a decision.
+    """
+    for rules in (
+        ("permit", "deny"),
+        ("deny", "permit"),
+    ):
+        blocks = []
+        for index, effect in enumerate(rules):
+            blocks.append(
+                f"""
+                [[access.rule]]
+                id = "r{index}"
+                action = "cohort.dataframe"
+                effect = "{effect}"
+                """
+            )
+        policy = _policy("".join(blocks))
+
+        decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+
+        assert decision.permit is False, rules
+        assert decision.rule_id == f"policy:r{rules.index('deny')}"
+
+
+def test_an_allowlist_is_a_project_scoped_permit():
+    """The allowlist shape under deny-overrides: permit the named projects, and every other
+    project falls to the mentioned-action default deny — no broad deny rule needed."""
     policy = _policy(
-        """
+        f"""
         [[access.rule]]
         id = "exception"
         action = "cohort.dataframe"
         effect = "permit"
-        projects = ["vip"]
-
-        [[access.rule]]
-        id = "broad-deny"
-        action = "cohort.dataframe"
-        effect = "deny"
+        projects = ["{VIP}"]
         """
     )
 
-    permitted = decide({}, {"project_id": "vip"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
-    denied = decide({}, {"project_id": "other"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    permitted = decide({}, {"project_id": VIP}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    denied = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
 
     assert permitted.permit is True
     assert permitted.rule_id == "policy:exception"
     assert denied.permit is False
-    assert denied.rule_id == "policy:broad-deny"
+    assert denied.rule_id == "default.deny"
+
+
+def test_matching_permits_apply_the_highest_threshold():
+    """Two matching permits never loosen each other: the strictest threshold applies,
+    whichever comes first in the document."""
+    policy = _policy(
+        f"""
+        [[access.rule]]
+        id = "everyone"
+        action = "cohort.accession_ids"
+        effect = "permit"
+        min_cohort_size = 20
+
+        [[access.rule]]
+        id = "sensitive"
+        action = "cohort.accession_ids"
+        effect = "permit"
+        projects = ["{P1}"]
+        min_cohort_size = 60
+        """
+    )
+
+    sensitive = decide({}, {"project_id": P1}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
+    other = decide({}, {"project_id": P2}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
+
+    assert sensitive.permit is True
+    assert sensitive.effective_threshold == 60
+    assert sensitive.rule_id == "policy:sensitive"
+    assert other.effective_threshold == 20
+
+
+def test_project_ids_match_whatever_their_case():
+    """The hub seals str(UUID), which is lowercase. A rule written in uppercase must still
+    match it, or an intended deny silently never fires."""
+    policy = _policy(
+        f"""
+        [[access.rule]]
+        id = "withdrawn"
+        action = "cohort.dataframe"
+        effect = "deny"
+        projects = ["{P1.upper()}"]
+
+        [[access.rule]]
+        id = "everyone-else"
+        action = "cohort.dataframe"
+        effect = "permit"
+        """
+    )
+
+    for request_id in (P1, P1.upper(), "{" + P1 + "}"):
+        decision = decide(
+            {}, {"project_id": request_id}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR
+        )
+        assert decision.permit is False, request_id
+        assert decision.rule_id == "policy:withdrawn"
+
+
+def test_an_unparseable_project_id_is_denied_when_a_rule_names_projects():
+    """A request id that is not a UUID can match no project-scoped rule, so a deny list would
+    wave it through to a broad permit. Fail closed instead."""
+    policy = _policy(
+        f"""
+        [[access.rule]]
+        id = "withdrawn"
+        action = "cohort.dataframe"
+        effect = "deny"
+        projects = ["{P1}"]
+
+        [[access.rule]]
+        id = "everyone-else"
+        action = "cohort.dataframe"
+        effect = "permit"
+        """
+    )
+
+    decision = decide(
+        {}, {"project_id": "not-a-uuid"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR
+    )
+
+    assert decision.permit is False
+    assert decision.rule_id == "default.invalid_project"
+
+
+def test_a_permit_without_its_own_threshold_uses_the_disclosure_section():
+    """A permit rule with no min_cohort_size applies [disclosure], not the kit floor."""
+    policy = _policy(
+        """
+        [disclosure]
+        min_cohort_size = 25
+
+        [[access.rule]]
+        id = "plain"
+        action = "cohort.dataframe"
+        effect = "permit"
+        """
+    )
+
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+
+    assert decision.permit is True
+    assert decision.effective_threshold == 25
+
+
+def test_a_rule_with_an_unknown_effect_cannot_be_built():
+    """decide() must never read an unexpected effect as a permit. The type refuses one, so
+    nothing but the loader's two effects can reach the evaluator."""
+    from data_access_api.policy import Rule
+
+    with pytest.raises(ValueError, match="effect"):
+        Rule(id="r", action=ACTION_COHORT_DATAFRAME, effect="Deny", projects=None, min_cohort_size=None)
 
 
 def test_project_scoped_rule_does_not_match_a_request_without_a_project():
@@ -135,7 +275,7 @@ def test_project_scoped_rule_does_not_match_a_request_without_a_project():
         id = "scoped"
         action = "cohort.statistics"
         effect = "permit"
-        projects = ["p1"]
+        projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"]
         """
     )
 
@@ -148,7 +288,7 @@ def test_project_scoped_rule_does_not_match_a_request_without_a_project():
 def test_section_threshold_raises_the_floor():
     policy = _policy("[disclosure]\nmin_cohort_size = 25")
 
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=FLOOR)
 
     assert decision.effective_threshold == 25
 
@@ -167,7 +307,7 @@ def test_rule_threshold_raises_above_the_section_threshold():
         """
     )
 
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_ACCESSION_IDS, policy=policy, configured_threshold=FLOOR)
 
     assert decision.permit is True
     assert decision.effective_threshold == 50
@@ -182,7 +322,7 @@ def test_effective_threshold_never_drops_below_the_configured_value():
     """
     policy = _policy("[disclosure]\nmin_cohort_size = 20", floor=10)
 
-    decision = decide({}, {"project_id": "p1"}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=50)
+    decision = decide({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME, policy=policy, configured_threshold=50)
 
     assert decision.effective_threshold == 50
 
@@ -206,7 +346,7 @@ def test_two_documents_produce_different_decisions_from_the_same_binary():
         """
     )
 
-    args = ({}, {"project_id": "p1"}, ACTION_COHORT_DATAFRAME)
+    args = ({}, {"project_id": P1}, ACTION_COHORT_DATAFRAME)
     assert decide(*args, policy=permissive, configured_threshold=FLOOR).permit is True
     assert decide(*args, policy=restrictive, configured_threshold=FLOOR).permit is False
 

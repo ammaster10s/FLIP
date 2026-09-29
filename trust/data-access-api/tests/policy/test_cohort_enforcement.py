@@ -37,6 +37,12 @@ client = TestClient(app)
 _FIXED_REFUSAL = {"detail": _BELOW_THRESHOLD_DETAIL}
 
 
+# Project ids are UUIDs: the hub seals str(uuid.UUID), and the loader rejects anything else.
+P_DENIED = "d0000000-0000-4000-8000-000000000001"
+P_ALLOWED = "a0000000-0000-4000-8000-000000000002"
+P_OTHER = "0e000000-0000-4000-8000-000000000003"
+
+
 def _policy(text: str, floor: int = 5):
     return parse_policy(text, floor=floor, source="test")
 
@@ -46,7 +52,7 @@ def _large_cohort() -> pd.DataFrame:
     return pd.DataFrame({"person_id": list(range(100)), "value": list(range(100))})
 
 
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-denied")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.get_records")
@@ -80,7 +86,7 @@ def test_dataframe_policy_denial_uses_the_fixed_refusal_text(
     mock_get_records.assert_not_called()
 
 
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-denied")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.get_records")
@@ -107,7 +113,7 @@ def test_accession_ids_policy_denial_uses_the_fixed_refusal_text(
     mock_get_records.assert_not_called()
 
 
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-allowed")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_ALLOWED)
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
@@ -137,7 +143,7 @@ def test_dataframe_rule_threshold_raise_refuses_a_cohort_that_clears_the_kit_flo
     assert response.json() == _FIXED_REFUSAL
 
 
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-allowed")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_ALLOWED)
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
@@ -154,7 +160,7 @@ def test_dataframe_permitted_by_policy_returns_data(
         id = "allow-this-project"
         action = "cohort.dataframe"
         effect = "permit"
-        projects = ["p-allowed"]
+        projects = ["a0000000-0000-4000-8000-000000000002"]
         """
     )
     mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3]})
@@ -248,7 +254,7 @@ def test_statistics_does_not_open_the_envelope_when_no_rule_scopes_projects(
 @patch("data_access_api.routers.cohort.get_records")
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-allowed")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_ALLOWED)
 def test_statistics_opens_the_envelope_when_a_rule_scopes_projects(
     mock_decrypt, mock_get_settings, mock_get_policy, mock_get_records
 ):
@@ -260,7 +266,7 @@ def test_statistics_opens_the_envelope_when_a_rule_scopes_projects(
         id = "stats-allowlist"
         action = "cohort.statistics"
         effect = "permit"
-        projects = ["p-other"]
+        projects = ["0e000000-0000-4000-8000-000000000003"]
         """
     )
 
@@ -276,7 +282,7 @@ def test_statistics_opens_the_envelope_when_a_rule_scopes_projects(
         headers=AUTH_HEADERS,
     )
 
-    # p-allowed is not in the allowlist, so the request falls to the default deny.
+    # P_ALLOWED is not in the allowlist, so the request falls to the default deny.
     assert response.status_code == 200
     assert response.json()["suppressed"] is True
     mock_decrypt.assert_called_once()
@@ -286,7 +292,7 @@ def test_statistics_opens_the_envelope_when_a_rule_scopes_projects(
 @patch("data_access_api.routers.cohort.get_records")
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.decrypt", return_value="p-denied")
+@patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
 def test_statistics_denial_logs_the_project_it_blocked(
     mock_decrypt, mock_get_settings, mock_get_policy, mock_get_records, caplog
 ):
@@ -303,7 +309,7 @@ def test_statistics_denial_logs_the_project_it_blocked(
         id = "stats-allowlist"
         action = "cohort.statistics"
         effect = "permit"
-        projects = ["p-other"]
+        projects = ["0e000000-0000-4000-8000-000000000003"]
         """
     )
 
@@ -322,5 +328,5 @@ def test_statistics_denial_logs_the_project_it_blocked(
 
     assert response.status_code == 200
     assert response.json()["suppressed"] is True
-    assert "Policy denied cohort statistics for project p-denied" in caplog.text
+    assert f"Policy denied cohort statistics for project {P_DENIED}" in caplog.text
     assert "<none>" not in caplog.text

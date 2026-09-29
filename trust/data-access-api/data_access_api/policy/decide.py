@@ -27,9 +27,11 @@ from typing import Any
 
 from data_access_api.policy.model import (
     EFFECT_DENY,
+    EFFECT_PERMIT,
     KNOWN_ACTIONS,
     Decision,
     Policy,
+    normalise_project_id,
 )
 
 
@@ -52,16 +54,29 @@ def decide(
        unconfigured path and must reproduce today's behaviour byte for byte.
     2. **Document does not mention the action** → permit at the effective threshold.
        This is the one place the design is deliberately *not* fail-closed; see below.
-    3. **Document mentions the action** → first matching rule wins. A ``deny`` rule
-       denies; a ``permit`` rule permits, possibly raising the threshold further.
-    4. **Mentioned but nothing matched** → deny. Once a trust has written rules for an
-       action, an unmatched request is one the trust did not authorise.
+    3. **Document mentions the action** → every rule that matches is considered, and
+       document order never matters:
 
-    The asymmetry between 2 and 4 is intentional and is what makes incremental adoption
+       - any matching ``deny`` denies;
+       - otherwise any matching ``permit`` permits, at the strictest threshold among the
+         matching permits (never below ``[disclosure]`` or the configured floor);
+       - otherwise deny. Once a trust has written rules for an action, an unmatched request
+         is one the trust did not authorise.
+
+    Deny-overrides replaced first-match-wins because order made an intended deny fragile: a
+    deny placed below a broad permit never fired, and nothing said so. These are the same
+    semantics as Cedar's forbid-overrides-permit with default deny, so a later change of
+    evaluator is not a change of meaning.
+
+    The asymmetry between 2 and 3 is intentional and is what makes incremental adoption
     possible: a trust that writes a rule for ``cohort.dataframe`` does not thereby lock
     itself out of ``cohort.statistics``, which it never configured. The cost is that a
     policy silent about an action grants nothing new but blocks nothing either — the
     threshold still applies, because the floor is an invariant rather than a rule.
+
+    A request whose project id is not a UUID is denied whenever a rule for the action names
+    projects: it could match none of them, so a deny list would wave it through to a broad
+    permit. The hub always seals a UUID; anything else is not a request to be generous with.
 
     Args:
         subject: Attributes of the caller. Empty on the site plane — there is no user
@@ -97,8 +112,6 @@ def decide(
     # document that somehow carried a lower number could not weaken the threshold.
     section_threshold = max(configured_threshold, policy.min_cohort_size or 0)
 
-    project_id = resource.get("project_id")
-
     if not policy.mentions(action):
         return Decision(
             permit=True,
@@ -107,21 +120,41 @@ def decide(
             effective_threshold=section_threshold,
         )
 
-    for rule in policy.rules:
-        if not rule.matches(action, project_id):
-            continue
-        if rule.effect == EFFECT_DENY:
-            return Decision(
-                permit=False,
-                rule_id=f"policy:{rule.id}",
-                reason=f"denied by rule {rule.id!r} for action {action}",
-                effective_threshold=section_threshold,
-            )
+    raw_project_id = resource.get("project_id")
+    project_id: str | None = None
+    if raw_project_id is not None:
+        try:
+            project_id = normalise_project_id(raw_project_id)
+        except (ValueError, TypeError, AttributeError):
+            if policy.scopes_projects(action):
+                return Decision(
+                    permit=False,
+                    rule_id="default.invalid_project",
+                    reason=f"project id {raw_project_id!r} is not a UUID and rules for {action} name projects",
+                    effective_threshold=section_threshold,
+                )
+
+    matching = [rule for rule in policy.rules if rule.matches(action, project_id)]
+
+    denies = [rule for rule in matching if rule.effect == EFFECT_DENY]
+    if denies:
+        return Decision(
+            permit=False,
+            rule_id=f"policy:{denies[0].id}",
+            reason=f"denied by rule {denies[0].id!r} for action {action}",
+            effective_threshold=section_threshold,
+        )
+
+    permits = [rule for rule in matching if rule.effect == EFFECT_PERMIT]
+    if permits:
+        # The strictest matching permit decides, so adding a permit can never loosen another.
+        # max() keeps the first of equals, so the named rule is stable in document order.
+        strictest = max(permits, key=lambda rule: rule.min_cohort_size or 0)
         return Decision(
             permit=True,
-            rule_id=f"policy:{rule.id}",
-            reason=f"permitted by rule {rule.id!r} for action {action}",
-            effective_threshold=max(section_threshold, rule.min_cohort_size or 0),
+            rule_id=f"policy:{strictest.id}",
+            reason=f"permitted by rule {strictest.id!r} for action {action}",
+            effective_threshold=max(section_threshold, strictest.min_cohort_size or 0),
         )
 
     return Decision(

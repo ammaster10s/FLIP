@@ -34,7 +34,7 @@ class TestDocsGating:
         monkeypatch.setattr(
             config,
             "_settings",
-            SimpleNamespace(ENV="production", TRUST_INTERNAL_SERVICE_KEY="x"),
+            SimpleNamespace(ENV="production", TRUST_INTERNAL_SERVICE_KEY="x", COHORT_QUERY_THRESHOLD=10),
         )
         try:
             # FastAPI bakes docs_url/openapi_url/redoc_url into the router at app
@@ -53,3 +53,21 @@ class TestDocsGating:
         finally:
             monkeypatch.undo()
             importlib.reload(main)
+
+
+def test_startup_logs_which_governance_policy_is_enforced(capsys):
+    """reload-governance waits for this line: it is how an operator learns the document they
+    edited reached the service (and that the image is new enough to read one)."""
+    import logging
+
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
+    logger = logging.getLogger("data_access_api.utils.logger")
+    logger.addHandler(handler)
+    try:
+        importlib.reload(main)
+    finally:
+        logger.removeHandler(handler)
+
+    assert any(line.startswith("[governance] no policy configured") for line in records), records

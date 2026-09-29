@@ -27,6 +27,8 @@ from data_access_api.policy.model import (
     Decision,
     Policy,
     Rule,
+    describe_policy,
+    normalise_project_id,
     subject_attributes,
 )
 
@@ -41,7 +43,9 @@ __all__ = [
     "Policy",
     "Rule",
     "decide",
+    "describe_policy",
     "load_policy",
+    "normalise_project_id",
     "parse_policy",
     "subject_attributes",
 ]

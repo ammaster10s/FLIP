@@ -12,20 +12,19 @@
 
 """Validate a trust's governance document without starting the services (FLIP#1259).
 
-Backs ``make -C trust check-governance KIT=<CODE>``. The services fail closed on an
-invalid policy, so an operator editing rules wants the error here rather than from a
-container that then refuses to come back up.
+Backs ``make -C trust check-governance KIT=<CODE>`` and the on-prem onboarding checklist.
+The services fail closed on an invalid policy, so an operator editing rules wants the error
+here rather than from a container that then refuses to come back up.
 
 Deliberately calls the same ``load_policy`` the service calls at startup: a separate
 validator would be free to drift from what is actually enforced, and an operator would
-then be told a document is fine when the service would reject it.
+then be told a document is fine when the service would reject it. It prints the same
+digest the service logs at startup, so the operator can match the two.
 
-The ``[fl_privacy]`` half is the fl-client's, so the file's own copy is validated by the
-fl-client at container start (and by ``make -C trust check-governance``, which runs
-``flip.nvflare.site_policy --check`` alongside this). One case is this script's to refuse,
-because only it can see it: a ``[fl_privacy]`` section written *inline* in ``ACCESS_POLICY``.
-The fl-client reads the document from ``ACCESS_POLICY_FILE`` alone, so that section would be
-parsed here and then silently ignored at the container that was supposed to enforce it.
+Stdlib-only, like the ``data_access_api.policy`` package it imports: it runs on the trust
+host with a bare interpreter (``PYTHONPATH`` at the service root), never syncing the
+service's own dependencies there. The ``[fl_privacy]`` half is the fl-client's, and
+``check-governance`` validates it with ``flip.nvflare.site_policy --check`` alongside this.
 
 Exits 0 when valid (or when no document is configured), 1 with the loader's own message
 when not.
@@ -33,41 +32,16 @@ when not.
 
 import os
 import sys
-import tomllib
 
-from data_access_api.policy import AccessPolicyError, load_policy
-
-
-def _inline_declares_fl_privacy(inline: str) -> bool:
-    """Whether an inline document declares ``[fl_privacy]``, which only the fl-client enforces.
-
-    Returns False for text ``load_policy`` will reject as malformed anyway, so a TOML error is
-    reported once, by the loader, with its own message.
-    """
-    try:
-        document = tomllib.loads(inline)
-    except tomllib.TOMLDecodeError:
-        return False
-    return "fl_privacy" in document
+from data_access_api.policy import AccessPolicyError, describe_policy, load_policy
 
 
 def main() -> int:
-    inline = os.environ.get("ACCESS_POLICY")
     path = os.environ.get("ACCESS_POLICY_FILE")
     floor = int(os.environ.get("COHORT_QUERY_THRESHOLD") or 10)
 
-    if inline and _inline_declares_fl_privacy(inline):
-        print(
-            "❌ [fl_privacy] appears in ACCESS_POLICY, which the fl-client never reads — it reads "
-            "the document from ACCESS_POLICY_FILE only, so that section would be ignored there "
-            "while looking configured here. Put the document in a file "
-            "(trust/governance.<CODE>.toml) and point ACCESS_POLICY_FILE at it, or state the "
-            "fl-client half in FL_SITE_PRIVACY_*."
-        )
-        return 1
-
     try:
-        policy = load_policy(inline=inline, path=path, floor=floor)
+        policy = load_policy(path=path, floor=floor)
     except AccessPolicyError as e:
         print(f"❌ {e}")
         return 1
@@ -79,13 +53,15 @@ def main() -> int:
     threshold = policy.min_cohort_size if policy.min_cohort_size is not None else f"{floor} (kit floor)"
     print("✅ Governance document is valid.")
     print(f"   source: {policy.source}")
+    print(f"   sha256: {policy.digest} (data-access-api logs its first 12 characters at startup)")
     print(f"   effective min cohort size: {threshold}")
     print(f"   access rules: {len(policy.rules)}")
     for rule in policy.rules:
         scope = f"{len(rule.projects)} project(s)" if rule.projects else "all projects"
         extra = f", min_cohort_size={rule.min_cohort_size}" if rule.min_cohort_size is not None else ""
         print(f"     - {rule.id}: {rule.effect} {rule.action} for {scope}{extra}")
-    print("ℹ️  [fl_privacy] is validated by the fl-client, and by check-governance's site_policy check.")
+    # The same line the service logs, so the two can be compared by eye after a reload.
+    print(f"   expect in data-access-api's startup log: {describe_policy(policy, floor=floor)}")
     return 0
 
 

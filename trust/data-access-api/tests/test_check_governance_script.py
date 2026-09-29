@@ -10,36 +10,23 @@
 # limitations under the License.
 #
 
-"""The check-governance pre-flight's own refusals (FLIP#1259).
+"""The check-governance pre-flight (FLIP#1259).
 
-The loader it delegates to is unit-tested in ``tests/policy``; this pins the check that
-belongs to the script rather than to the loader — the inline document that declares
-``[fl_privacy]``. ``flip.nvflare.site_policy`` reads the document from ``ACCESS_POLICY_FILE``
-only, so that section would be parsed by data-access-api and then ignored by the one
-container meant to enforce it: the failure mode this feature exists to refuse.
+The loader it delegates to is unit-tested in ``tests/policy``; this pins the script's own
+contract: the same loader, the digest the service logs, and a bare interpreter.
 """
 
+import hashlib
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_governance.py"
+SERVICE_ROOT = SCRIPT.parents[1]
 EXAMPLE_DOCUMENT = SCRIPT.parents[2] / "governance.example.toml"
-
-_INLINE_WITH_PRIVACY = """
-[disclosure]
-min_cohort_size = 25
-
-[fl_privacy]
-policy = "percentile"
-percentile = 10
-"""
-
-_INLINE_DISCLOSURE_ONLY = """
-[disclosure]
-min_cohort_size = 25
-"""
 
 
 def _load_script() -> ModuleType:
@@ -54,31 +41,12 @@ def _load_script() -> ModuleType:
 
 
 def _run(monkeypatch, capsys, **env: str) -> tuple[int, str]:
-    for key in ("ACCESS_POLICY", "ACCESS_POLICY_FILE", "COHORT_QUERY_THRESHOLD"):
+    for key in ("ACCESS_POLICY_FILE", "COHORT_QUERY_THRESHOLD"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     code = _load_script().main()
     return code, capsys.readouterr().out
-
-
-def test_an_inline_document_declaring_fl_privacy_is_refused(monkeypatch, capsys) -> None:
-    """Silently ignoring a configured privacy control is the one outcome not allowed."""
-    code, out = _run(monkeypatch, capsys, ACCESS_POLICY=_INLINE_WITH_PRIVACY)
-
-    assert code == 1
-    assert "[fl_privacy] appears in ACCESS_POLICY" in out
-    # The message has to name the way out, or it is just a refusal.
-    assert "ACCESS_POLICY_FILE" in out
-
-
-def test_an_inline_document_without_fl_privacy_is_accepted(monkeypatch, capsys) -> None:
-    """The inline source stays usable for the half data-access-api does enforce."""
-    code, out = _run(monkeypatch, capsys, ACCESS_POLICY=_INLINE_DISCLOSURE_ONLY)
-
-    assert code == 0
-    assert "source: ACCESS_POLICY" in out
-    assert "effective min cohort size: 25" in out
 
 
 def test_no_document_configured_is_not_an_error(monkeypatch, capsys) -> None:
@@ -95,17 +63,51 @@ def test_the_shipped_example_document_validates(monkeypatch, capsys) -> None:
 
     assert code == 0, out
     assert "Governance document is valid" in out
-    assert "access rules: 2" in out
 
 
-def test_both_sources_set_is_refused(monkeypatch, capsys) -> None:
-    """Ambiguity about which policy is in force is refused, not resolved by precedence."""
-    code, out = _run(
-        monkeypatch,
-        capsys,
-        ACCESS_POLICY=_INLINE_DISCLOSURE_ONLY,
-        ACCESS_POLICY_FILE=str(EXAMPLE_DOCUMENT),
-    )
+def test_the_digest_printed_is_the_documents(monkeypatch, capsys, tmp_path) -> None:
+    """The operator matches this against data-access-api's startup line after a reload."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 30\n", encoding="utf-8")
+
+    code, out = _run(monkeypatch, capsys, ACCESS_POLICY_FILE=str(document))
+
+    assert code == 0, out
+    digest = hashlib.sha256(document.read_bytes()).hexdigest()
+    assert f"sha256: {digest}" in out
+    assert f"sha256={digest[:12]}" in out
+
+
+def test_an_invalid_document_fails_with_the_loaders_message(monkeypatch, capsys, tmp_path) -> None:
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 3\n", encoding="utf-8")
+
+    code, out = _run(monkeypatch, capsys, ACCESS_POLICY_FILE=str(document), COHORT_QUERY_THRESHOLD="10")
 
     assert code == 1
-    assert "both ACCESS_POLICY and ACCESS_POLICY_FILE are set" in out
+    assert "below the configured COHORT_QUERY_THRESHOLD" in out
+
+
+def test_it_runs_on_a_bare_interpreter_without_the_services_dependencies(tmp_path) -> None:
+    """check-governance runs this on the trust host with no project sync: nothing it imports
+    may need fastapi, pydantic or sqlalchemy. -S -I drops site-packages and the environment,
+    so an accidental heavy import fails here rather than on a firewalled host."""
+    document = tmp_path / "governance.toml"
+    document.write_text("[disclosure]\nmin_cohort_size = 30\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(SERVICE_ROOT)!r}); "
+            f"import runpy; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')",
+        ],
+        capture_output=True,
+        text=True,
+        env={"ACCESS_POLICY_FILE": str(document), "PATH": os.environ.get("PATH", "")},
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Governance document is valid" in result.stdout

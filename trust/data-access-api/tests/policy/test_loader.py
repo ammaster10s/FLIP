@@ -24,9 +24,13 @@ from data_access_api.policy import AccessPolicyError, load_policy, parse_policy
 
 FLOOR = 10
 
+P1 = "3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"
+P2 = "9b7e2d48-1a36-4c92-8f05-6d3b1e7a4c28"
+
 
 def test_valid_document_parses_rules_in_order():
-    """A well-formed document yields its rules, in document order (first match wins)."""
+    """A well-formed document yields its rules, in document order (kept for log lines; the
+    decision itself does not depend on order)."""
     policy = parse_policy(
         """
         [disclosure]
@@ -41,7 +45,7 @@ def test_valid_document_parses_rules_in_order():
         id = "imaging-allowlist"
         action = "cohort.accession_ids"
         effect = "permit"
-        projects = ["p1", "p2"]
+        projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15", "9B7E2D48-1A36-4C92-8F05-6D3B1E7A4C28"]
         min_cohort_size = 50
         """,
         floor=FLOOR,
@@ -52,17 +56,17 @@ def test_valid_document_parses_rules_in_order():
     assert [r.id for r in policy.rules] == ["no-raw-export", "imaging-allowlist"]
     assert policy.rules[0].effect == "deny"
     assert policy.rules[0].projects is None
-    assert policy.rules[1].projects == frozenset({"p1", "p2"})
+    assert policy.rules[1].projects == frozenset({P1, P2}), "project ids are normalised to the hub's lowercase form"
     assert policy.rules[1].min_cohort_size == 50
 
 
-def test_empty_document_is_valid_and_mentions_nothing():
-    """An empty document is legal: it configures no rules and constrains nothing."""
-    policy = parse_policy("", floor=FLOOR, source="test")
-
-    assert policy.min_cohort_size is None
-    assert policy.rules == ()
-    assert policy.mentions("cohort.dataframe") is False
+@pytest.mark.parametrize("text", ["", "   \n\t\n", "# every line commented out\n# [disclosure]\n"])
+def test_a_document_that_configures_nothing_is_rejected(text):
+    """An empty file is far likelier a truncated copy than an intent: accepting it as a valid
+    no-op would drop every rule the operator believes is in force. No policy is spelt by
+    leaving ACCESS_POLICY_FILE unset."""
+    with pytest.raises(AccessPolicyError, match="configures nothing"):
+        parse_policy(text, floor=FLOOR, source="test")
 
 
 def test_fl_privacy_section_is_accepted_but_not_interpreted():
@@ -74,7 +78,7 @@ def test_fl_privacy_section_is_accepted_but_not_interpreted():
     """
     policy = parse_policy(
         """
-        [fl_privacy]
+        [fl_privacy.nvflare]
         policy = "percentile"
         percentile = 10
         gamma = 0.01
@@ -90,6 +94,81 @@ def test_unknown_top_level_section_is_rejected():
     """A misspelt section is an error, not an ignored line (the #851 precedent)."""
     with pytest.raises(AccessPolicyError, match="unrecognised key"):
         parse_policy("[disclosre]\nmin_cohort_size = 20", floor=FLOOR, source="test")
+
+
+def test_unknown_key_in_disclosure_is_rejected():
+    """A misspelt threshold key would leave the kit floor in force while the operator
+    believes the raised one is."""
+    with pytest.raises(AccessPolicyError, match="unrecognised key"):
+        parse_policy("[disclosure]\nmin_cohort = 50", floor=FLOOR, source="test")
+
+
+def test_unknown_key_in_access_is_rejected():
+    """[[access.rules]] (plural) would otherwise drop every rule in the document."""
+    with pytest.raises(AccessPolicyError, match="unrecognised key"):
+        parse_policy(
+            """
+            [[access.rules]]
+            id = "r1"
+            action = "cohort.dataframe"
+            effect = "deny"
+            """,
+            floor=FLOOR,
+            source="test",
+        )
+
+
+def test_effect_is_required():
+    """A dropped effect line used to default to permit, turning an intended deny into a
+    permit. There is no default."""
+    with pytest.raises(AccessPolicyError, match="needs an 'effect'"):
+        parse_policy(
+            """
+            [[access.rule]]
+            id = "r1"
+            action = "cohort.dataframe"
+            """,
+            floor=FLOOR,
+            source="test",
+        )
+
+
+@pytest.mark.parametrize("entry", ["p1", "", "3f1c9a70-5e42-4d8b-9c31"])
+def test_a_project_id_that_is_not_a_uuid_is_rejected(entry):
+    """The hub seals str(uuid.UUID). Any other string can never match a request, so a deny
+    list naming one would silently deny nothing."""
+    with pytest.raises(AccessPolicyError, match="not a project UUID"):
+        parse_policy(
+            f"""
+            [[access.rule]]
+            id = "r1"
+            action = "cohort.dataframe"
+            effect = "deny"
+            projects = ["{entry}"]
+            """,
+            floor=FLOOR,
+            source="test",
+        )
+
+
+def test_rule_threshold_below_the_disclosure_section_is_rejected():
+    """A rule threshold under [disclosure] is inert (the section's value wins by max()), so
+    accepting it would describe a policy that is not the one enforced."""
+    with pytest.raises(AccessPolicyError, match="below the document's \\[disclosure\\]"):
+        parse_policy(
+            """
+            [disclosure]
+            min_cohort_size = 25
+
+            [[access.rule]]
+            id = "r1"
+            action = "cohort.dataframe"
+            effect = "permit"
+            min_cohort_size = 15
+            """,
+            floor=FLOOR,
+            source="test",
+        )
 
 
 def test_unknown_rule_field_is_rejected():
@@ -235,39 +314,81 @@ def test_malformed_toml_is_rejected():
         parse_policy("[disclosure\nmin_cohort_size = 20", floor=FLOOR, source="test")
 
 
-def test_unset_sources_yield_no_policy():
+def test_unset_source_yields_no_policy():
     """Unset means today's behaviour — not an error, and not an empty policy."""
-    assert load_policy(inline=None, path=None, floor=FLOOR) is None
+    assert load_policy(path=None, floor=FLOOR) is None
 
 
-def test_empty_string_sources_are_treated_as_unset():
+def test_empty_string_source_is_treated_as_unset():
     """The kit-file `sed` export turns a commented-out entry into KEY=""."""
-    assert load_policy(inline="", path="", floor=FLOOR) is None
-    assert load_policy(inline="   ", path="  ", floor=FLOOR) is None
-
-
-def test_both_sources_set_is_rejected():
-    """Guessing a precedence would leave the wrong policy silently in force."""
-    with pytest.raises(AccessPolicyError, match="set exactly one"):
-        load_policy(inline="[disclosure]\nmin_cohort_size = 20", path="/tmp/x.toml", floor=FLOOR)
+    assert load_policy(path="", floor=FLOOR) is None
+    assert load_policy(path="  ", floor=FLOOR) is None
 
 
 def test_unreadable_policy_file_is_rejected(tmp_path):
     """A configured-but-missing file must fail closed, not fall back to defaults."""
     missing = tmp_path / "does-not-exist.toml"
     with pytest.raises(AccessPolicyError, match="could not be read"):
-        load_policy(inline=None, path=str(missing), floor=FLOOR)
+        load_policy(path=str(missing), floor=FLOOR)
 
 
-def test_policy_file_is_loaded(tmp_path):
+def test_policy_file_is_loaded_with_a_digest_of_its_bytes(tmp_path):
+    """The digest is what an operator compares between check-governance and the service's
+    startup line, to know the document they validated is the one in force."""
+    import hashlib
+
     path = tmp_path / "governance.toml"
-    path.write_text("[disclosure]\nmin_cohort_size = 30\n", encoding="utf-8")
+    text = "[disclosure]\nmin_cohort_size = 30\n"
+    path.write_text(text, encoding="utf-8")
 
-    policy = load_policy(inline=None, path=str(path), floor=FLOOR)
+    policy = load_policy(path=str(path), floor=FLOOR)
 
     assert policy is not None
     assert policy.min_cohort_size == 30
     assert str(path) in policy.source
+    assert policy.digest == hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_describe_names_the_source_digest_and_every_rule():
+    """The startup line (logged by main.py) is the operator's proof of what is enforced."""
+    from data_access_api.policy import describe_policy
+
+    policy = parse_policy(
+        f"""
+        [disclosure]
+        min_cohort_size = 25
+
+        [[access.rule]]
+        id = "withdrawn"
+        action = "cohort.accession_ids"
+        effect = "deny"
+        projects = ["{P1}"]
+
+        [[access.rule]]
+        id = "everyone-else"
+        action = "cohort.accession_ids"
+        effect = "permit"
+        """,
+        floor=FLOOR,
+        source="ACCESS_POLICY_FILE=/app/governance.toml",
+    )
+
+    line = describe_policy(policy, floor=FLOOR)
+
+    assert line.startswith("[governance] policy ACTIVE from ACCESS_POLICY_FILE=/app/governance.toml")
+    assert f"sha256={policy.digest[:12]}" in line
+    assert "min_cohort_size=25" in line
+    assert "withdrawn=deny cohort.accession_ids (1 project)" in line
+    assert "everyone-else=permit cohort.accession_ids (all projects)" in line
+
+
+def test_describe_says_when_no_policy_is_configured():
+    from data_access_api.policy import describe_policy
+
+    line = describe_policy(None, floor=12)
+
+    assert line.startswith("[governance] no policy configured")
+    assert "COHORT_QUERY_THRESHOLD=12" in line
 
 
 def test_shipped_example_document_is_valid():
