@@ -298,7 +298,7 @@ down:
 _ensure-object-store-dir:
 	@if [ -n "$(IS_DEPLOYED)" ]; then exit 0; fi; \
 	for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do \
-		bucket=$$(printf '%s' "$${!var}"); \
+		eval "bucket=\$$$$var"; \
 		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: $$var is empty or unset in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
 		case "$$bucket" in */*|.|..|*'<'*|*'>'*) echo "❌ _ensure-object-store-dir: $$var='$$bucket' is not a bucket name (one path segment, no placeholders)" >&2; exit 1;; esac; \
 		dir="$(OBJECT_STORE_DIR)/$$bucket"; \
