@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -30,9 +31,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from make_dry_run import REPO, assert_data_safe, dry_run, main  # noqa: E402
 
-# The external networks the services `make central-hub` starts (flip-db, flip-api) join in
-# deploy/compose.development.yml: `default` and `central-hub-trust-apis-network`.
-HUB_ONLY_NETWORKS = ("deploy_central-hub-network", "deploy_central-hub-trust-apis-network")
+HUB_ONLY_SERVICES = {"flip-db", "flip-api"}  # what `make central-hub` starts (flip-api/Makefile `up`)
+
+
+def hub_only_networks() -> set[str]:
+    """The unprefixed names of the external networks HUB_ONLY_SERVICES join in the dev compose.
+
+    Read from the file rather than listed here, so a network added to either service fails the
+    test instead of breaking `make central-hub` on a fresh host again. Line-based: the root tests
+    are stdlib-only (no PyYAML on the runner).
+    """
+    keys: set[str] = set()
+    names: dict[str, str] = {}
+    section = entry = None
+    in_networks = False
+    for line in (REPO / "deploy" / "compose.development.yml").read_text().splitlines():
+        if top := re.match(r"^([\w-]+):", line):
+            section, entry = top[1], None
+        elif key := re.match(r"^  ([\w-]+):\s*$", line):
+            entry, in_networks = key[1], False
+        elif section == "services" and entry in HUB_ONLY_SERVICES:
+            if re.match(r"^    networks:\s*$", line):
+                in_networks = True
+            elif in_networks and (item := re.match(r"^      - ([\w-]+)", line)):
+                keys.add(item[1])
+            elif re.match(r"^    \S", line):
+                in_networks = False
+        elif section == "networks" and (name := re.match(r"^    name: \$\{FLIP_INSTANCE:[^}]*\}(\S+)", line)):
+            names[entry] = name[1]
+    return {names[key] for key in keys}
 
 
 class UpgradeOnpremTrust(unittest.TestCase):
@@ -48,21 +75,20 @@ class UpgradeOnpremTrust(unittest.TestCase):
 
 
 class CentralHubNetworks(unittest.TestCase):
-    def test_the_networks_are_the_ones_the_compose_file_names(self):
-        compose = (REPO / "deploy" / "compose.development.yml").read_text()
-        for network in HUB_ONLY_NETWORKS:
-            assert "name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}" + network in compose, network
+    def test_the_compose_file_is_still_parsed(self):
+        assert "deploy_central-hub-network" in hub_only_networks(), hub_only_networks()
 
     def test_create_networks_centralhub_creates_every_hub_only_network(self):
         """`make central-hub` on a fresh host must not need the trust Makefile's `create-networks`."""
-        for instance, prefix in (("", ""), ("FLIP_INSTANCE=kc", "kc-")):
-            out = dry_run("create-networks-centralhub", *filter(None, [instance]), subdir=".")
-            for network in HUB_ONLY_NETWORKS:
-                assert f"docker network create --driver bridge {prefix}{network}" in out, f"{prefix}{network}:\n{out}"
+        for instance in ("", "kc"):
+            out = dry_run("create-networks-centralhub", f"FLIP_INSTANCE={instance}", subdir=".")
+            for network in hub_only_networks():
+                name = f"{instance}-{network}" if instance else network
+                assert f"docker network create --driver bridge {name}" in out, f"{name}:\n{out}"
 
     def test_remove_networks_removes_them(self):
         out = dry_run("remove-networks", "FLIP_INSTANCE=kc", subdir=".")
-        for network in HUB_ONLY_NETWORKS:
+        for network in hub_only_networks():
             assert f"kc-{network}" in out, f"kc-{network}:\n{out}"
 
 
