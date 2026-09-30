@@ -27,6 +27,7 @@ Usage (inside the running flip-api container):
 
 import argparse
 import json
+from collections import Counter
 from typing import Any
 
 from fastapi import HTTPException
@@ -93,9 +94,7 @@ def main() -> None:
     with Session(get_engine()) as session:
         outcomes = backfill_cohort_snapshots(session, dry_run=args.dry_run)
 
-    counts: dict[str, int] = {}
-    for outcome in outcomes:
-        counts[outcome["outcome"]] = counts.get(outcome["outcome"], 0) + 1
+    counts = dict(Counter(outcome["outcome"] for outcome in outcomes))
     logger.info(f"Cohort snapshot backfill: {counts or 'nothing to queue'}")
     print(json.dumps({"counts": counts, "trusts": outcomes}, indent=2))
 

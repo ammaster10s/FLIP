@@ -191,10 +191,9 @@ def ensure_store() -> None:
                 continue
             if stale.name.startswith(_OLD_PREFIX):
                 project_key = _canonical_project_id(_project_key_of(stale.name, _OLD_PREFIX))
-                active = base / project_key if project_key else None
-                if active is not None and not active.exists():
-                    os.replace(stale, active)
-                    logger.warning(f"Restored superseded cohort membership for project {active.name}")
+                if project_key is not None and not (base / project_key).exists():
+                    os.replace(stale, base / project_key)
+                    logger.warning(f"Restored superseded cohort membership for project {project_key}")
                     continue
             shutil.rmtree(stale, ignore_errors=True)
             logger.warning(f"Removed stale snapshot work directory {stale.name}")
@@ -343,12 +342,13 @@ def delete_snapshot(project_id: str) -> bool:
     if canonical is None:
         return False
 
-    snapshot_dir = _store_dir() / canonical
+    base = _store_dir()
+    snapshot_dir = base / canonical
     if not snapshot_dir.exists():
         return False
     # Move aside first so a concurrent reader sees either the intact snapshot or none —
     # never a directory whose files are vanishing under it mid-read.
-    tomb = _store_dir() / f"{_DEL_PREFIX}{canonical}-{uuid.uuid4().hex[:8]}"
+    tomb = base / f"{_DEL_PREFIX}{canonical}-{uuid.uuid4().hex[:8]}"
     os.replace(snapshot_dir, tomb)
     shutil.rmtree(tomb, ignore_errors=True)
     logger.info(f"Cohort snapshot deleted for project {canonical}")

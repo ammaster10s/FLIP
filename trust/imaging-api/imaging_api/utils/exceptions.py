@@ -57,8 +57,6 @@ class CohortBelowThresholdError(Exception):
         super().__init__(message)
         self.detail = detail
 
-    pass
-
 
 class InternalServerError(Exception):
     """Exception raised for internal server errors."""

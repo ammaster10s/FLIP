@@ -47,10 +47,7 @@ def requeue_trust_snapshots(project_id: UUID, trusts: list[Trust], db: Session) 
     Returns:
         list[ICohortSnapshotRequeue]: What was done at each trust, in the order given.
     """
-    outcomes = []
-    for entry in resolve_snapshot_states(project_id, trusts, db):
-        outcomes.append(_requeue_one(project_id, entry, db))
-    return outcomes
+    return [_requeue_one(project_id, entry, db) for entry in resolve_snapshot_states(project_id, trusts, db)]
 
 
 def _requeue_one(project_id: UUID, entry: TrustSnapshotState, db: Session) -> ICohortSnapshotRequeue:

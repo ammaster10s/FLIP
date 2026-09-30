@@ -121,8 +121,9 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
                 body = exc.response.json()
             except ValueError:
                 body = None
-            detail = body.get("detail", "") if isinstance(body, dict) else ""
-            detail = detail if isinstance(detail, str) else ""
+            detail = body.get("detail") if isinstance(body, dict) else None
+            if not isinstance(detail, str):
+                detail = ""
             message = f"get_accession_ids: the Data Access API refused to release accession IDs — {detail}"
             logger.warning(message)
             raise CohortBelowThresholdError(message, detail=detail) from exc
