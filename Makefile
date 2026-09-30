@@ -367,8 +367,12 @@ debug-off-all:
 # Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
 # the hub compose project that owns them — the same string compose would generate itself if it
 # still created them, rather than looked them up `external:` (FLIP#957).
+# Every external network the hub-only services join (flip-api is on both), so `make central-hub`
+# works on a host that has never run the trust Makefile's create-networks. That one ensures the
+# trust-apis network too, for a trust brought up on its own; both are idempotent.
 create-networks-centralhub:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
