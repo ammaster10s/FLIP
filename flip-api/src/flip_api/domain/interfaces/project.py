@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
 from flip_api.domain.schemas.status import (
+    CohortSnapshotState,
     DecisionMaker,
     ImagingConnectionState,
     ModelStatus,
@@ -263,20 +264,44 @@ class IImagingImportStatus(BaseModel):
 
 
 class ICohortSnapshot(BaseModel):
-    """One trust's frozen approved-cohort record (FLIP#857) — aggregates only.
+    """One approved trust's cohort freeze (FLIP#857) — aggregates only.
 
-    ``approvedRecordCount`` is the count the project was staged/approved on; when it
-    differs from ``rowCount`` the live cohort drifted between submission and approval
-    (the UI surfaces the diff — the snapshot is what the project trains on either way).
+    ``status`` is FROZEN, PENDING or FAILED; only a FROZEN trust serves the project's cohort, so
+    training at a PENDING or FAILED one is refused. The count fields are the approval-time facts
+    and are present once the trust has reported a snapshot. The frozen membership bounds what the
+    project trains on at that trust (it can shrink as patients opt out, never grow), so
+    ``rowCount`` is an upper bound. ``approvedRecordCount`` is the count the project was
+    staged/approved on; when it differs from ``rowCount`` the live cohort drifted between
+    submission and approval. ``error`` is a category-only reason, set when ``status`` is FAILED.
     """
 
     trust_id: UUID = Field(alias="trustId")
     trust_name: str = Field(alias="trustName")
-    row_count: int = Field(alias="rowCount")
+    status: CohortSnapshotState
+    error: str | None = None
+    row_count: int | None = Field(default=None, alias="rowCount")
     approved_record_count: int | None = Field(default=None, alias="approvedRecordCount")
-    has_accessions: bool = Field(alias="hasAccessions")
-    snapshot_at: datetime = Field(alias="snapshotAt")
+    has_accessions: bool | None = Field(default=None, alias="hasAccessions")
+    snapshot_at: datetime | None = Field(default=None, alias="snapshotAt")
     query_id: UUID | None = Field(default=None, alias="queryId")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
+class ICohortSnapshotRequeue(BaseModel):
+    """What a re-freeze request did at one approved trust (FLIP#857).
+
+    ``queued`` is True when a new PERSIST_COHORT task was queued. When False, ``status`` is the
+    trust's unchanged state and ``reason`` says why nothing was queued there.
+    """
+
+    trust_id: UUID = Field(alias="trustId")
+    trust_name: str = Field(alias="trustName")
+    queued: bool
+    status: CohortSnapshotState
+    reason: str | None = None
 
     model_config = ConfigDict(
         populate_by_name=True,

@@ -14,11 +14,11 @@
 
 Approved-cohort snapshots (FLIP#857): adds the PERSIST_COHORT member to the native
 ``tasktype`` Postgres enum (the approval-time task that makes each trust freeze its
-cohort) and the ``cohort_snapshot_status`` table — the hub's per-(project, trust)
-audit record of what was frozen (aggregates only; the row-level cohort never leaves
-the trust). ADD VALUE cannot run inside the migration transaction, hence the
-autocommit block; it is appended last so migrated databases keep the same enum
-order as fresh ones.
+cohort's membership) and the ``cohort_snapshot_status`` table — the hub's audit record
+of each trust's approval-time snapshot facts, unique per (project, trust) (aggregates
+only; the row-level cohort never leaves the trust). ADD VALUE cannot run inside the
+migration transaction, hence the autocommit block; it is appended last so migrated
+databases keep the same enum order as fresh ones.
 
 Revision ID: b3f1c857a001
 Revises: e8c4a2f71b36
@@ -44,8 +44,8 @@ def upgrade() -> None:
     op.create_table(
         'cohort_snapshot_status',
         sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('project_id', sa.Uuid(), nullable=True),
-        sa.Column('trust_id', sa.Uuid(), nullable=True),
+        sa.Column('project_id', sa.Uuid(), nullable=False),
+        sa.Column('trust_id', sa.Uuid(), nullable=False),
         sa.Column('query_id', sa.Uuid(), nullable=True),
         sa.Column('row_count', sa.Integer(), nullable=False),
         sa.Column('approved_record_count', sa.Integer(), nullable=True),
@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['project_id'], ['projects.id']),
         sa.ForeignKeyConstraint(['trust_id'], ['trust.id']),
         sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('project_id', 'trust_id', name='uq_cohort_snapshot_status_project_trust'),
     )
 
 

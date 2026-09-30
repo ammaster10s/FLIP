@@ -211,11 +211,23 @@ class TaskType(StrEnum):
     GET_IMAGING_STATUS = "get_imaging_status"
     REIMPORT_STUDIES = "reimport_studies"
     UPDATE_USER_PROFILE = "update_user_profile"
-    # Approval-time cohort freeze (FLIP#857): the trust materialises the approved cohort
-    # once and persists it; the row-level routes serve only that artefact from then on.
-    # Queued BEFORE the CREATE_IMAGING task so the frozen accession set exists by the time
-    # imaging retrieval asks for it.
+    # Approval-time cohort freeze (FLIP#857): the trust records the approved cohort's
+    # membership once; the row-level routes then serve only those members. Queued BEFORE
+    # the CREATE_IMAGING task so the frozen accession set exists by the time imaging
+    # retrieval asks for it.
     PERSIST_COHORT = "persist_cohort"
+
+
+class CohortSnapshotState(StrEnum):
+    """Where a trust's approval-time cohort freeze (FLIP#857) stands, from its latest PERSIST_COHORT task.
+
+    Derived per request; not persisted. Only FROZEN lets the trust serve the project's cohort — at a
+    PENDING or FAILED trust the row-level routes refuse the project.
+    """
+
+    FROZEN = "frozen"
+    PENDING = "pending"
+    FAILED = "failed"
 
 
 class XNATImageStatus(StrEnum):

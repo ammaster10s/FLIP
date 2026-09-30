@@ -13,13 +13,14 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import CohortSnapshotStatus, Trust
 from flip_api.domain.interfaces.project import ICohortSnapshot
+from flip_api.project_services.services.cohort_snapshot_service import resolve_snapshot_states
+from flip_api.project_services.services.project_services import get_approved_trusts_for_project
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
@@ -27,13 +28,13 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 
 @router.get(
     "/{project_id}/cohort-snapshots",
-    summary="Get the per-trust frozen approved-cohort records for a project.",
+    summary="Get each approved trust's approval-time cohort freeze for a project.",
     response_model=list[ICohortSnapshot],
     status_code=status.HTTP_200_OK,
     responses={
         status.HTTP_200_OK: {
             "model": list[ICohortSnapshot],
-            "description": "The per-trust cohort snapshot records (empty until trusts report snapshots).",
+            "description": "One entry per approved trust: frozen, pending or failed (empty until a trust approves).",
         },
         status.HTTP_403_FORBIDDEN: {
             "model": None,
@@ -47,14 +48,15 @@ async def get_cohort_snapshots(
     user_id: UUID = Depends(verify_token),
 ) -> list[ICohortSnapshot]:
     """
-    Get the per-trust record of the cohort frozen at project approval (FLIP#857).
+    Get each approved trust's record of the cohort membership frozen at project approval (FLIP#857).
 
-    Aggregates only — the row-level cohort never leaves each trust. One entry per trust
-    that has completed its PERSIST_COHORT task; a trust missing from the list has not
-    reported a snapshot (task pending/failed, or the project predates the feature), and
-    its row-level routes will refuse serving until it does. A ``rowCount`` differing from
-    ``approvedRecordCount`` means the live cohort drifted between submission and approval —
-    surfaced here so the drift is visible, never silently adopted.
+    Aggregates only — the row-level cohort never leaves each trust. One entry per approved trust, with
+    a ``status`` from its latest PERSIST_COHORT task: ``frozen`` (with the approval-time facts),
+    ``pending`` (queued, running, or its record not yet written) or ``failed`` (with a category-only
+    ``error``; also used when no snapshot was ever requested, e.g. a project approved before the
+    feature). Training at a trust that is not frozen is refused there. A ``rowCount`` differing from
+    ``approvedRecordCount`` means the live cohort drifted between submission and approval — surfaced
+    here so the drift is visible, never silently adopted.
 
     Args:
         project_id (UUID): The ID of the project.
@@ -62,7 +64,7 @@ async def get_cohort_snapshots(
         user_id (UUID): The ID of the user.
 
     Returns:
-        list[ICohortSnapshot]: One frozen-cohort record per reporting trust.
+        list[ICohortSnapshot]: One entry per approved trust.
 
     Raises:
         HTTPException: If the user does not have permission to access the project.
@@ -75,21 +77,21 @@ async def get_cohort_snapshots(
             detail="You do not have permission to access this project.",
         )
 
-    rows = session.exec(
-        select(CohortSnapshotStatus, Trust)
-        .join(Trust, Trust.id == CohortSnapshotStatus.trust_id)  # type: ignore[arg-type]
-        .where(CohortSnapshotStatus.project_id == project_id)
-    ).all()
-
-    return [
-        ICohortSnapshot(  # type: ignore[call-arg]  # populate_by_name: field names are valid at runtime
-            trust_id=snapshot.trust_id,
-            trust_name=trust.name,
-            row_count=snapshot.row_count,
-            approved_record_count=snapshot.approved_record_count,
-            has_accessions=snapshot.has_accessions,
-            snapshot_at=snapshot.snapshot_at,
-            query_id=snapshot.query_id,
+    trusts = get_approved_trusts_for_project(project_id, session)
+    snapshots = []
+    for entry in resolve_snapshot_states(project_id, trusts, session):
+        record = entry.record
+        snapshots.append(
+            ICohortSnapshot(  # type: ignore[call-arg]  # populate_by_name: field names are valid at runtime
+                trust_id=entry.trust.id,
+                trust_name=entry.trust.name,
+                status=entry.state,
+                error=entry.error,
+                row_count=record.row_count if record else None,
+                approved_record_count=record.approved_record_count if record else None,
+                has_accessions=record.has_accessions if record else None,
+                snapshot_at=record.snapshot_at if record else None,
+                query_id=record.query_id if record else None,
+            )
         )
-        for snapshot, trust in rows
-    ]
+    return snapshots

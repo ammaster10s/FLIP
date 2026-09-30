@@ -50,6 +50,8 @@ vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 const frozenSnapshot = (overrides: Partial<ICohortSnapshot> = {}): ICohortSnapshot => ({
     trustId: "trust-1",
     trustName: "Alpha Trust",
+    status: "frozen",
+    error: null,
     rowCount: 300,
     approvedRecordCount: 300,
     hasAccessions: true,
@@ -124,6 +126,75 @@ describe("CohortSnapshotSummary", () => {
         const wrapper = mountComponent();
 
         expect(wrapper.find("[data-test='cohort-snapshot-tabular']").exists()).toBe(true);
+    });
+
+    it("shows a pending trust with an amber chip and no counts", () => {
+        mockSwrvData.value = [frozenSnapshot({
+            status: "pending",
+            rowCount: null,
+            approvedRecordCount: null,
+            hasAccessions: null,
+            snapshotAt: null
+        })];
+        const wrapper = mountComponent();
+
+        const row = wrapper.find("[data-test='cohort-snapshot-row']");
+        expect(row.attributes("data-status")).toBe("pending");
+        expect(wrapper.find("[data-test='cohort-snapshot-pending']").exists()).toBe(true);
+        expect(row.text()).toContain("training at this trust will be refused until it is");
+        expect(wrapper.find("[data-test='cohort-snapshot-count']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='cohort-snapshot-tabular']").exists()).toBe(false);
+    });
+
+    it("shows a failed trust in red with its category-only reason", () => {
+        mockSwrvData.value = [frozenSnapshot({
+            status: "failed",
+            error: "Refused by the trust (for example, the cohort is below its disclosure threshold)",
+            rowCount: null,
+            approvedRecordCount: null,
+            hasAccessions: null,
+            snapshotAt: null
+        })];
+        const wrapper = mountComponent();
+
+        expect(wrapper.find("[data-test='cohort-snapshot-failed']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='cohort-snapshot-failed-text']").text())
+            .toBe("Cohort not frozen — training at this trust will be refused");
+        expect(wrapper.find("[data-test='cohort-snapshot-error']").text()).toContain("disclosure threshold");
+        expect(wrapper.find("[data-test='cohort-snapshot-count']").exists()).toBe(false);
+    });
+
+    it("omits the reason line when a failed trust has none", () => {
+        mockSwrvData.value = [frozenSnapshot({
+            status: "failed",
+            rowCount: null
+        })];
+        const wrapper = mountComponent();
+
+        expect(wrapper.find("[data-test='cohort-snapshot-failed']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='cohort-snapshot-error']").exists()).toBe(false);
+    });
+
+    it("lists frozen, pending and failed trusts side by side", () => {
+        mockSwrvData.value = [
+            frozenSnapshot(),
+            frozenSnapshot({
+                trustId: "trust-2",
+                trustName: "Beta Trust",
+                status: "pending",
+                rowCount: null
+            }),
+            frozenSnapshot({
+                trustId: "trust-3",
+                trustName: "Gamma Trust",
+                status: "failed",
+                rowCount: null
+            })
+        ];
+        const wrapper = mountComponent();
+
+        const statuses = wrapper.findAll("[data-test='cohort-snapshot-row']").map((row) => row.attributes("data-status"));
+        expect(statuses).toEqual(["frozen", "pending", "failed"]);
     });
 
     it("renders nothing when loading is gated off (project not approved yet)", () => {

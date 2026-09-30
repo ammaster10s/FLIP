@@ -17,7 +17,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
+from flip_api.db.models.main_models import COHORT_SNAPSHOT_STATUS_UNIQUE
 from flip_api.domain.schemas.private import AggregatedCohortStats
 from flip_api.private_services.snapshot_notifications import handle_snapshot_task_completed
 
@@ -51,14 +53,10 @@ def _make_task(row_count=24, query_id=QUERY_ID, result_overrides=None):
     return task
 
 
-def _make_db(stats_row=None, existing_status=None):
-    """Session mock: first exec() resolves QueryStats, second the existing status row."""
+def _make_db(stats_row=None):
+    """Session mock: exec() resolves the QueryStats row; the upsert goes through execute()."""
     db = MagicMock()
-    stats_result = MagicMock()
-    stats_result.first.return_value = stats_row
-    status_result = MagicMock()
-    status_result.first.return_value = existing_status
-    db.exec.side_effect = [stats_result, status_result]
+    db.exec.return_value.first.return_value = stats_row
     return db
 
 
@@ -70,17 +68,25 @@ def _stats_row(trust_record_counts):
     return row
 
 
+def _upsert(db):
+    """The single upsert statement the handler executed, compiled for Postgres."""
+    db.execute.assert_called_once()
+    return db.execute.call_args[0][0].compile(dialect=postgresql.dialect())
+
+
 def test_records_the_frozen_cohort_audit_row():
     db = _make_db(stats_row=_stats_row({str(TRUST_ID): 24}))
     handle_snapshot_task_completed(_make_task(), db)
 
-    db.add.assert_called_once()
-    status_row = db.add.call_args[0][0]
-    assert status_row.row_count == 24
-    assert status_row.approved_record_count == 24
-    assert status_row.has_accessions is True
-    assert status_row.query_hash == "abc123"
-    assert str(status_row.query_id) == QUERY_ID
+    params = _upsert(db).params
+    assert str(params["project_id"]) == PROJECT_ID
+    assert params["trust_id"] == TRUST_ID
+    assert params["row_count"] == 24
+    assert params["approved_record_count"] == 24
+    assert params["has_accessions"] is True
+    assert params["query_hash"] == "abc123"
+    assert str(params["query_id"]) == QUERY_ID
+    db.add.assert_not_called()
     db.commit.assert_called_once()
 
 
@@ -91,9 +97,9 @@ def test_membership_drift_is_surfaced_not_swallowed(caplog):
         handle_snapshot_task_completed(_make_task(row_count=24), db)
 
     assert any("drift" in record.message and "20" in record.message for record in caplog.records)
-    status_row = db.add.call_args[0][0]
-    assert status_row.approved_record_count == 20
-    assert status_row.row_count == 24
+    params = _upsert(db).params
+    assert params["approved_record_count"] == 20
+    assert params["row_count"] == 24
 
 
 def test_missing_query_stats_still_records_the_row():
@@ -101,19 +107,24 @@ def test_missing_query_stats_still_records_the_row():
     db = _make_db(stats_row=None)
     handle_snapshot_task_completed(_make_task(), db)
 
-    status_row = db.add.call_args[0][0]
-    assert status_row.approved_record_count is None
-    assert status_row.row_count == 24
+    params = _upsert(db).params
+    assert params["approved_record_count"] is None
+    assert params["row_count"] == 24
 
 
-def test_reapproval_updates_the_existing_row_in_place():
-    existing = MagicMock()
-    db = _make_db(stats_row=_stats_row({str(TRUST_ID): 30}), existing_status=existing)
+def test_reapproval_upserts_on_the_project_trust_constraint():
+    """One row per (project, trust): a second snapshot updates the facts on conflict, never duplicates."""
+    db = _make_db(stats_row=_stats_row({str(TRUST_ID): 30}))
     handle_snapshot_task_completed(_make_task(row_count=30), db)
 
-    # The same row object is updated and re-added — no duplicate per (project, trust).
-    assert db.add.call_args[0][0] is existing
-    assert existing.row_count == 30
+    sql = str(_upsert(db))
+    assert f"ON CONFLICT ON CONSTRAINT {COHORT_SNAPSHOT_STATUS_UNIQUE} DO UPDATE" in sql
+    set_clause = sql.split("DO UPDATE SET", 1)[1]
+    for column in ("row_count", "approved_record_count", "has_accessions", "query_hash", "snapshot_at", "query_id"):
+        assert f"{column} = " in set_clause
+    # The key and the first-write timestamp are never overwritten.
+    for column in ("project_id", "trust_id", "created_at"):
+        assert f"{column} = " not in set_clause
 
 
 def test_task_without_result_raises():

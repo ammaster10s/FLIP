@@ -247,7 +247,8 @@ async def test_a_late_trust_freezes_its_own_cohort_before_its_imaging(
     """A trust approving an already-APPROVED project (FLIP#1258) joins through this same entry point.
 
     So it gets its own PERSIST_COHORT task (FLIP#857), committed before its CREATE_IMAGING task: the row-level
-    routes serve only the frozen snapshot, and a late trust without one would refuse its imaging and training.
+    routes serve only the frozen members, and a late trust without a frozen membership would refuse its imaging
+    and training.
     """
     late_trust = ITrust(id=uuid.uuid4(), name="Late Trust")
     mock_get_approved_trusts.return_value = [trust_example, late_trust]
@@ -422,3 +423,36 @@ def test_queue_cohort_snapshot_rolls_back_a_db_error(mock_get_session, mock_get_
     assert excinfo.value.status_code == 500
     assert excinfo.value.detail == "Internal server error"
     mock_get_session.rollback.assert_called_once()
+
+
+def test_queue_cohort_snapshot_refuses_a_project_without_a_query(mock_get_session, mock_get_project):
+    """No query of record means nothing to freeze: the step fails for this trust instead of reporting success."""
+    mock_get_project.return_value.query = None
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 409
+    assert "no cohort query" in excinfo.value.detail
+    mock_get_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_imaging_is_not_queued_for_a_project_without_a_query(
+    mock_request,
+    mock_get_session,
+    mock_get_project,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+):
+    """The snapshot failure stops the trust's imaging too: imaging without a frozen membership would be refused."""
+    mock_get_project.return_value.query = None
+
+    with pytest.raises(HTTPException) as excinfo:
+        await queue_imaging_creation(
+            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session
+        )
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()

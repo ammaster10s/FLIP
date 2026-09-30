@@ -71,6 +71,7 @@ from flip_api.project_services import (
     get_project,
     get_project_approved_trusts,
     get_projects,
+    requeue_cohort_snapshots,
     stage_project,
     unstage_project,
 )
@@ -223,6 +224,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_project_approved_trusts.router,
     get_project.router,
     get_projects.router,
+    requeue_cohort_snapshots.router,
     stage_project.router,
     unstage_project.router,
     # Roles services

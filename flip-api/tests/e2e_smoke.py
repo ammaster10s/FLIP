@@ -923,8 +923,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "100%%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
         "training code without re-creating the project for every retry. The project must have been "
         "approved AFTER the cohort-snapshot feature (FLIP#857): the trusts' row-level routes serve "
-        "only the cohort frozen at approval, so a pre-snapshot project is refused — re-approve it "
-        "(or create a fresh one) first.",
+        "only the members frozen at approval, so a pre-snapshot project is refused — queue its "
+        "snapshots first (`make -C flip-api backfill_cohort_snapshots`, or POST "
+        "/projects/{id}/cohort-snapshots).",
     )
     parser.add_argument(
         "--model-name",

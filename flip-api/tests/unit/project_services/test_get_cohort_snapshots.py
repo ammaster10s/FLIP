@@ -10,8 +10,9 @@
 # limitations under the License.
 #
 
-"""Unit tests for GET /projects/{id}/cohort-snapshots (FLIP#857 audit surfacing)."""
+"""Unit tests for GET /projects/{id}/cohort-snapshots (FLIP#857 per-trust freeze state)."""
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -22,7 +23,8 @@ from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import CohortSnapshotStatus, Trust
+from flip_api.db.models.main_models import CohortSnapshotStatus, Trust, TrustTask
+from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.project_services.get_cohort_snapshots import router as get_cohort_snapshots_router
 
 MOCK_USER_ID = uuid4()
@@ -44,10 +46,10 @@ def client(app_fixture: FastAPI) -> TestClient:
     return TestClient(app_fixture)
 
 
-def _snapshot_row(row_count: int = 24, approved: int | None = 24) -> CohortSnapshotStatus:
+def _snapshot_row(trust_id=MOCK_TRUST_ID, row_count: int = 24, approved: int | None = 24) -> CohortSnapshotStatus:
     return CohortSnapshotStatus(
         project_id=MOCK_PROJECT_ID,
-        trust_id=MOCK_TRUST_ID,
+        trust_id=trust_id,
         query_id=MOCK_QUERY_ID,
         row_count=row_count,
         approved_record_count=approved,
@@ -57,42 +59,92 @@ def _snapshot_row(row_count: int = 24, approved: int | None = 24) -> CohortSnaps
     )
 
 
-def test_returns_per_trust_snapshot_records_with_trust_names(client: TestClient, app_fixture: FastAPI):
-    mock_db_session = MagicMock()
-    trust = Trust(id=MOCK_TRUST_ID, name="GSTT")
-    mock_db_session.exec.return_value.all.return_value = [(_snapshot_row(row_count=24, approved=20), trust)]
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+def _task(trust_id, task_status: TaskStatus, result: dict | None = None) -> TrustTask:
+    return TrustTask(
+        trust_id=trust_id,
+        task_type=TaskType.PERSIST_COHORT,
+        payload="{}",
+        query_id=MOCK_QUERY_ID,
+        status=task_status,
+        result=json.dumps(result) if result else None,
+    )
 
-    with patch("flip_api.project_services.get_cohort_snapshots.can_access_project", return_value=True) as mock_access:
+
+def _db(tasks, records):
+    """exec() answers the PERSIST_COHORT task lookup, then the snapshot-record lookup."""
+    db = MagicMock()
+    task_result, record_result = MagicMock(), MagicMock()
+    task_result.all.return_value = tasks
+    record_result.all.return_value = records
+    db.exec.side_effect = [task_result, record_result]
+    return db
+
+
+def _get(client, app_fixture, db, trusts):
+    app_fixture.dependency_overrides[get_session] = lambda: db
+    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+    with (
+        patch("flip_api.project_services.get_cohort_snapshots.can_access_project", return_value=True) as access,
+        patch("flip_api.project_services.get_cohort_snapshots.get_approved_trusts_for_project", return_value=trusts),
+    ):
         response = client.get(f"/api/projects/{MOCK_PROJECT_ID}/cohort-snapshots")
+    app_fixture.dependency_overrides.clear()
+    return response, access
+
+
+def test_frozen_trust_carries_its_approval_time_facts(client: TestClient, app_fixture: FastAPI):
+    db = _db([_task(MOCK_TRUST_ID, TaskStatus.COMPLETED)], [_snapshot_row(row_count=24, approved=20)])
+
+    response, access = _get(client, app_fixture, db, [Trust(id=MOCK_TRUST_ID, name="GSTT")])
 
     assert response.status_code == status.HTTP_200_OK
-    body = response.json()
-    assert len(body) == 1
+    (entry,) = response.json()
     # camelCase aliases on the wire; drift between frozen and approved counts is visible.
-    assert body[0]["trustName"] == "GSTT"
-    assert body[0]["rowCount"] == 24
-    assert body[0]["approvedRecordCount"] == 20
-    assert body[0]["hasAccessions"] is True
-    assert body[0]["queryId"] == str(MOCK_QUERY_ID)
-    mock_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)
-    app_fixture.dependency_overrides.clear()
+    assert entry["status"] == "frozen"
+    assert entry["error"] is None
+    assert entry["trustName"] == "GSTT"
+    assert entry["rowCount"] == 24
+    assert entry["approvedRecordCount"] == 20
+    assert entry["hasAccessions"] is True
+    assert entry["queryId"] == str(MOCK_QUERY_ID)
+    access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, db)
 
 
-def test_no_snapshots_yet_returns_empty_list(client: TestClient, app_fixture: FastAPI):
-    """A project whose trusts have not reported (pending task / pre-feature) is an empty list, not 404."""
-    mock_db_session = MagicMock()
-    mock_db_session.exec.return_value.all.return_value = []
-    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
-    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+def test_every_approved_trust_is_listed_with_its_state(client: TestClient, app_fixture: FastAPI):
+    """Pending and failed trusts are visible, not missing — training at either is refused."""
+    frozen, pending, failed, never = (Trust(id=uuid4(), name=name) for name in ("A", "B", "C", "D"))
+    db = _db(
+        [
+            _task(frozen.id, TaskStatus.COMPLETED),
+            _task(pending.id, TaskStatus.IN_PROGRESS),
+            _task(failed.id, TaskStatus.FAILED, {"error": "psycopg2 at omop-db-1:5432", "status_code": 403}),
+        ],
+        [_snapshot_row(trust_id=frozen.id)],
+    )
 
-    with patch("flip_api.project_services.get_cohort_snapshots.can_access_project", return_value=True):
-        response = client.get(f"/api/projects/{MOCK_PROJECT_ID}/cohort-snapshots")
+    response, _ = _get(client, app_fixture, db, [frozen, pending, failed, never])
+
+    body = response.json()
+    assert [(e["trustName"], e["status"]) for e in body] == [
+        ("A", "frozen"),
+        ("B", "pending"),
+        ("C", "failed"),
+        ("D", "failed"),
+    ]
+    assert body[1]["rowCount"] is None
+    # Category only: the trust's raw error text never reaches the wire.
+    assert "Refused by the trust" in body[2]["error"]
+    assert "psycopg2" not in response.text
+    assert body[3]["error"] == "No cohort snapshot was requested at this trust"
+
+
+def test_no_approved_trusts_returns_empty_list(client: TestClient, app_fixture: FastAPI):
+    db = MagicMock()
+
+    response, _ = _get(client, app_fixture, db, [])
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == []
-    app_fixture.dependency_overrides.clear()
 
 
 def test_forbidden_without_project_access(client: TestClient, app_fixture: FastAPI):

@@ -144,7 +144,7 @@ async def approve_project_step_function_endpoint(
         # approved above exactly as before; what changes is that no CREATE_IMAGING task is queued, so
         # no trust creates an XNAT project or calls the accession-ids route — the flag is never sent
         # to a trust. Each trust still freezes the approved cohort (FLIP#857): training reads it
-        # through /cohort/dataframe, which serves only that snapshot. Either way the per-trust results
+        # through /cohort/dataframe, which serves only the frozen members. Either way the per-trust results
         # report through the one response contract below.
         if has_imaging:
             logger.info(f"Processing {len(trusts)} trusts for project {project_id}")

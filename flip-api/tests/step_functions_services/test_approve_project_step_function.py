@@ -271,7 +271,7 @@ def test_approve_project_skips_imaging_fan_out_when_project_has_no_imaging(
     """A tabular-only project is approved but no CREATE_IMAGING task is dispatched to any trust (FLIP#1071).
 
     Each trust still freezes the approved cohort (FLIP#857): training reads it through /cohort/dataframe, which
-    serves only the snapshot, so a tabular project without one could never train.
+    serves only the frozen members, so a tabular project without a frozen membership could never train.
     """
     mock_approve_project.return_value = mock_trusts
     mock_project_row.return_value = SimpleNamespace(has_imaging=False)

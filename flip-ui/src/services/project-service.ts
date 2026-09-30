@@ -138,16 +138,25 @@ export interface IImagingProjectStatus {
     lastSeenAt?: string | null,
 }
 
-// One trust's frozen approved-cohort record (FLIP#857) — aggregates only. A rowCount
-// differing from approvedRecordCount means the live cohort drifted between submission
-// and approval; hasAccessions=false marks a tabular cohort with no imaging to pull.
+// Where one approved trust's approval-time cohort freeze stands (FLIP#857). Only a
+// "frozen" trust serves the project's cohort; training at a pending or failed one is refused.
+export type CohortSnapshotStatus = "frozen" | "pending" | "failed";
+
+// One approved trust's cohort freeze (FLIP#857) — aggregates only. The count fields are the
+// approval-time facts, present once the trust has reported a snapshot: the frozen membership
+// bounds what the project trains on there (it can shrink, never grow). A rowCount differing
+// from approvedRecordCount means the live cohort drifted between submission and approval;
+// hasAccessions=false marks a tabular cohort with no imaging to pull. error is a category-only
+// reason, set when status is "failed".
 export interface ICohortSnapshot {
     trustId: string,
     trustName: string,
-    rowCount: number,
+    status: CohortSnapshotStatus,
+    error: string | null,
+    rowCount: number | null,
     approvedRecordCount: number | null,
-    hasAccessions: boolean,
-    snapshotAt: string,
+    hasAccessions: boolean | null,
+    snapshotAt: string | null,
     queryId: string | null,
 }
 

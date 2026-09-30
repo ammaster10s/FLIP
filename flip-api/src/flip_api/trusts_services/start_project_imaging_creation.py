@@ -183,9 +183,9 @@ def queue_cohort_snapshot(project_id: UUID, trust: ITrust, db: Session) -> dict[
 
     The approval fan-out calls this in place of ``queue_imaging_creation`` for a project created without imaging
     (FLIP#1071). Such a project has no imaging stage, but its FL training still reads the cohort through
-    data-access-api's ``/cohort/dataframe``, which serves only the snapshot frozen at approval and refuses a project
-    without one — so each approved trust freezes the cohort all the same. Like imaging, it is refused (409) unless
-    the project is approved and so is this trust.
+    data-access-api's ``/cohort/dataframe``, which serves only the members frozen at approval and refuses a project
+    with no frozen membership — so each approved trust freezes the cohort all the same. Like imaging, it is refused
+    (409) unless the project is approved and so is this trust.
 
     Args:
         project_id (UUID): ID of the project.
@@ -229,21 +229,25 @@ def _queue_persist_cohort(project_id: UUID, project: IProjectResponse, trust: IT
     """
     Queues and commits the trust's PERSIST_COHORT task (FLIP#857).
 
-    The trust materialises the approved cohort once and its row-level routes serve only that artefact, so every
-    path that starts a trust on a project — its imaging, or a project without imaging — queues this first.
+    The trust records the approved cohort's membership once and its row-level routes then serve only those members,
+    so every path that starts a trust on a project — its imaging, or a project without imaging — queues this first.
 
     Args:
         project_id (UUID): ID of the project.
         project (IProjectResponse): The project, carrying its query of record.
         trust (ITrust): Trust information.
         db (Session): Database session.
+
+    Raises:
+        HTTPException: 409 if the project has no cohort query — there is no cohort to freeze, and the trust would
+                       refuse the project, so the caller's step fails for this trust rather than carrying on.
     """
     if project.query is None:
-        logger.warning(
-            f"Project {project_id} has no cohort query — skipping the cohort snapshot task; "
-            "row-level routes will refuse this project at every trust"
+        logger.error(f"Project {project_id} has no cohort query; its cohort cannot be frozen at trust {trust.name}")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project {project_id} has no cohort query; its cohort cannot be frozen at trust {trust.name}.",
         )
-        return
 
     persist_payload = IPersistCohort(
         project_id=project_id,
