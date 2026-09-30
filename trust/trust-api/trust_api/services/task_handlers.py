@@ -128,6 +128,11 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
             f"Cohort snapshot persisted for project {request.project_id}: {response.get('row_count')} rows"  # type: ignore[union-attr]
         )
         return {"success": True, "result": json.dumps(response)}
+    except HTTPException as e:
+        # data-access-api's refusal (403 below threshold, 400 uncountable, 413 oversize, 503 no store):
+        # the status code is what lets the hub show a category rather than a generic failure.
+        logger.warning(f"Cohort snapshot refused for project {payload.get('project_id')}: {e}")
+        return {"success": False, "error": str(e), "status_code": e.status_code}
     except Exception as e:
         logger.exception(f"Error persisting cohort snapshot for project {payload.get('project_id')}")
         return {"success": False, "error": str(e)}

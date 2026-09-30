@@ -468,3 +468,22 @@ async def test_handle_persist_cohort_reports_data_access_failure(mock_make_reque
 
     assert result["success"] is False
     assert "too small" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 403, 413, 503])
+@patch("trust_api.services.task_handlers.make_request")
+async def test_handle_persist_cohort_relays_the_refusal_status_code(mock_make_request, status_code):
+    """The hub maps the status code to a category (refused / rejected / ...) instead of a generic failure."""
+    mock_make_request.side_effect = HTTPException(status_code=status_code, detail="refused")
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is False
+    assert result["status_code"] == status_code

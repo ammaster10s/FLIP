@@ -214,6 +214,8 @@ port (SSH/SSM) rather than exposing it on the LAN.
 
 ```bash
 make -C flip-api create_testing_projects   # Create test projects
+make -C flip-api backfill_cohort_snapshots # Freeze the approved-cohort membership of approved projects that have none
+                                           # (e.g. approved before FLIP#857); EXTRA_ARGS="--dry-run" previews
 make -C flip-api delete_testing_projects   # Clean up test data
 make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
                                            # (EXTRA_ARGS="--cleanup" removes it again)

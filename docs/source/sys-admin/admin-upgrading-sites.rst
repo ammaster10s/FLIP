@@ -261,6 +261,17 @@ sequence, all on the admin workstation:
 Then note *Refreshed kit needed: yes* in the release's Site upgrade section, and which keys
 changed, so operators know to replace the block before upgrading.
 
+Approved cohorts after an upgrade
+=================================
+
+From FLIP#857 a site releases row-level data only for a cohort membership frozen when the project
+was approved. A project approved on an earlier release has none, so every site refuses it — training
+and the imaging pull both stop — until its membership is frozen. The project page shows those sites
+as *not frozen*. A project approver re-freezes them with ``POST /api/projects/{project_id}/cohort-snapshots``;
+on a hub run with Docker Compose, ``make -C flip-api backfill_cohort_snapshots`` does it for every
+approved project at once (``EXTRA_ARGS="--dry-run"`` previews). Neither touches a site whose
+membership is already frozen: re-running the query there would let the cohort grow.
+
 Deploying the hub itself — ``make deploy-centralhub PROD=true TAG=v<X.Y.Z>`` after enabling
 Deployment Mode and waiting for ``GET /fl/quiesce`` — is described in ``deploy/providers/AWS/README.md``
 and in *Cutting a release* in CONTRIBUTING.md.
