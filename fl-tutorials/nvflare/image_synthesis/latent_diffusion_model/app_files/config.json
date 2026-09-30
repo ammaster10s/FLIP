@@ -35,7 +35,7 @@
             "channels": [
                 64,
                 128,
-                128
+                256
             ],
             "num_res_blocks": [
                 2,

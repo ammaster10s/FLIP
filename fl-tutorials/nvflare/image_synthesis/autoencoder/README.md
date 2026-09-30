@@ -22,6 +22,14 @@ Each is an **independent single-stage job**.
 
 Validation reports L1 reconstruction loss and **foreground SSIM** on each site's held-out split.
 
+## Example outputs from this tutorial
+
+![Autoencoder reconstructions: four studies, each shown as input vs reconstruction in sagittal, coronal and axial views](assets/example_reconstructions.png)
+
+Four brain-MRI studies from `site-1`, each as input (left) vs reconstruction (right) in the sagittal,
+coronal and axial planes. The reconstructions are slightly smoother than the inputs, as expected from a
+KL autoencoder, but keep the anatomy and the tumour.
+
 ## Data
 
 The **brain MRI** cohort — MSD Task01_BrainTumour, the Medical Segmentation Decathlon's cut of BraTS
