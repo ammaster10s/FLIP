@@ -297,6 +297,23 @@ def test_a_slow_boot_is_waited_out(keycloak, provider):
         assert len(provider.list_users()) == 1
 
 
+def test_a_read_timeout_is_not_retried(keycloak, provider):
+    """The POST may already have created the user; resending it would answer 409 for a user FLIP never recorded."""
+
+    def create_times_out(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/users"):
+            keycloak.requests.append(request)
+            raise httpx.ReadTimeout("timed out", request=request)
+        return keycloak.handler(request)
+
+    provider = KeycloakIdentityProvider(_settings(), transport=httpx.MockTransport(create_times_out))
+    with patch("flip_api.auth.identity.keycloak.time.sleep") as sleep:
+        with pytest.raises(IdentityProviderUnavailable):
+            provider.create_user("new@example.com")
+    sleep.assert_not_called()
+    assert sum(r.method == "POST" and r.url.path.endswith("/users") for r in keycloak.requests) == 1
+
+
 def test_wrong_admin_secret_is_a_provider_error_not_a_retry_loop(keycloak):
     settings = _settings()
     settings.KEYCLOAK_ADMIN_CLIENT_SECRET = SecretStr("wrong")
