@@ -86,7 +86,8 @@ services:
       - /certs/server.key
       - --enable-supernode-auth
       # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise (see compose.dev.yml).
+      # otherwise (see compose.dev.yml). The same app serves the ServerApp's /v1/runtime/*
+      # routes; no host port is published here.
       - --host
       - 0.0.0.0
       - --health-server-address

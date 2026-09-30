@@ -137,13 +137,15 @@ services:
       - /certs/server.key
       - --enable-supernode-auth
       # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network.
+      # otherwise; fl-api and the key registration reach it over the compose network. The
+      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
+      # published on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - ${FLOWER_SUPERLINK_NET_1_PORT:-9093}:8000
+      - "127.0.0.1:${FLOWER_SUPERLINK_NET_1_PORT:-9093}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -241,13 +243,15 @@ services:
       - /certs/server.key
       - --enable-supernode-auth
       # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network.
+      # otherwise; fl-api and the key registration reach it over the compose network. The
+      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
+      # published on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - ${FLOWER_SUPERLINK_NET_2_PORT:-9095}:8000
+      - "127.0.0.1:${FLOWER_SUPERLINK_NET_2_PORT:-9095}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
