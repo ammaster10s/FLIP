@@ -37,12 +37,18 @@ vi.mock("vue-router", async (importOriginal) => {
 const mockSwrvData = ref<ICohortSnapshot[] | undefined>(undefined);
 const mockSwrvError = ref<Error | null>(null);
 
+let swrvKey: (() => string) | undefined;
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: vi.fn(),
-        error: mockSwrvError
-    })
+    default: (key: () => string) => {
+        swrvKey = key;
+
+        return {
+            data: mockSwrvData,
+            mutate: vi.fn(),
+            error: mockSwrvError
+        };
+    }
 }));
 
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
@@ -67,6 +73,7 @@ describe("CohortSnapshotSummary", () => {
     beforeEach(() => {
         mockSwrvData.value = undefined;
         mockSwrvError.value = null;
+        swrvKey = undefined;
     });
 
     it("renders nothing while there are no snapshot records", () => {
@@ -195,6 +202,25 @@ describe("CohortSnapshotSummary", () => {
 
         const statuses = wrapper.findAll("[data-test='cohort-snapshot-row']").map((row) => row.attributes("data-status"));
         expect(statuses).toEqual(["frozen", "pending", "failed"]);
+    });
+
+    it("fetches the project's snapshots only once loading is allowed", () => {
+        mountComponent();
+        expect(swrvKey?.()).toBe("/projects/test-project-id/cohort-snapshots");
+
+        mountComponent(false);
+        expect(swrvKey?.()).toBe("");
+    });
+
+    it("shows a dash for a frozen trust whose count and date are not reported", () => {
+        mockSwrvData.value = [frozenSnapshot({
+            rowCount: null,
+            snapshotAt: null
+        })];
+        const wrapper = mountComponent();
+
+        expect(wrapper.find("[data-test='cohort-snapshot-count']").text()).toBe("— records · —");
+        expect(wrapper.find("[data-test='cohort-snapshot-drift']").exists()).toBe(false);
     });
 
     it("renders nothing when loading is gated off (project not approved yet)", () => {

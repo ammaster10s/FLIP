@@ -165,5 +165,12 @@ def test_failure_category_survives_an_unparseable_result():
     assert service.failure_category(task) == service.TRUST_ERROR
 
 
+def test_failure_category_survives_a_result_that_is_not_an_object():
+    task = make_task(uuid4(), TaskStatus.FAILED)
+    task.result = '["status_code", 403]'
+
+    assert service.failure_category(task) == service.TRUST_ERROR
+
+
 def test_cancelled_task_category():
     assert service.failure_category(make_task(uuid4(), TaskStatus.CANCELLED)) == service.CANCELLED

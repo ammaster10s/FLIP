@@ -137,6 +137,22 @@ def test_disabled_store_reads_none_and_refuses_writes():
             _save()
 
 
+def test_delete_ignores_non_uuid_project_ids(store):
+    """A non-UUID id is a path component; delete must never act on it."""
+    (store / "escape").mkdir()
+    assert delete_snapshot("../escape") is False
+    assert delete_snapshot("escape") is False
+    assert (store / "escape").is_dir()
+
+
+def test_ensure_store_with_the_store_disabled_logs_and_returns(caplog):
+    with patch("data_access_api.services.cohort_snapshot.get_settings") as mock_settings:
+        mock_settings.return_value.COHORT_SNAPSHOT_DIR = ""
+        with caplog.at_level("ERROR"):
+            ensure_store()
+    assert "Cohort snapshot store DISABLED" in caplog.text
+
+
 def test_corrupt_meta_is_treated_as_absent(store):
     _save()
     (store / PROJECT_ID / "membership.json").write_text("{not json")

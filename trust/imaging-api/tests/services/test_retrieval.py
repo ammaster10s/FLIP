@@ -184,6 +184,18 @@ async def test_get_import_status_below_threshold_raises_403(
 
 @patch("imaging_api.services.retrieval.get_project")
 @pytest.mark.asyncio
+async def test_get_import_status_for_a_missing_xnat_project_is_a_404(mock_get_project, headers):
+    mock_get_project.side_effect = NotFoundError("Project proj1 not found")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_import_status("proj1", "SELECT *", headers)
+
+    assert exc_info.value.status_code == 404
+    assert "Project proj1 not found" in exc_info.value.detail
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
 async def test_get_import_status_reports_an_unreadable_xnat_project_as_a_named_500(mock_get_project, headers):
     mock_get_project.side_effect = RuntimeError("connection reset")
 

@@ -213,6 +213,20 @@ def test_retry_failed_snapshot_post_processing_keeps_the_flag_on_failure(mock_sn
     assert mock_db.rollback.called
 
 
+@patch("flip_api.private_services.imaging_notifications.handle_imaging_task_completed")
+def test_retry_failed_post_processing_skips_a_type_without_a_handler(mock_imaging, mock_db):
+    """A task type with no post-processing handler is logged and left flagged, and the rest still run."""
+    orphan = _post_processing_task(TaskType.DELETE_IMAGING)
+    imaging_task = _post_processing_task(TaskType.CREATE_IMAGING)
+    mock_db.exec.return_value.all.return_value = [orphan, imaging_task]
+
+    count = retry_failed_post_processing(mock_db)
+
+    assert count == 1
+    assert orphan.needs_post_processing is True
+    mock_imaging.assert_called_once_with(imaging_task, mock_db)
+
+
 def test_retry_failed_post_processing_none_pending(mock_db):
     """Should return 0 when no tasks need post-processing."""
     mock_db.exec.return_value.all.return_value = []

@@ -17,7 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from data_access_api.main import app
 from data_access_api.routers.cohort import _BELOW_THRESHOLD_DETAIL, _NO_SNAPSHOT_DETAIL
@@ -403,6 +405,55 @@ def test_a_membership_freezing_no_id_column_releases_nothing(
     assert response.json() == body
 
 
+@pytest.mark.parametrize(
+    ("failure", "status", "detail"),
+    [
+        (HTTPException(status_code=504, detail="Query timed out."), 504, "Query timed out."),
+        (OperationalError("SELECT 1", {}, Exception("person_id=42 violates ...")), 500, "Query execution failed."),
+        (RuntimeError("row value 42 leaked"), 500, "Query execution failed."),
+    ],
+)
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+def test_dataframe_query_failure_is_category_only(
+    mock_get_records, mock_get_snapshot, mock_decrypt, mock_get_settings, failure, status, detail
+):
+    """get_records' own HTTPExceptions pass through untouched; any other failure is a fixed 500
+    whose detail carries no exception text (it reaches every project member on the hub)."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"])
+    mock_get_records.side_effect = failure
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == status
+    assert response.json()["detail"] == detail
+
+
+@patch("data_access_api.routers.cohort.count_distinct_subjects")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+def test_dataframe_uncountable_cohort_is_refused_as_below_threshold(
+    mock_get_records, mock_get_snapshot, mock_decrypt, mock_get_settings, mock_count
+):
+    """A subject count that cannot be taken is refused exactly like a small cohort."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"])
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3]})
+    mock_count.side_effect = RuntimeError("image_occurrence unavailable")
+
+    response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
+
+
 # ---------------------------------------------------------------------------
 # POST /cohort/snapshot (creation) and /cohort/snapshot/delete
 # ---------------------------------------------------------------------------
@@ -547,6 +598,30 @@ def test_create_snapshot_keeps_an_existing_membership(
 
     assert response.status_code == 200
     assert response.json()["row_count"] == 3
+    mock_get_records.assert_not_called()
+    mock_save_snapshot.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+def test_create_snapshot_with_a_different_query_keeps_the_frozen_one_and_warns(
+    mock_snapshot_enabled, mock_decrypt, mock_get_records, mock_get_snapshot, mock_save_snapshot, caplog
+):
+    """Only ``replace`` may re-freeze: a changed query on a re-queued snapshot is logged, not adopted."""
+    mock_snapshot_enabled.return_value = True
+    mock_decrypt.return_value = PROJECT_UUID
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"])
+
+    body = {**sample_dataframe_query, "query": "SELECT person_id FROM omop.person"}
+    with caplog.at_level("WARNING"):
+        response = client.post("/cohort/snapshot", json=body, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["query_hash"] == normalised_query_hash(FROZEN_QUERY)
+    assert "kept the frozen membership" in caplog.text
     mock_get_records.assert_not_called()
     mock_save_snapshot.assert_not_called()
 
