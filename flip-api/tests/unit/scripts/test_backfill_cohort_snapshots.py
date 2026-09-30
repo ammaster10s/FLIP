@@ -121,3 +121,20 @@ def test_main_prints_a_json_summary(monkeypatch, capsys, seams: SimpleNamespace)
     summary = json.loads(capsys.readouterr().out)
     assert summary["counts"] == {"would_queue": 1}
     seams.queue.assert_not_called()
+
+
+def test_the_script_imports_in_a_fresh_interpreter():
+    """``make backfill_cohort_snapshots`` runs it with ``python -m``: under pytest the app is already
+    imported, which hid a circular import that only a clean interpreter hits."""
+    import os
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import flip_api.scripts.backfill_cohort_snapshots"],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr

@@ -36,6 +36,11 @@ from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import Projects
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.status import CohortSnapshotState, ProjectStatus
+
+# Imported before project_services on purpose: model_service and fl_scheduler_service import each
+# other, and only this order completes when the script runs alone (the app's startup imports it
+# first too). Run as `python -m` without it, the backfill dies on a circular import.
+from flip_api.fl_services.services import fl_scheduler_service  # noqa: F401, I001
 from flip_api.project_services.services.cohort_snapshot_service import resolve_snapshot_states
 from flip_api.project_services.services.project_services import get_approved_trusts_for_project
 from flip_api.trusts_services.start_project_imaging_creation import queue_cohort_snapshot
