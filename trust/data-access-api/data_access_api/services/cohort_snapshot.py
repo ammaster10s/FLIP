@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -58,6 +59,10 @@ _TMP_PREFIX = ".tmp-"
 _OLD_PREFIX = ".old-"
 # A record being deleted. Unlike a superseded one, never restored: the deletion wins.
 _DEL_PREFIX = ".del-"
+# The boot sweep leaves work directories younger than this alone. A write takes well under a
+# second, so anything this old was abandoned by a crash; anything younger may belong to another
+# replica writing to the same (ReadWriteMany) store right now.
+_SWEEP_MIN_AGE_SECONDS = 600
 
 
 class SnapshotStoreDisabled(Exception):
@@ -176,10 +181,14 @@ def ensure_store() -> None:
     base = _store_dir()
     try:
         base.mkdir(parents=True, exist_ok=True)
-        # Sweep leftovers from crashed writes: only this service writes here, and no write
-        # can be in flight during startup. A superseded record whose replacement never landed
-        # (a crash between the two renames) is the project's last good membership: restore it.
+        # Sweep leftovers from crashed writes — only those old enough that no writer can still
+        # own them (see _SWEEP_MIN_AGE_SECONDS). A superseded record whose replacement never
+        # landed (a crash between the two renames) is the project's last good membership:
+        # restore it.
+        cutoff = time.time() - _SWEEP_MIN_AGE_SECONDS
         for stale in sorted(base.iterdir(), key=lambda path: path.name):
+            if not stale.name.startswith((_TMP_PREFIX, _OLD_PREFIX, _DEL_PREFIX)) or stale.stat().st_mtime > cutoff:
+                continue
             if stale.name.startswith(_OLD_PREFIX):
                 project_key = _canonical_project_id(_project_key_of(stale.name, _OLD_PREFIX))
                 active = base / project_key if project_key else None
@@ -187,9 +196,8 @@ def ensure_store() -> None:
                     os.replace(stale, active)
                     logger.warning(f"Restored superseded cohort membership for project {active.name}")
                     continue
-            if stale.name.startswith((_TMP_PREFIX, _OLD_PREFIX, _DEL_PREFIX)):
-                shutil.rmtree(stale, ignore_errors=True)
-                logger.warning(f"Removed stale snapshot work directory {stale.name}")
+            shutil.rmtree(stale, ignore_errors=True)
+            logger.warning(f"Removed stale snapshot work directory {stale.name}")
         probe = base / f"{_TMP_PREFIX}write-probe"
         probe.mkdir(exist_ok=True)
         probe.rmdir()

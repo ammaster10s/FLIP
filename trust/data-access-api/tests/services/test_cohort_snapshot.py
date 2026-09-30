@@ -13,6 +13,8 @@
 """Unit tests for the approved-cohort snapshot file store (FLIP#857)."""
 
 import json
+import os
+import time
 import uuid
 from typing import Any
 from unittest.mock import patch
@@ -159,8 +161,8 @@ def test_delete_is_idempotent(store):
 
 def test_ensure_store_sweeps_stale_write_debris(store):
     _save()
-    (store / ".tmp-crashed-write").mkdir()
-    (store / ".old-crashed-swap").mkdir()
+    _abandoned(store / ".tmp-crashed-write")
+    _abandoned(store / ".old-crashed-swap")
 
     ensure_store()
 
@@ -261,6 +263,7 @@ def test_ensure_store_restores_a_superseded_record_orphaned_by_a_crash(store):
     """A crash between the two renames leaves the last good record under ``.old-``: restore it."""
     _save()
     (store / PROJECT_ID).rename(store / f".old-{PROJECT_ID}-deadbeef")
+    _age(store / f".old-{PROJECT_ID}-deadbeef")
 
     ensure_store()
 
@@ -272,8 +275,31 @@ def test_ensure_store_never_restores_a_deletion(store):
     """A crash mid-delete must not resurrect the record: deletion tombstones are only swept."""
     _save()
     (store / PROJECT_ID).rename(store / f".del-{PROJECT_ID}-deadbeef")
+    _age(store / f".del-{PROJECT_ID}-deadbeef")
 
     ensure_store()
 
     assert get_snapshot(PROJECT_ID) is None
     assert list(store.iterdir()) == []
+
+
+def test_ensure_store_leaves_a_write_in_flight_alone(store):
+    """On a shared (ReadWriteMany) store another replica may be mid-write while this one boots:
+    only debris old enough to have been abandoned is swept or restored."""
+    _save()
+    (store / PROJECT_ID).rename(store / f".old-{PROJECT_ID}-cafef00d")
+    (store / f".tmp-{PROJECT_ID}-cafef00d").mkdir()
+
+    ensure_store()
+
+    assert sorted(p.name for p in store.iterdir()) == [f".old-{PROJECT_ID}-cafef00d", f".tmp-{PROJECT_ID}-cafef00d"]
+
+
+def _age(path, seconds: int = 3600) -> None:
+    then = time.time() - seconds
+    os.utime(path, (then, then))
+
+
+def _abandoned(path) -> None:
+    path.mkdir()
+    _age(path)

@@ -529,6 +529,60 @@ def test_create_snapshot_store_write_failure_is_a_category_only_500(
     assert response.json()["detail"] == "Snapshot persistence failed."
 
 
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+def test_create_snapshot_keeps_an_existing_membership(
+    mock_snapshot_enabled, mock_decrypt, mock_get_records, mock_get_snapshot, mock_save_snapshot
+):
+    """A re-queued snapshot (its first result never reached the hub) must not re-run the query:
+    patients added to OMOP since the freeze would enter the cohort without re-approval."""
+    mock_snapshot_enabled.return_value = True
+    mock_decrypt.return_value = PROJECT_UUID
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"])
+
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["row_count"] == 3
+    mock_get_records.assert_not_called()
+    mock_save_snapshot.assert_not_called()
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.validate_query")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+def test_create_snapshot_replace_refreezes(
+    mock_snapshot_enabled,
+    mock_decrypt,
+    mock_validate_query,
+    mock_get_records,
+    mock_get_snapshot,
+    mock_save_snapshot,
+    mock_get_settings,
+):
+    mock_snapshot_enabled.return_value = True
+    mock_decrypt.return_value = PROJECT_UUID
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"])
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3, 4]})
+    mock_save_snapshot.return_value = _snapshot(person_ids=["1", "2", "3", "4"], subject_count=4)
+
+    response = client.post(
+        "/cohort/snapshot", json={**sample_dataframe_query, "replace": True}, headers=WRITE_AUTH_HEADERS
+    )
+
+    assert response.status_code == 200
+    mock_get_snapshot.assert_not_called()
+    assert mock_save_snapshot.call_args.kwargs["person_ids"] == ["1", "2", "3", "4"]
+
+
 @patch("data_access_api.routers.cohort.snapshot_enabled")
 def test_create_snapshot_store_disabled_returns_503(mock_snapshot_enabled):
     mock_snapshot_enabled.return_value = False

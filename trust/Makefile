@@ -238,9 +238,10 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # The approved-cohort membership store (FLIP#857): ONE resolved host path, handed to compose in
 # TRUST_VARS so the directory $(ensure_snapshot_dir) prepares is the one compose mounts. The
 # production default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
-# remote DOCKER_CONTEXT (EC2). data-access-api runs as uid 1000 in the production image and as the
-# host user under the dev compose, so that is who must own it.
-COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter production,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots,./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+# remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
+# share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
+# production image and as the host user under the dev compose, so that is who must own it.
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter production,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
 COHORT_SNAPSHOT_OWNER := $(if $(filter production,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
@@ -304,19 +305,22 @@ endef
 # Prepare the membership store before compose would create it root-owned (the non-root
 # data-access-api then disables the store and refuses every row-level request). An absolute path is
 # prepared by a throwaway container on the DOCKER HOST, so it works without sudo and over a remote
-# DOCKER_CONTEXT, where a local mkdir would touch the wrong machine. A relative path is local by
-# construction (compose resolves it on this machine), so mkdir it here and fix the owner if needed.
+# DOCKER_CONTEXT, where a local mkdir would touch the wrong machine — unless it is local and already
+# owned right (the provisioning playbooks create it), so a host without registry access still comes
+# up. A relative path is local by construction (compose resolves it on this machine), so mkdir it
+# here and fix the owner if needed.
 define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
 	case "$$dir" in \
 	  /*) name="$$(basename "$$dir")"; \
-	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine \
+	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$(stat -c '%u:%g' "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
+	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
 	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
 	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
 	     if [ "$$(stat -c '%u:%g' "$$dir")" != "$$owner" ]; then \
 	       chown "$$owner" "$$dir" 2>/dev/null || \
-	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine chown "$$owner" /d || { \
+	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
 	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$(stat -c '%u:%g' "$$dir")"; \
 	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
 	     fi ;; \

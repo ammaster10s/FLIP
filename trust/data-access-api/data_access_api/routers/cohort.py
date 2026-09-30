@@ -31,6 +31,7 @@ from data_access_api.routers.schema import (
     AccessionIdsResponse,
     CohortQueryInput,
     DataframeQuery,
+    SnapshotCreateRequest,
     SnapshotDeleteRequest,
     SnapshotResponse,
     StatisticsResponse,
@@ -534,7 +535,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
 
 @write_router.post("/snapshot", response_model=SnapshotResponse)
-def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
+def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     """
     Runs the cohort ONCE and freezes its membership as this project's approved cohort (FLIP#857).
 
@@ -544,8 +545,12 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     holds the latter but not the former, so researcher code cannot reach here. What is stored is
     the query of record and the ``person_id`` / ``accession_id`` values it returned — no
     clinical values. From that point the row-level routes run only the stored query, restricted
-    to those ids, so the cohort can shrink but never grow. Re-approval calls this again and
-    atomically replaces the record.
+    to those ids, so the cohort can shrink but never grow.
+
+    Freezing is once per project: when a membership already exists the route returns its facts
+    without running the query again, unless ``replace`` is set. A snapshot the hub re-queues
+    because its result never arrived (a timed-out task) therefore cannot re-admit patients the
+    frozen membership excludes. ``replace`` atomically swaps in a fresh run.
 
     The run is uncached, so it freezes LIVE OMOP (the statistics run at submission cached the
     same SQL for ``CACHE_TTL_DAYS``). ``validate_query`` remains the authority on the SQL
@@ -557,10 +562,11 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     only.
 
     Args:
-        query_input (DataframeQuery): The approved cohort query and encrypted project id.
+        query_input (SnapshotCreateRequest): The approved cohort query, encrypted project id, and
+            whether to replace an existing membership.
 
     Returns:
-        SnapshotResponse: What was frozen.
+        SnapshotResponse: What was frozen — the existing record's facts when one was kept.
 
     Raises:
         HTTPException: 400 if the query is invalid, exposes neither ``person_id`` nor
@@ -574,6 +580,16 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
 
     project_id = _open_project_id(query_input.encrypted_project_id)
     logger.info(f"Received cohort snapshot request for project {project_id}")
+
+    existing = None if query_input.replace else get_snapshot(project_id)
+    if existing is not None:
+        if normalised_query_hash(query_input.query) != existing.query_hash:
+            logger.warning(
+                f"Snapshot request for project {project_id} carries a different query from the frozen one — "
+                "kept the frozen membership (pass replace to re-freeze)"
+            )
+        logger.info(f"Cohort membership for project {project_id} is already frozen; returning its facts")
+        return _snapshot_response(existing)
 
     df = _run_cohort_query(query_input.query, use_cache=False, what="Snapshot cohort")
 
@@ -611,6 +627,11 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
         logger.exception("Cohort snapshot store write failed")
         raise HTTPException(status_code=500, detail="Snapshot persistence failed.")
 
+    return _snapshot_response(snapshot)
+
+
+def _snapshot_response(snapshot: Snapshot) -> SnapshotResponse:
+    """The aggregates-only facts of a frozen membership."""
     return SnapshotResponse(
         row_count=snapshot.row_count,
         columns=list(snapshot.columns),
@@ -627,7 +648,7 @@ def remove_snapshot(query_input: SnapshotDeleteRequest) -> dict[str, bool]:
 
     The teardown hook for the project purge path (FLIP#997 — which has no hub-side caller
     yet, so nothing invokes this in the current lifecycle). After deletion the project's
-    row-level routes refuse until a re-approval creates a fresh snapshot.
+    row-level routes refuse until a fresh snapshot is frozen.
 
     Args:
         query_input (SnapshotDeleteRequest): The encrypted project id.

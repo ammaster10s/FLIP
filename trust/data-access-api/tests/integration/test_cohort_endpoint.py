@@ -143,10 +143,12 @@ _SEED_COHORT_QUERY = (
 )
 
 
-def _create_snapshot(http_client, query: str, project_id: str) -> httpx.Response:
+def _create_snapshot(http_client, query: str, project_id: str, replace: bool = False) -> httpx.Response:
     # The write route needs the cohort-admin proof on top of the client's trust-internal key.
     return http_client.post(
-        "/cohort/snapshot", json=_dataframe_payload(query, project_id), headers=COHORT_ADMIN_HEADERS
+        "/cohort/snapshot",
+        json={**_dataframe_payload(query, project_id), "replace": replace},
+        headers=COHORT_ADMIN_HEADERS,
     )
 
 
@@ -317,15 +319,23 @@ def test_snapshot_route_rejects_unsafe_sql(http_client):
     assert response.status_code == 400, response.text
 
 
-def test_reapproval_replaces_the_snapshot_and_delete_removes_it(http_client):
-    """Overwrite-on-reapproval and the FLIP#997 teardown hook, end to end."""
+def test_snapshot_freezes_once_replace_refreezes_and_delete_removes_it(http_client):
+    """Freeze-once, an explicit replace, and the FLIP#997 teardown hook, end to end."""
     from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 
     project_id = "97fca5ab-0000-4000-8000-000000000004"
     first = _create_snapshot(http_client, _SEED_COHORT_QUERY, project_id)
     assert first.status_code == 200, first.text
 
-    second = _create_snapshot(http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id)
+    # A repeated request (the hub re-queues a snapshot whose result it never received) keeps the
+    # frozen membership rather than re-running a query that could admit new patients.
+    repeated = _create_snapshot(http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == first.json()
+
+    second = _create_snapshot(
+        http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id, replace=True
+    )
     assert second.status_code == 200, second.text
 
     served = http_client.post(

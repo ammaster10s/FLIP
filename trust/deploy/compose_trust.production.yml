@@ -179,7 +179,7 @@ services:
       # Approved-cohort membership store: prepared uid-1000-owned by the trust Makefile and the
       # provisioning playbooks (the service runs non-root and disables the store if it cannot
       # write). Holds the approved person/accession ids — back it up with the OMOP data dir.
-      - ${COHORT_SNAPSHOT_STORAGE_DIR:-/opt/flip/cohort-snapshots}:/snapshots
+      - ${COHORT_SNAPSHOT_STORAGE_DIR:-/opt/flip/cohort-snapshots/trust-${TRUST_NUMBER}}:/snapshots
       # The governance document, read-only — the service must never be able to rewrite its
       # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var
       # above is empty, so nothing reads it. /dev/null rather than a file in the checkout

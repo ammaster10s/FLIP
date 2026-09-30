@@ -116,7 +116,9 @@ logged when it differs). Consequences:
 - a project with no membership record is refused outright (fixed generic detail);
 - a cohort frozen with no `accession_id` column returns an **empty** accession list — a
   tabular/OMOP-only project legitimately has no imaging to pull;
-- re-approval calls `/cohort/snapshot` again and atomically replaces the record;
+- freezing is once per project: a repeated `/cohort/snapshot` (the hub re-queues one whose result it
+  never received) returns the frozen record's facts without re-running the query, so it cannot re-admit
+  patients; only an explicit `"replace": true` swaps in a fresh run, atomically;
 - `POST /cohort/snapshot/delete` removes the record (the FLIP#997 teardown hook);
 - both write routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) require **cohort-admin** auth
   (AES-key possession) on top of the trust-internal key, so researcher FL code cannot define or
