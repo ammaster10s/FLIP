@@ -176,5 +176,5 @@ def load_medicalnet_perceptual(working_dir: Path) -> MedicalNetPerceptualLoss:
             "it together with the other app files."
         )
     _verify_hash_prefix(shipped)
-    logger.info(f"MedicalNet perceptual backbone loaded from {shipped.name} (frozen, 3-D, final feature map).")
+    logger.info("MedicalNet perceptual backbone loaded (frozen, 3-D, final feature map).")
     return MedicalNetPerceptualLoss(shipped)
