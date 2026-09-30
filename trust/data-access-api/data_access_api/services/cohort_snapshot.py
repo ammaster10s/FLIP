@@ -41,6 +41,7 @@ import json
 import os
 import shutil
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +56,8 @@ _MEMBERSHIP_FILENAME = "membership.json"
 # Work-in-progress / superseded directories. Never valid records; swept at startup.
 _TMP_PREFIX = ".tmp-"
 _OLD_PREFIX = ".old-"
+# A record being deleted. Unlike a superseded one, never restored: the deletion wins.
+_DEL_PREFIX = ".del-"
 
 
 class SnapshotStoreDisabled(Exception):
@@ -67,7 +70,13 @@ class SnapshotTooLarge(Exception):
 
 @dataclass(frozen=True)
 class Snapshot:
-    """A project's frozen cohort membership."""
+    """A project's frozen cohort membership.
+
+    Validated on construction, so a record read back from disk that is malformed — above all one
+    that freezes no id column, which would leave the serving filter nothing to restrict by — raises
+    and is treated as absent rather than served. The sequences are stored as tuples, so the frozen
+    record cannot be mutated in memory.
+    """
 
     # The raw SQL of record, re-run (through validate_query) on every row-level fetch.
     query: str
@@ -75,14 +84,31 @@ class Snapshot:
     # The frozen member ids, as strings. None when the cohort does not project that column.
     # Serving keeps a row only if every frozen column's value is in its set, so neither a new
     # patient nor a new study of an existing patient can enter an approved cohort.
-    person_ids: list[str] | None
-    accession_ids: list[str] | None
+    person_ids: Sequence[str] | None
+    accession_ids: Sequence[str] | None
     # Facts at approval, for the hub's audit strip and drift check. Serving re-counts live.
     row_count: int
     subject_count: int
-    columns: list[str]
+    columns: Sequence[str]
     created_at: str  # ISO-8601 UTC
     format_version: int = _FORMAT_VERSION
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.query, str) or not self.query.strip():
+            raise ValueError("a cohort membership needs its query of record")
+        if self.person_ids is None and self.accession_ids is None:
+            raise ValueError("a cohort membership must freeze person_ids, accession_ids or both")
+        for name in ("person_ids", "accession_ids", "columns"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, str) or not all(isinstance(item, str) for item in value):
+                raise ValueError(f"{name} must be a list of strings")
+            object.__setattr__(self, name, tuple(value))
+        for name in ("row_count", "subject_count"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
 
     @property
     def has_accessions(self) -> bool:
@@ -126,6 +152,11 @@ def _canonical_project_id(project_id: str) -> str | None:
         return None
 
 
+def _project_key_of(work_dir_name: str, prefix: str) -> str:
+    """The project UUID a ``<prefix><uuid>-<nonce>`` work directory belongs to."""
+    return work_dir_name[len(prefix) :].rsplit("-", 1)[0]
+
+
 def ensure_store() -> None:
     """Boot-time store check: create the directory, sweep stale temp dirs, probe writability.
 
@@ -146,9 +177,17 @@ def ensure_store() -> None:
     try:
         base.mkdir(parents=True, exist_ok=True)
         # Sweep leftovers from crashed writes: only this service writes here, and no write
-        # can be in flight during startup.
-        for stale in base.iterdir():
-            if stale.name.startswith((_TMP_PREFIX, _OLD_PREFIX)):
+        # can be in flight during startup. A superseded record whose replacement never landed
+        # (a crash between the two renames) is the project's last good membership: restore it.
+        for stale in sorted(base.iterdir(), key=lambda path: path.name):
+            if stale.name.startswith(_OLD_PREFIX):
+                project_key = _canonical_project_id(_project_key_of(stale.name, _OLD_PREFIX))
+                active = base / project_key if project_key else None
+                if active is not None and not active.exists():
+                    os.replace(stale, active)
+                    logger.warning(f"Restored superseded cohort membership for project {active.name}")
+                    continue
+            if stale.name.startswith((_TMP_PREFIX, _OLD_PREFIX, _DEL_PREFIX)):
                 shutil.rmtree(stale, ignore_errors=True)
                 logger.warning(f"Removed stale snapshot work directory {stale.name}")
         probe = base / f"{_TMP_PREFIX}write-probe"
@@ -169,22 +208,22 @@ def ensure_store() -> None:
 def save_snapshot(
     project_id: str,
     query: str,
-    person_ids: list[str] | None,
-    accession_ids: list[str] | None,
+    person_ids: Sequence[str] | None,
+    accession_ids: Sequence[str] | None,
     row_count: int,
     subject_count: int,
-    columns: list[str],
+    columns: Sequence[str],
 ) -> Snapshot:
     """Persist the cohort membership for ``project_id``, atomically replacing any predecessor.
 
     Args:
         project_id (str): The decrypted hub project id (must be a UUID).
         query (str): The raw SQL of record.
-        person_ids (list[str] | None): The frozen ``person_id`` values, or None when not projected.
-        accession_ids (list[str] | None): The frozen ``accession_id`` values, or None when not projected.
+        person_ids (Sequence[str] | None): The frozen ``person_id`` values, or None when not projected.
+        accession_ids (Sequence[str] | None): The frozen ``accession_id`` values, or None when not projected.
         row_count (int): Rows the query returned at approval.
         subject_count (int): Distinct subjects at approval, as ``count_distinct_subjects`` took them.
-        columns (list[str]): The query's column names at approval.
+        columns (Sequence[str]): The query's column names at approval.
 
     Returns:
         Snapshot: What was written.
@@ -192,7 +231,7 @@ def save_snapshot(
     Raises:
         SnapshotStoreDisabled: When no store directory is configured.
         SnapshotTooLarge: When the serialized record exceeds ``SNAPSHOT_MAX_BYTES``.
-        ValueError: When ``project_id`` is not a UUID.
+        ValueError: When ``project_id`` is not a UUID, or the membership is malformed (no id column).
         OSError: When the store directory is not writable.
     """
     base = _store_dir()
@@ -227,16 +266,25 @@ def save_snapshot(
     superseded = base / f"{_OLD_PREFIX}{canonical}-{nonce}"
     try:
         workdir.mkdir()
-        (workdir / _MEMBERSHIP_FILENAME).write_bytes(payload)
+        with open(workdir / _MEMBERSHIP_FILENAME, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
 
-        # Two atomic renames. A crash between them leaves no active record (the project refuses
-        # row-level serving and the boot sweep clears the debris) — never a half-written one.
+        # Two atomic renames. A reader sees the old record or the new one, never a half-written
+        # one. If the second rename fails the old record is put back; if the process dies between
+        # them, the boot sweep restores it.
         if final.exists():
             os.replace(final, superseded)
-        os.replace(workdir, final)
+        try:
+            os.replace(workdir, final)
+        except OSError:
+            if superseded.exists() and not final.exists():
+                os.replace(superseded, final)
+            raise
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-        shutil.rmtree(superseded, ignore_errors=True)
+    shutil.rmtree(superseded, ignore_errors=True)
 
     logger.info(
         f"Cohort membership saved for project {canonical}: {len(person_ids or [])} person ids, "
@@ -260,10 +308,9 @@ def get_snapshot(project_id: str) -> Snapshot | None:
         return None
 
     path = _store_dir() / canonical / _MEMBERSHIP_FILENAME
-    if not path.exists():
-        return None
-
     try:
+        if not path.exists():
+            return None
         raw = json.loads(path.read_text())
         if raw.get("format_version") != _FORMAT_VERSION:
             logger.error(
@@ -293,7 +340,7 @@ def delete_snapshot(project_id: str) -> bool:
         return False
     # Move aside first so a concurrent reader sees either the intact snapshot or none —
     # never a directory whose files are vanishing under it mid-read.
-    tomb = _store_dir() / f"{_OLD_PREFIX}{canonical}-{uuid.uuid4().hex[:8]}"
+    tomb = _store_dir() / f"{_DEL_PREFIX}{canonical}-{uuid.uuid4().hex[:8]}"
     os.replace(snapshot_dir, tomb)
     shutil.rmtree(tomb, ignore_errors=True)
     logger.info(f"Cohort snapshot deleted for project {canonical}")

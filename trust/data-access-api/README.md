@@ -82,7 +82,8 @@ Executed cohort SQL is memoised in an **in-process, per-container** dictionary
 its bound parameters. The statistics route receives the same cohort SQL repeatedly, and the
 subject count resolves accession numbers through `omop.image_occurrence`; the cache spares OMOP the
 repeat scan. (The row-level routes never execute the caller's SQL — they run the query of record
-frozen below — and both `/cohort/dataframe` and snapshot creation deliberately bypass the cache.) It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
+frozen below — and snapshot creation and both row-level routes, including their `image_occurrence`
+lookups, deliberately bypass the cache.) It holds DataFrames in memory and is copied in and out, is not shared between replicas, and is
 lost on restart, which is why all three bounds above exist. Note it is a *result* cache with no
 invalidation hook: within `CACHE_TTL_DAYS`, a query re-run after the underlying OMOP rows change can
 return the earlier result.
@@ -107,7 +108,9 @@ logged when it differs). Consequences:
   correction) drops out on the next fetch, while neither a new patient nor a new study of an
   approved patient can enter;
 - `/cohort/accession-ids` never runs the cohort SQL: it serves the frozen accession ids that still
-  resolve through `omop.image_occurrence`, so the imaging status poll costs two indexed lookups;
+  resolve through `omop.image_occurrence` (uncached), so the imaging status poll costs two lookups on
+  that table — sequential scans today, since the OMOP DDL has no index on `accession_id` — and a
+  study removed from OMOP drops out on the next poll;
 - researcher FL code calling `flip.get_dataframe(...)` cannot choose the SQL executed against
   OMOP — the arbitrary-SQL exposure on `/cohort/dataframe` is closed;
 - a project with no membership record is refused outright (fixed generic detail);
@@ -292,7 +295,8 @@ A cohort exposes its subjects one of two ways, resolved by `count_distinct_subje
 | `accession_id` | Resolved through `omop.image_occurrence`; the row count remains an upper bound, since nothing in the schema stops one accession number mapping to several people |
 
 The count is taken at snapshot creation (`/cohort/snapshot`) and again on every row-level fetch,
-over what that fetch would release. A cohort exposing neither column cannot be gated and is refused
+over what that fetch would release (a tabular project's empty accession list is gated on the
+approval-time count). A cohort exposing neither column cannot be gated and is refused
 at creation, as a **400** naming the missing column — safe to be specific about because it describes
 the query's shape and never its contents — so no uncountable cohort is ever approved and the
 row-level routes' refusal stays byte-identical across a zero cohort and a below-threshold one. A

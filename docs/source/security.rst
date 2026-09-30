@@ -177,7 +177,7 @@ independent controls would each have to fail before anything unintended could ex
   can therefore never grow beyond what was approved, and training code cannot run queries
   of its own. It can shrink: a patient removed from the Trust's database — for instance
   after an opt-out — drops out on the next fetch, and a cohort that falls below the
-  disclosure threshold stops being served. The record is deleted at project teardown.
+  disclosure threshold stops being served.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege

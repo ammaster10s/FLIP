@@ -28,8 +28,8 @@ The trust-internal key gates every ``/cohort`` route, but it does not
 distinguish callers: fl-client holds it (legitimately — it reads the frozen
 cohort via ``get_dataframe`` and pulls imaging), so it alone cannot separate
 "may read the approved cohort" from "may DEFINE the approved cohort". The
-snapshot create/delete routes — which materialise and destroy the artefact
-every training round then trains on — therefore carry a second gate,
+snapshot create/delete routes — which define and destroy the frozen membership
+the row-level routes filter to — therefore carry a second gate,
 ``authenticate_cohort_admin``: proof of possessing ``AES_KEY_BASE64``. trust-api
 and data-access-api hold that key (they encrypt/decrypt hub payloads with it);
 fl-client deliberately does not. The proof is the SHA-256 of the key, never the

@@ -58,11 +58,22 @@ class UpgradeTrust(unittest.TestCase):
         out = dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
         assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
 
-    def test_apply_phase_creates_the_cohort_snapshot_dir_before_compose_does(self):
-        """A site upgrading into the snapshot store (FLIP#857) has no bind dir; compose would create it root-owned."""
+    def test_apply_phase_prepares_the_membership_store_before_compose_does(self):
+        """A site upgrading into the membership store (FLIP#857) has no directory for it; compose would create it
+        root-owned and the non-root data-access-api would disable the store. The production default is absolute and
+        prepared by a container on the docker host, so it also works over a remote DOCKER_CONTEXT (EC2)."""
         out = dry_run("_upgrade-trust-apply")
-        assert "mkdir -p ./data-access-api/.snapshots/" in out, out
-        assert out.index("mkdir -p ./data-access-api/.snapshots/") < out.index(" up -d"), out
+        assert 'dir="/opt/flip/cohort-snapshots"; owner="1000:1000"' in out, out
+        assert out.index('dir="/opt/flip/cohort-snapshots"') < out.index(" up -d"), out
+
+    def test_compose_mounts_the_directory_the_makefile_prepared(self):
+        """One resolved path: the Makefile's default and the compose default can no longer disagree."""
+        out = dry_run("_upgrade-trust-apply")
+        assert 'COHORT_SNAPSHOT_STORAGE_DIR="/opt/flip/cohort-snapshots"' in out, out
+        kit = KIT + "COHORT_SNAPSHOT_STORAGE_DIR=/srv/flip/members\n"  # pragma: allowlist secret
+        out = dry_run("_upgrade-trust-apply", kit=kit)
+        assert 'dir="/srv/flip/members"' in out, out
+        assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
 
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""

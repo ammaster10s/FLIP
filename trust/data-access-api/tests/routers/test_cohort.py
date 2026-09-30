@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import hashlib
 from unittest.mock import patch
 
 import pandas as pd
@@ -17,7 +18,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from data_access_api.config import get_settings
 from data_access_api.main import app
+from data_access_api.routers.cohort import _NO_SNAPSHOT_DETAIL
 from data_access_api.routers.schema import StatisticsResponse
 from tests.conftest import AUTH_HEADERS, WRITE_AUTH_HEADERS
 
@@ -408,7 +411,21 @@ def test_read_routes_do_not_require_cohort_admin_proof(mock_get_snapshot, mock_d
     mock_decrypt.return_value = "my_project"
     mock_get_snapshot.return_value = None
     response = client.post(path, json=sample_dataframe_query, headers=AUTH_HEADERS)
-    assert "authorised" not in response.json().get("detail", "").lower()
+    assert response.status_code == 403
+    assert response.json()["detail"] == _NO_SNAPSHOT_DETAIL
+
+
+@pytest.mark.parametrize(("path", "payload"), _WRITE_ROUTES)
+def test_write_routes_refuse_the_empty_key_proof_when_no_aes_key_is_configured(path, payload):
+    """With AES_KEY_BASE64 unset, sha256("") would be a proof anyone can compute: refuse it."""
+    headers = {**AUTH_HEADERS, "X-Cohort-Admin-Key": hashlib.sha256(b"").hexdigest()}
+    real_settings = get_settings()
+    with patch("data_access_api.utils.internal_auth.get_settings") as mock_settings:
+        mock_settings.return_value.TRUST_INTERNAL_SERVICE_KEY = real_settings.TRUST_INTERNAL_SERVICE_KEY
+        mock_settings.return_value.AES_KEY_BASE64 = ""
+        response = client.post(path, json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "authorised" in response.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

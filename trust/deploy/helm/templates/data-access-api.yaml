@@ -35,7 +35,7 @@ data:
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
   {{- if .Values.dataAccessApi.snapshots.enabled }}
-  # Approved-cohort snapshot store (FLIP#857) — the PVC mount below. Row-level serving is
+  # Approved-cohort membership store (FLIP#857) — the PVC mount below. Row-level serving is
   # fail-closed without it.
   COHORT_SNAPSHOT_DIR: "/snapshots"
   {{- end }}
@@ -50,6 +50,12 @@ metadata:
     app.kubernetes.io/component: data-access-api
 spec:
   replicas: {{ .Values.dataAccessApi.replicas }}
+  {{- if and .Values.dataAccessApi.snapshots.enabled (eq .Values.dataAccessApi.snapshots.accessMode "ReadWriteOnce") }}
+  # A ReadWriteOnce store attaches to one node: a surge pod scheduled elsewhere would wait on the
+  # volume forever and stall the rollout, so the old pod goes first.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -183,8 +189,8 @@ spec:
       {{- end }}
 {{- if .Values.dataAccessApi.snapshots.enabled }}
 ---
-# Approved-cohort snapshot store (FLIP#857): frozen cohort artefacts, one directory per
-# hub project UUID. Row-level patient data — back this PV up with the OMOP volume.
+# Approved-cohort membership store (FLIP#857): one record per approved project UUID (the query
+# of record + person/accession ids, no clinical values) — back this PV up with the OMOP volume.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -118,12 +118,14 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
             # identifiers releasable right now"; relay data-access-api's own detail so the
             # two stay distinguishable in status reporting.
             try:
-                detail = exc.response.json().get("detail", "")
+                body = exc.response.json()
             except ValueError:
-                detail = ""
+                body = None
+            detail = body.get("detail", "") if isinstance(body, dict) else ""
+            detail = detail if isinstance(detail, str) else ""
             message = f"get_accession_ids: the Data Access API refused to release accession IDs — {detail}"
             logger.warning(message)
-            raise CohortBelowThresholdError(message) from exc
+            raise CohortBelowThresholdError(message, detail=detail) from exc
         error_message = f"get_accession_ids: HTTP error occurred while calling the Data Access API: {exc}"
         logger.error(error_message)
         raise RuntimeError(error_message) from exc

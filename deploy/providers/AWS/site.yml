@@ -242,6 +242,20 @@
       loop: "{{ net_trust_dirs | product(['/net-1', '/net-2']) | map('join') | list | unique }}"
       tags: flkit
 
+    # The approved-cohort membership store (FLIP#857), the production compose default. It must be
+    # writable by data-access-api's in-image uid 1000 or the service disables the store and every
+    # approved project is refused row-level data. `make upgrade-trust-ec2` also prepares it, for
+    # a host provisioned before the store existed. Keep in sync with onprem.yml and the trust
+    # Makefile's $(ensure_snapshot_dir).
+    - name: create the approved-cohort membership store (owned by data-access-api's uid 1000)
+      file:
+        path: /opt/flip/cohort-snapshots
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0750"
+      tags: flkit
+
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host
     # paths must be writable by that UID or first-boot writes (archive ingest,

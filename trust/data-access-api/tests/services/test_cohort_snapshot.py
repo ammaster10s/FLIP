@@ -65,8 +65,8 @@ def test_save_then_get_round_trips_the_membership(store):
     assert snapshot == saved
     assert snapshot.query == QUERY
     assert snapshot.query_hash == normalised_query_hash(QUERY)
-    assert snapshot.person_ids == ["1", "2", "3"]
-    assert snapshot.accession_ids == ["A1", "A2", "A3"]
+    assert snapshot.person_ids == ("1", "2", "3")
+    assert snapshot.accession_ids == ("A1", "A2", "A3")
     assert snapshot.has_accessions is True
 
 
@@ -95,7 +95,7 @@ def test_save_overwrites_atomically_on_reapproval(store):
 
     snapshot = get_snapshot(PROJECT_ID)
     assert snapshot is not None
-    assert snapshot.person_ids == ["1", "2"]
+    assert snapshot.person_ids == ("1", "2")
     assert snapshot.has_accessions is False
     # No write debris left behind after the swap.
     leftovers = [p.name for p in store.iterdir() if p.name.startswith((".tmp-", ".old-"))]
@@ -192,3 +192,88 @@ def test_hash_key_matches_module_constant_shape():
     # cohort_snapshot deliberately does not import query_cache: pin that its normalisation
     # stays self-contained and deterministic.
     assert len(cohort_snapshot.normalised_query_hash("x")) == 64
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"person_ids": None, "accession_ids": None},
+        {"person_ids": "12345"},
+        {"accession_ids": [1, 2]},
+        {"row_count": -1},
+        {"subject_count": True},
+        {"query": "  "},
+    ],
+)
+def test_a_malformed_membership_is_refused_on_construction(store, overrides):
+    """Above all a record freezing no id column: it would leave the serving filter nothing to
+    restrict by."""
+    with pytest.raises(ValueError, match="membership|strings|integer"):
+        _save(**overrides)
+    assert get_snapshot(PROJECT_ID) is None
+
+
+@pytest.mark.parametrize(
+    "patch_record",
+    [
+        {"person_ids": None, "accession_ids": None},
+        {"person_ids": "12345"},
+        {"subject_count": "3"},
+    ],
+)
+def test_a_malformed_record_on_disk_is_treated_as_absent(store, patch_record):
+    _save()
+    path = store / PROJECT_ID / "membership.json"
+    record = json.loads(path.read_text())
+    record.update(patch_record)
+    path.write_text(json.dumps(record))
+    assert get_snapshot(PROJECT_ID) is None
+
+
+def test_the_record_cannot_be_mutated_in_memory(store):
+    snapshot = _save()
+    assert isinstance(snapshot.person_ids, tuple)
+    assert isinstance(snapshot.columns, tuple)
+
+
+def test_a_failed_replace_keeps_the_previous_membership(store):
+    """Re-approval must never destroy the last good record: if the new record cannot be moved
+    into place, the superseded one is put back."""
+    _save()
+    real_replace = cohort_snapshot.os.replace
+
+    def fail_activation(src, dst):
+        if str(src).rsplit("/", 1)[-1].startswith(".tmp-"):
+            raise OSError("disk full")
+        return real_replace(src, dst)
+
+    with patch("data_access_api.services.cohort_snapshot.os.replace", side_effect=fail_activation):
+        with pytest.raises(OSError, match="disk full"):
+            _save(person_ids=["9"], accession_ids=None, columns=["person_id"])
+
+    snapshot = get_snapshot(PROJECT_ID)
+    assert snapshot is not None
+    assert snapshot.person_ids == ("1", "2", "3")
+    assert [p.name for p in store.iterdir()] == [PROJECT_ID]
+
+
+def test_ensure_store_restores_a_superseded_record_orphaned_by_a_crash(store):
+    """A crash between the two renames leaves the last good record under ``.old-``: restore it."""
+    _save()
+    (store / PROJECT_ID).rename(store / f".old-{PROJECT_ID}-deadbeef")
+
+    ensure_store()
+
+    assert get_snapshot(PROJECT_ID) is not None
+    assert sorted(p.name for p in store.iterdir()) == [PROJECT_ID]
+
+
+def test_ensure_store_never_restores_a_deletion(store):
+    """A crash mid-delete must not resurrect the record: deletion tombstones are only swept."""
+    _save()
+    (store / PROJECT_ID).rename(store / f".del-{PROJECT_ID}-deadbeef")
+
+    ensure_store()
+
+    assert get_snapshot(PROJECT_ID) is None
+    assert list(store.iterdir()) == []

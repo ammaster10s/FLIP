@@ -91,6 +91,17 @@
         - "{{ flip_dir }}/data/images/net-1"
         - "{{ flip_dir }}/data/images/net-2"
 
+    # The approved-cohort membership store (FLIP#857), the production compose default — writable
+    # by data-access-api's in-image uid 1000 or the store disables itself. Keep in sync with
+    # deploy/providers/AWS/site.yml and the trust Makefile's $(ensure_snapshot_dir).
+    - name: Create the approved-cohort membership store (owned by data-access-api's uid 1000)
+      file:
+        path: "{{ flip_dir }}/cohort-snapshots"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0750"
+
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host
     # paths must be writable by that UID — see deploy/providers/AWS/site.yml

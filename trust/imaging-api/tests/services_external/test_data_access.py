@@ -171,7 +171,7 @@ class TestGetAccessionIds:
             await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
 
     @staticmethod
-    def _client_returning_status(mock_client_cls, status_code: int, json_body: dict | None = None):
+    def _client_returning_status(mock_client_cls, status_code: int, json_body: object = None):
         """Wires the mocked client so ``raise_for_status`` raises for ``status_code``."""
         request = httpx.Request("POST", "http://data-access-api/cohort/accession-ids")
         response = httpx.Response(status_code, request=request, json=json_body)
@@ -201,8 +201,20 @@ class TestGetAccessionIds:
             mock_client_cls, 403, json_body={"detail": "Cohort is too small for row-level data to be released."}
         )
 
-        with pytest.raises(CohortBelowThresholdError, match="Cohort is too small"):
+        with pytest.raises(CohortBelowThresholdError, match="Cohort is too small") as exc_info:
             await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+        assert exc_info.value.detail == "Cohort is too small for row-level data to be released."
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("json_body", [["unexpected", "list"], "plain string", {"detail": {"nested": 1}}])
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_403_with_an_unexpected_body_still_raises_the_typed_refusal(self, mock_client_cls, json_body):
+        """A 403 whose JSON is not ``{"detail": "<text>"}`` must not escape as an AttributeError."""
+        self._client_returning_status(mock_client_cls, 403, json_body=json_body)
+
+        with pytest.raises(CohortBelowThresholdError, match="refused to release accession IDs") as exc_info:
+            await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+        assert exc_info.value.detail == ""
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")

@@ -91,10 +91,10 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
     Freeze the approved cohort on this trust (FLIP#857).
 
     Forwards the approval-time snapshot request to the local data-access-api, which runs
-    the approved query ONCE and persists the resulting dataframe as the project's frozen
-    artefact — the only thing the row-level routes serve from then on. The snapshot
-    response (aggregates only: row count, column names, timestamps) is returned as the
-    task result verbatim, so the hub can record its frozen-cohort audit row from it.
+    the approved query ONCE and records its membership (the query of record plus the
+    person/accession ids it returned); the row-level routes then serve only those members.
+    The snapshot response (aggregates only: row count, column names, timestamps) is returned
+    as the task result verbatim, so the hub can record its frozen-cohort audit row from it.
 
     Failure (including a below-threshold cohort, which data-access-api refuses with 403)
     marks the task FAILED at the hub with the category-only detail — nothing is persisted
@@ -129,7 +129,7 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
         )
         return {"success": True, "result": json.dumps(response)}
     except Exception as e:
-        logger.error(f"Error persisting cohort snapshot: {e}")
+        logger.exception(f"Error persisting cohort snapshot for project {payload.get('project_id')}")
         return {"success": False, "error": str(e)}
 
 

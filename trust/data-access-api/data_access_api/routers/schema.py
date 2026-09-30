@@ -85,18 +85,18 @@ class AccessionIdsResponse(BaseModel):
 
 
 class SnapshotResponse(BaseModel):
-    """What ``POST /cohort/snapshot`` persisted — aggregates only, no row-level data."""
+    """What ``POST /cohort/snapshot`` froze — aggregates only, no ids and no row-level data."""
 
-    row_count: int = Field(..., description="Number of cohort rows frozen in the snapshot")
-    columns: list[str] = Field(..., description="Ordered column names of the frozen dataframe")
+    row_count: int = Field(..., description="Rows the query of record returned at approval")
+    columns: list[str] = Field(..., description="Column names the query of record returned at approval")
     has_accessions: bool = Field(
         ...,
-        description="Whether the frozen cohort carries an accession_id column (i.e. pulls imaging)",
+        description="Whether the frozen membership includes accession ids (i.e. the project pulls imaging)",
     )
     snapshot_at: str = Field(..., description="ISO-8601 UTC timestamp of snapshot creation")
     query_hash: str = Field(
         ...,
-        description="SHA-256 of the normalised SQL the snapshot froze (drift detection, not a control)",
+        description="SHA-256 of the normalised query of record (drift detection, not a control)",
     )
 
 

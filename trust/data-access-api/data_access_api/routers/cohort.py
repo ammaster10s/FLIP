@@ -233,7 +233,9 @@ def _id_str(value: Any) -> str:
     """One canonical string per id, whatever dtype the column arrived as.
 
     A nullable integer column comes back as float64 when it holds a NULL, so ``7`` and ``7.0``
-    must compare equal between the approval-time run and a later one.
+    must compare equal between the approval-time run and a later one. (float64 is exact only up to
+    2**53; an id beyond that which reached pandas as a float has already lost precision and will
+    not match — it drops out, which is the fail-closed direction.)
     """
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
@@ -252,8 +254,12 @@ def _restrict_to_membership(df: pd.DataFrame, snapshot: Snapshot) -> pd.DataFram
 
     Both frozen columns must match, so neither a patient who joined OMOP after approval nor a new
     study of an approved patient enters the cohort. A frozen column the query no longer projects
-    matches nothing — fail-closed, since membership can no longer be checked.
+    matches nothing — fail-closed, since membership can no longer be checked — and so does a record
+    freezing no column at all, which ``Snapshot`` already refuses to construct.
     """
+    if snapshot.person_ids is None and snapshot.accession_ids is None:
+        logger.error("Cohort membership freezes no id column; releasing no rows")
+        return df.iloc[0:0]
     mask = pd.Series(True, index=df.index)
     for column, ids in ((SUBJECT_ID_COLUMN, snapshot.person_ids), (ACCESSION_ID_COLUMN, snapshot.accession_ids)):
         if ids is None:
@@ -290,13 +296,13 @@ def _run_cohort_query(query: str, *, use_cache: bool, what: str) -> pd.DataFrame
 
 
 def _count_subjects_or_zero(df: pd.DataFrame, project_id: str) -> int:
-    """``count_distinct_subjects``, with any failure or an uncountable frame counted as zero.
+    """``count_distinct_subjects`` over live OMOP, with any failure or an uncountable frame counted as zero.
 
     A count that cannot be taken is refused exactly as a small cohort is, so the refusal never
-    says why.
+    says why. Uncached, so a subject removed from OMOP stops counting towards the floor at once.
     """
     try:
-        return count_distinct_subjects(df) or 0
+        return count_distinct_subjects(df, use_cache=False) or 0
     except Exception:
         logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
         return 0
@@ -464,9 +470,10 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     numbers it needs to import studies from PACS — it does not expose row-level patient
     attributes. It never runs the cohort SQL: it takes the accession ids frozen at approval
     (FLIP#857) and keeps those that still resolve through ``omop.image_occurrence``
-    (``keep_imaging_accessions``), so the imaging status poll (roughly every 10 s while a
-    project page is open) costs two indexed lookups rather than a cohort query, the pointer set
-    cannot grow, and a study removed from OMOP drops out. Values that never resolved to an
+    (``keep_imaging_accessions``), read uncached, so the pointer set cannot grow and a study
+    removed from OMOP drops out on the next call. The imaging status poll (roughly every 10 s while
+    a project page is open) therefore costs two lookups on ``image_occurrence`` rather than a
+    cohort query. Values that never resolved to an
     imaging study are never released, so nothing can ride out under the ``accession_id`` alias
     past a ``cohort.dataframe`` deny (FLIP#1259).
 
@@ -513,7 +520,9 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     # Guarded like the count: a lookup failure must be indistinguishable from a small cohort.
     try:
-        imaging = keep_imaging_accessions(pd.DataFrame({ACCESSION_ID_COLUMN: snapshot.accession_ids}))
+        imaging = keep_imaging_accessions(
+            pd.DataFrame({ACCESSION_ID_COLUMN: list(snapshot.accession_ids)}), use_cache=False
+        )
     except Exception:
         logger.exception(f"Imaging accession lookup failed for project {project_id}; refusing as below threshold")
         imaging = pd.DataFrame({ACCESSION_ID_COLUMN: []})
@@ -604,7 +613,7 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
 
     return SnapshotResponse(
         row_count=snapshot.row_count,
-        columns=snapshot.columns,
+        columns=list(snapshot.columns),
         has_accessions=snapshot.has_accessions,
         snapshot_at=snapshot.created_at,
         query_hash=snapshot.query_hash,

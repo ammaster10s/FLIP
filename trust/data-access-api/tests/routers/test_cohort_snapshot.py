@@ -13,7 +13,7 @@
 """Route-level tests for approved-cohort membership serving and creation (FLIP#857)."""
 
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -239,7 +239,7 @@ def test_row_level_routes_refuse_projects_without_a_snapshot(
 def test_accession_ids_serves_frozen_ids_without_running_the_cohort_sql(
     mock_get_records, mock_get_snapshot, mock_decrypt, mock_get_settings, imaging_lookup
 ):
-    """The imaging poll costs two indexed lookups, never the cohort query; a study since removed
+    """The imaging poll costs two image_occurrence lookups, never the cohort query; a study since removed
     from OMOP drops out."""
     mock_decrypt.return_value = "my_project"
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
@@ -330,6 +330,77 @@ def test_accession_ids_lookup_failure_is_refused_as_below_threshold(
 
     assert response.status_code == 403
     assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_accession_ids_tabular_cohort_below_threshold_is_refused_not_emptied(
+    mock_get_snapshot, mock_decrypt, mock_get_settings
+):
+    """A tabular cohort under the floor gets the fixed 403, never ``[]``: an empty list would tell
+    a below-threshold tabular project apart from the refusal every other small cohort gets."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_get_snapshot.return_value = _snapshot(person_ids=["1", "2", "3"], subject_count=3)
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_accession_ids_reads_image_occurrence_uncached(
+    mock_get_snapshot, mock_decrypt, mock_get_settings, imaging_lookup
+):
+    """Both lookups bypass the query cache, so a study removed from OMOP drops out on the next
+    poll rather than after CACHE_TTL_DAYS."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
+    mock_get_snapshot.return_value = _snapshot(accession_ids=["A1", "A2"])
+    imaging_lookup.known.update({"A1", "A2"})
+
+    client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert imaging_lookup.call_count == 2
+    assert all(call.kwargs.get("use_cache") is False for call in imaging_lookup.call_args_list)
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "body"),
+    [
+        ("/cohort/dataframe", 403, {"detail": _BELOW_THRESHOLD_DETAIL}),
+        ("/cohort/accession-ids", 200, {"accession_ids": []}),
+    ],
+)
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+def test_a_membership_freezing_no_id_column_releases_nothing(
+    mock_get_records, mock_get_snapshot, mock_decrypt, mock_get_settings, path, status, body
+):
+    """Second line of defence behind ``Snapshot``'s own validation: a record with no frozen id
+    column must never leave the filter open."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
+    unfrozen = MagicMock(
+        query=FROZEN_QUERY,
+        query_hash=normalised_query_hash(FROZEN_QUERY),
+        person_ids=None,
+        accession_ids=None,
+        subject_count=100,
+    )
+    mock_get_snapshot.return_value = unfrozen
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3], "label": [0, 1, 0]})
+
+    response = client.post(path, json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == status
+    assert response.json() == body
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +506,27 @@ def test_create_snapshot_oversize_returns_413_without_detail_leakage(
 
     assert response.status_code == 413
     assert "byte" not in response.json()["detail"]  # category-only, no internals
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.save_snapshot")
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.validate_query")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.snapshot_enabled")
+def test_create_snapshot_store_write_failure_is_a_category_only_500(
+    mock_snapshot_enabled, mock_decrypt, mock_validate_query, mock_get_records, mock_save_snapshot, mock_get_settings
+):
+    mock_snapshot_enabled.return_value = True
+    mock_decrypt.return_value = PROJECT_UUID
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
+    mock_get_records.return_value = pd.DataFrame({"person_id": [1, 2, 3]})
+    mock_save_snapshot.side_effect = PermissionError("[Errno 13] Permission denied: '/snapshots/.tmp-x'")
+
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Snapshot persistence failed."
 
 
 @patch("data_access_api.routers.cohort.snapshot_enabled")
