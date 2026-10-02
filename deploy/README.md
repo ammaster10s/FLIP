@@ -36,8 +36,13 @@ they are filed by two different rules:
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 `keycloak` (development only: the local identity provider, ephemeral — no volume — importing
 [`keycloak/flip-realm.json`](keycloak/README.md) at every boot with `start-dev --import-realm`; a realm edit
-needs `make reset-keycloak`, since the import skips a realm that already exists), and the `fl-api-net-*` /
-`fl-server-net-*` FL server side. No trust service is defined here. The one place
+needs `make reset-keycloak`, since the import skips a realm that already exists), `object-store` (development
+only, FLIP#1291: an S3-compatible RustFS container standing in for the S3 buckets, its data the host-owned
+`./object-store/` where a top-level directory is a bucket — `make up` pre-creates one per bucket name, the
+`jobs/` idiom; every service reaches it through `AWS_ENDPOINT_URL_S3`, the fl-apis admit it as
+`BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000`, and `make clean-object-store` empties it), and the
+`fl-api-net-*` / `fl-server-net-*` FL server side. Nothing in the development stack mounts `~/.aws` or
+reaches an AWS service: sign-in, email and object storage are all local (FLIP#919, FLIP#1291). No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
 `central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does. There are **six**

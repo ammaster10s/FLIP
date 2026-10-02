@@ -80,7 +80,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 ### Running Services
 
 ```bash
-make up                    # Start all services (requires AWS access) — pulls images from GHCR
+make up                    # Start all services — pulls images from GHCR (the hub needs no AWS; the two example trusts' artifact fetches still do)
 make up BUILD=true         # Same, but rebuild repo-built services from local source instead of pulling
 make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
@@ -94,11 +94,12 @@ make ui-off                # Stop the UI container (no-op message when PROD is s
 make up-pgadmin            # Start pgadmin only
 make reset-keycloak        # Recreate the dev identity provider from deploy/keycloak/flip-realm.json (after editing it)
 make clean                 # Remove all stopped containers, networks, and images
+make clean-object-store    # Empty the dev object store (stop RustFS, remove ./object-store/)
 make recreate-networks     # Remove + recreate all networks (bridge, except the two trust networks: overlay, for the XNAT swarm stack)
 make ci                    # Run CI pipeline locally using act
 make central-hub           # Start flip-api + database (no UI)
 make print-docker-tag      # Print the resolved DOCKER_TAG value
-make check-aws-access      # Verify the AWS CLI is installed and credentials resolve
+make check-aws-access      # Verify the AWS CLI is installed and credentials resolve (no longer part of `make up`)
 make debug SERVICE=<name>  # Restart service in debug mode (port 5678)
 make debug-off SERVICE=<name>
 make debug-all             # Debug all API services
@@ -375,16 +376,18 @@ After changes, evaluate if docs need updating:
 1. `cp .env.development.example .env.development`
 2. Per service: `cd <service-dir> && uv sync`
 3. UI: `cd flip-ui && npm install`
-4. AWS: `aws configure sso` (required for flip-api and `make up`)
+4. AWS: `aws configure sso` (only for the example trusts' artifact fetches and the AWS deploy targets — the hub itself needs no AWS, FLIP#919/#1291)
 5. Install AWS Session Manager plugin
 6. `make create-networks`
 
 ### Key Environment Variables
 
 Cross-cutting keys and URLs live here. The rest are documented where they are consumed:
-**FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_HOSTS`,
+**FL** (`FL_BACKEND`, `FL_PROVISIONED_DIR`, `FL_APP_BASE_DIR`, `BUNDLE_URL_ALLOWED_ORIGINS`,
 `FL_KIT_SLOT_NAMES`) in
 [`fl-services/AGENTS.md`](fl-services/AGENTS.md#environment-variables) ·
+**dev object store** (`OBJECT_STORE_*`) in
+[`deploy/AGENTS.md`](deploy/AGENTS.md#dev-object-store-flip1291) ·
 **multi-instance** (`FLIP_INSTANCE`, `MAIN_ENV_FILE`, `DB_PORT`) in
 [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables) ·
 **XNAT/PACS** (`XNAT_PORT`, `PACS_*`, `DQR_*`) in
@@ -463,7 +466,7 @@ workflow's token scope, `develop` gate and tag minting).
 
 ### PR path gate: service suites run only for the paths they cover (PRs into develop)
 
-The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the four `test_trust_*_api.yml`/`test_trust_omop_db.yml`, `test_trust_data_tools.yml`, and `local_auth_smoke.yml` — the AWS-free hub boot + Keycloak login smoke, FLIP#919) fire on every PR but run their jobs only when the PR touches the paths they cover; a PR into `main` always runs everything. A `paths:` filter on `pull_request` cannot express that (one list for every target branch), so each workflow's first job calls the reusable `.github/workflows/pr_paths_changed.yml`, which runs `scripts/pr_paths_changed.py` against the PR's file list (`gh api pulls/N/files`, hence `pull-requests: read` on that job) and every test job `needs: changes` + `if: needs.changes.outputs.run == 'true'` — a skipped job reports *skipped*, never a missing check. The gate's list is the workflow's push `paths:` filter **verbatim** (GitHub's own pattern syntax, `*` stops at `/`, `**` does not); `scripts/tests/test_pr_paths_changed.py` fails when the two drift, when a job in a gated workflow lacks the `needs`/`if` pair, or when a `paths:` filter appears on `pull_request`. Touching the gate itself (script or reusable workflow) re-runs every suite. A workflow's list must name every input its suite consumes, including the ones outside its own tree — the root `.env.development.example` (copied to `.env.development`, which `flip_api`/`trust_api`/`data_access_api` `config.py` read as their `env_file`) and the `deploy/*.mk` fragments the Makefiles parse-time-include — or a PR confined to one of those reaches `develop` with no service suite having run. Adding a service test workflow with a push path filter means gating it the same way and listing it in the test's `GATED_WORKFLOWS`. `docs.yml` and the secret-scanning/acceptance-criteria workflows stay unfiltered on purpose.
+The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the four `test_trust_*_api.yml`/`test_trust_omop_db.yml`, `test_trust_data_tools.yml`, and `local_auth_smoke.yml` — the AWS-free hub boot, Keycloak login and object-store round-trip smoke, FLIP#919/#1291) fire on every PR but run their jobs only when the PR touches the paths they cover; a PR into `main` always runs everything. A `paths:` filter on `pull_request` cannot express that (one list for every target branch), so each workflow's first job calls the reusable `.github/workflows/pr_paths_changed.yml`, which runs `scripts/pr_paths_changed.py` against the PR's file list (`gh api pulls/N/files`, hence `pull-requests: read` on that job) and every test job `needs: changes` + `if: needs.changes.outputs.run == 'true'` — a skipped job reports *skipped*, never a missing check. The gate's list is the workflow's push `paths:` filter **verbatim** (GitHub's own pattern syntax, `*` stops at `/`, `**` does not); `scripts/tests/test_pr_paths_changed.py` fails when the two drift, when a job in a gated workflow lacks the `needs`/`if` pair, or when a `paths:` filter appears on `pull_request`. Touching the gate itself (script or reusable workflow) re-runs every suite. A workflow's list must name every input its suite consumes, including the ones outside its own tree — the root `.env.development.example` (copied to `.env.development`, which `flip_api`/`trust_api`/`data_access_api` `config.py` read as their `env_file`) and the `deploy/*.mk` fragments the Makefiles parse-time-include — or a PR confined to one of those reaches `develop` with no service suite having run. Adding a service test workflow with a push path filter means gating it the same way and listing it in the test's `GATED_WORKFLOWS`. `docs.yml` and the secret-scanning/acceptance-criteria workflows stay unfiltered on purpose.
 
 ### Terraform runs in CI (FLIP#962)
 

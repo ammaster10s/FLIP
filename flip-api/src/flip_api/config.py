@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
 
+    # The dev object store (FLIP#1291): development runs an S3-compatible
+    # RustFS container in the dev compose instead of AWS S3, reached through
+    # boto3's native AWS_ENDPOINT_URL_S3 and AWS_ACCESS_KEY_ID env like any
+    # endpoint. One thing is dev-only and therefore a setting: the public
+    # endpoint, the host-published address browser- and host-bound presigned
+    # URLs are signed for — SigV4 signs the host, so a URL the browser opens
+    # cannot be signed for the docker service name the fl-api fetches bundles
+    # from. The base declares it None — one endpoint for every audience, which
+    # is production's shape — and DevSettings carries the compose default.
+    S3_PUBLIC_ENDPOINT_URL: str | None = None
+
     # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
     # baked into the flip-api image and bind-mounted in dev. The bundler walks
     # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads into
@@ -269,11 +280,12 @@ class Settings(BaseSettings):
         "KEYCLOAK_AUDIENCE",
         "KEYCLOAK_ADMIN_CLIENT_ID",
         "KEYCLOAK_ADMIN_CLIENT_SECRET",
+        "S3_PUBLIC_ENDPOINT_URL",
         mode="before",
     )
     @classmethod
     def coerce_empty_auth_setting(cls, v: object, info: ValidationInfo) -> object:
-        """Treat an empty-string auth setting as the per-class field default.
+        """Treat an empty-string auth or object-store setting as the per-class field default.
 
         Same env-file trap as ``coerce_empty_email_backend``: the example env
         file carries these names commented out, and the Makefile exports the
@@ -445,6 +457,11 @@ class DevSettings(Settings):
     KEYCLOAK_URL: str | None = "http://keycloak:8080"
     KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
     KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
+
+    # The dev object store's published host port, matching the `object-store`
+    # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
+    # presigned URLs are signed for.
+    S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
 
     # Development sends no real email, ever: the console backend logs the
     # would-be message instead (FLIP#919) and the Literal pins it, so no SES

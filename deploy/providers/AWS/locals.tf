@@ -117,7 +117,7 @@ locals {
   # (FLIP#905): flip-api presigns bundle URLs against it as AWS_ENDPOINT_URL_S3,
   # and pinning boto3 to a regional endpoint makes those URLs PATH-STYLE — the
   # bucket in the path, the host exactly this — so it is also the one host the
-  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_HOSTS) admits. Derived
+  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_ORIGINS) admits. Derived
   # once so the two cannot drift: a change here moves both, and a change to
   # either alone would 400 every bundle download.
   s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
@@ -197,9 +197,15 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
-      # The only host the server-side bundle fetch may download from: the
+      # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
-      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
+      # Both names for one release (FLIP#1291): an fl-api image from before the
+      # rename reads only the old one, one from after reads both, and a deploy
+      # that swaps only the image or only this environment must not leave
+      # either with an empty list. Drop BUNDLE_URL_ALLOWED_HOSTS in the release
+      # after every environment runs a post-#1291 fl-api.
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
@@ -228,8 +234,10 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
-      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905).
-      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
+      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905), both names
+      # for one release (FLIP#1291) for the same reason.
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
   }
 }
