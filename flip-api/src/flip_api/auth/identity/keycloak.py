@@ -175,11 +175,18 @@ class KeycloakIdentityProvider(IdentityProvider):
     # --- transport -------------------------------------------------------------------------
 
     def _send(self, request: httpx.Request) -> httpx.Response:
-        """Send ``request``, waiting out a Keycloak that is still booting."""
+        """Send ``request``, waiting out a Keycloak that is still booting.
+
+        Only failures where the request never left are retried: after a read or
+        write timeout a POST may already have landed, and resending it turns a
+        created user into a 409.
+        """
         for attempt in range(self.CONNECT_RETRIES + 1):
             try:
                 return self._http.send(request)
             except httpx.TransportError as e:
+                if not isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
+                    raise IdentityProviderUnavailable(f"Keycloak did not answer at {self._base_url}") from e
                 if attempt == self.CONNECT_RETRIES:
                     raise IdentityProviderUnavailable(f"Keycloak is not reachable at {self._base_url}") from e
                 logger.warning(

@@ -28,7 +28,7 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - DEBUG=${DEBUG}
-      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_ADDRESS=fl-server-net-1:8000
       # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
       # FL API may download an app bundle from — the dev object store flip-api presigns bundle
       # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
@@ -67,7 +67,7 @@ services:
       - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - DEBUG=${DEBUG}
-      - SUPERLINK_ADDRESS=fl-server-net-2:9093
+      - SUPERLINK_ADDRESS=fl-server-net-2:8000
       # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
@@ -132,10 +132,16 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
+      # otherwise; fl-api and the key registration reach it over the compose network. The
+      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
+      # published on loopback only.
+      - --host
+      - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - ${FLOWER_SUPERLINK_NET_1_PORT:-9093}:9093
+      - "127.0.0.1:${FLOWER_SUPERLINK_NET_1_PORT:-9093}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -160,7 +166,7 @@ services:
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
-      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_ADDRESS=fl-server-net-1:8000
       # Service name (`fl-api-net-1`), which is the only name that resolves: with no
       # container_name the container is named by the compose project, and the old
       # `flip-fl-api-net-1` spelling is not a DNS name in any stack. Getting this wrong
@@ -230,10 +236,16 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
+      # otherwise; fl-api and the key registration reach it over the compose network. The
+      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
+      # published on loopback only.
+      - --host
+      - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - ${FLOWER_SUPERLINK_NET_2_PORT:-9095}:9093
+      - "127.0.0.1:${FLOWER_SUPERLINK_NET_2_PORT:-9095}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -256,7 +268,7 @@ services:
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
-      - SUPERLINK_ADDRESS=fl-server-net-2:9093
+      - SUPERLINK_ADDRESS=fl-server-net-2:8000
       # Service name — see net-1 above.
       - FL_API_ADDRESS=http://fl-api-net-2:8000
       # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
