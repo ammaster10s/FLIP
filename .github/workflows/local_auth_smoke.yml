@@ -156,7 +156,8 @@ jobs:
           pg_db=$(sed -n 's/^POSTGRES_DB=//p' .env.development)
           # ON_ERROR_STOP + a row-count check: psql otherwise exits 0 after a failed -c, and
           # UPDATE 0 is not an error — either would surface later as "project not approved".
-          approved=$($COMPOSE --env-file .env.development exec -T flip-db psql -v ON_ERROR_STOP=1 --single-transaction -tA \
+          # -q drops the UPDATE/INSERT command tags, so only the RETURNING rows are counted.
+          approved=$($COMPOSE --env-file .env.development exec -T flip-db psql -q -v ON_ERROR_STOP=1 --single-transaction -tA \
             -U "$pg_user" -d "$pg_db" \
             -c "update projects set status='APPROVED' where id='$project_id' returning id" \
             -c "insert into project_trust_intersect (id, project_id, trust_id, status, decided_at, decided_as) \
