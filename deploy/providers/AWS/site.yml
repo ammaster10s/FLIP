@@ -244,8 +244,8 @@
 
     # The approved-cohort membership stores (FLIP#857), the production compose default: one per
     # slot, since records are keyed by project alone and trusts sharing a host must not share one.
-    # Each must be writable by data-access-api's in-image uid 1000 or the service disables the
-    # store and every approved project is refused row-level data. `make upgrade-trust-ec2` also
+    # Each must be writable by data-access-api's in-image uid 1000 or every freeze fails and
+    # every approved project is refused row-level data. `make upgrade-trust-ec2` also
     # prepares the registered slot's, for a host provisioned before the store existed. Keep in
     # sync with onprem.yml and the trust Makefile's $(ensure_snapshot_dir).
     - name: create the approved-cohort membership stores (owned by data-access-api's uid 1000)

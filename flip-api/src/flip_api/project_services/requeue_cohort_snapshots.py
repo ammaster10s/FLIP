@@ -36,7 +36,9 @@ ALREADY_PENDING = "A cohort snapshot is already pending at this trust"
 def requeue_trust_snapshots(
     project_id: UUID, trusts: list[Trust], db: Session, include_frozen: bool = False
 ) -> list[ICohortSnapshotRequeue]:
-    """Queue PERSIST_COHORT at each of ``trusts`` whose cohort is not frozen or pending, with no authority check.
+    """Queue PERSIST_COHORT at each of ``trusts`` not pending — and, unless ``include_frozen``, not frozen.
+
+    No authority check: the caller has already narrowed ``trusts``.
 
     A pending trust already has a task queued. A frozen trust is skipped unless ``include_frozen``: the hub's record
     says it holds a membership, but cannot see whether the trust still does (a lost volume, an unreadable record).

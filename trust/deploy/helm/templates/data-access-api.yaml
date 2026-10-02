@@ -79,8 +79,8 @@ spec:
       {{- if .Values.dataAccessApi.snapshots.enabled }}
       securityContext:
         # Makes the snapshot PVC group-writable for the image's non-root user — without it a
-        # fresh volume mounts root-owned, the store disables itself, and fail-closed serving
-        # refuses every project.
+        # fresh volume mounts root-owned, every freeze fails, and fail-closed serving refuses
+        # every project.
         fsGroup: {{ .Values.dataAccessApi.snapshots.fsGroup }}
       {{- end }}
       {{- if .Values.imagePullSecrets }}

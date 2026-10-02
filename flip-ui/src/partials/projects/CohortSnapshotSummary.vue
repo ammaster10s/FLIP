@@ -47,6 +47,13 @@
                     >
                         tabular — no imaging
                     </span>
+                    <span
+                        v-if="snapshot.error"
+                        class="text-amber-800 dark:text-amber-300"
+                        data-test="cohort-snapshot-recheck"
+                    >
+                        {{ snapshot.error }}
+                    </span>
                 </template>
                 <template v-else-if="snapshot.status === 'pending'">
                     <span
@@ -98,8 +105,8 @@ const props = defineProps<ICohortSnapshotSummaryProps>();
 const route = useRoute();
 
 // The frozen membership record is never replaced (the served cohort can shrink;
-// this shows approval-time facts), but a trust's freeze can still be pending — the refresh
-// picks up its completion without a reload (FLIP#857).
+// this shows approval-time facts), but a trust's freeze or re-check can still be pending —
+// the refresh picks up its completion without a reload (FLIP#857).
 const { data, error } = useSWRV(
     () => {
         if (!props.canLoad) {

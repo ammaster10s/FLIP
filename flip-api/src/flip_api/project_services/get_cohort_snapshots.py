@@ -54,7 +54,8 @@ async def get_cohort_snapshots(
     a ``status`` from its latest PERSIST_COHORT task: ``frozen`` (with the approval-time facts),
     ``pending`` (queued, running, or its record not yet written) or ``failed`` (with a category-only
     ``error``; also used when no snapshot was ever requested, e.g. a project approved before the
-    feature). Training at a trust that is not frozen is refused there. A ``rowCount`` differing from
+    feature). Training at a trust never frozen is refused there; a ``frozen`` trust with an ``error`` is one
+    whose last re-check failed. A ``rowCount`` differing from
     ``approvedRecordCount`` means the live cohort drifted between submission and approval — surfaced
     here so the drift is visible, never silently adopted.
 

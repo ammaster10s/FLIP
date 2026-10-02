@@ -212,7 +212,7 @@ services:
       - ./observability/log_config:/app/log_config:ro
       # Approved-cohort snapshots: per-trust host dir from the kit's Host-local profile
       # (pre-created by `make up-trust` so it is host-user-owned, not docker-root-owned —
-      # the service runs non-root and disables the store if it cannot write). Holds the
+      # the service runs non-root; if it cannot write, every freeze fails). Holds the
       # approved person/accession ids; gitignored, never committed.
       - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/Trust_${TRUST_NUMBER}}:/snapshots
       # The governance document, read-only — the service must never be able to rewrite its

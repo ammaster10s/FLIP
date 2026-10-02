@@ -135,6 +135,25 @@ describe("CohortSnapshotSummary", () => {
         expect(wrapper.find("[data-test='cohort-snapshot-tabular']").exists()).toBe(true);
     });
 
+    it("warns on a frozen trust whose last re-check failed, without calling it refused", () => {
+        mockSwrvData.value = [frozenSnapshot({
+            error: "The last re-check failed (The trust did not report a result in time); "
+                + "this trust may no longer hold its frozen membership"
+        })];
+        const wrapper = mountComponent();
+
+        expect(wrapper.find("[data-test='cohort-snapshot-count']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='cohort-snapshot-recheck']").text()).toContain("last re-check failed");
+        expect(wrapper.find("[data-test='cohort-snapshot-failed-text']").exists()).toBe(false);
+    });
+
+    it("shows no re-check warning on a frozen trust without one", () => {
+        mockSwrvData.value = [frozenSnapshot()];
+        const wrapper = mountComponent();
+
+        expect(wrapper.find("[data-test='cohort-snapshot-recheck']").exists()).toBe(false);
+    });
+
     it("shows a pending trust with an amber chip and no counts", () => {
         mockSwrvData.value = [frozenSnapshot({
             status: "pending",

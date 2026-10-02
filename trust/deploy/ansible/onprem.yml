@@ -92,7 +92,7 @@
         - "{{ flip_dir }}/data/images/net-2"
 
     # The approved-cohort membership stores (FLIP#857), the production compose default — each
-    # writable by data-access-api's in-image uid 1000 or the store disables itself. Keep in sync with
+    # writable by data-access-api's in-image uid 1000 or every freeze fails. Keep in sync with
     # deploy/providers/AWS/site.yml and the trust Makefile's $(ensure_snapshot_dir).
     # One per slot (records are keyed by project alone); slots 1 and 2 here, any other is
     # prepared by `make up-trust`.

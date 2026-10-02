@@ -24,11 +24,14 @@ import pytest
 from data_access_api.services import cohort_snapshot
 from data_access_api.services.cohort_snapshot import (
     Snapshot,
+    SnapshotExists,
     SnapshotStoreDisabled,
     SnapshotTooLarge,
+    SnapshotUnreadable,
     delete_snapshot,
     ensure_store,
     get_snapshot,
+    load_snapshot,
     normalised_query_hash,
     save_snapshot,
     snapshot_enabled,
@@ -91,17 +94,26 @@ def test_the_record_holds_ids_and_sql_only(store):
     }
 
 
-def test_save_overwrites_atomically(store):
+def test_save_never_replaces_a_frozen_membership(store):
+    """Write-once: a second write for the project is refused and the first membership stands."""
     _save()
-    _save(query="SELECT person_id FROM omop.person", person_ids=["1", "2"], accession_ids=None, columns=["person_id"])
+    with pytest.raises(SnapshotExists):
+        _save(query="SELECT person_id FROM omop.person", person_ids=["1", "2", "4"], accession_ids=None)
 
     snapshot = get_snapshot(PROJECT_ID)
     assert snapshot is not None
-    assert snapshot.person_ids == ("1", "2")
-    assert snapshot.has_accessions is False
-    # No write debris left behind after the swap.
-    leftovers = [p.name for p in store.iterdir() if p.name.startswith((".tmp-", ".old-"))]
-    assert leftovers == []
+    assert snapshot.person_ids == ("1", "2", "3")
+    # No write debris left behind by the refused write.
+    assert [p.name for p in store.iterdir()] == [PROJECT_ID]
+
+
+def test_save_after_delete_freezes_afresh(store):
+    _save()
+    delete_snapshot(PROJECT_ID)
+    _save(person_ids=["7"], accession_ids=None, columns=["person_id"])
+    snapshot = get_snapshot(PROJECT_ID)
+    assert snapshot is not None
+    assert snapshot.person_ids == ("7",)
 
 
 def test_get_returns_none_for_unknown_project_and_non_uuid_ids(store):
@@ -153,10 +165,26 @@ def test_ensure_store_with_the_store_disabled_logs_and_returns(caplog):
     assert "Cohort snapshot store DISABLED" in caplog.text
 
 
-def test_corrupt_meta_is_treated_as_absent(store):
+def test_corrupt_meta_is_not_served_and_is_never_reported_absent(store):
+    """Serving refuses it (None); the strict read used by a freeze raises, so it is never overwritten."""
     _save()
     (store / PROJECT_ID / "membership.json").write_text("{not json")
     assert get_snapshot(PROJECT_ID) is None
+    with pytest.raises(SnapshotUnreadable):
+        load_snapshot(PROJECT_ID)
+
+
+def test_load_reports_absent_only_when_there_is_no_record(store):
+    assert load_snapshot(str(uuid.uuid4())) is None
+    assert load_snapshot("not-a-uuid") is None
+
+
+def test_an_io_error_on_read_is_unreadable_not_absent(store):
+    _save()
+    with patch("pathlib.Path.read_text", side_effect=PermissionError("denied")):
+        assert get_snapshot(PROJECT_ID) is None
+        with pytest.raises(SnapshotUnreadable):
+            load_snapshot(PROJECT_ID)
 
 
 def test_unknown_format_version_is_treated_as_absent(store):
@@ -166,6 +194,8 @@ def test_unknown_format_version_is_treated_as_absent(store):
     meta["format_version"] = 999
     meta_path.write_text(json.dumps(meta))
     assert get_snapshot(PROJECT_ID) is None
+    with pytest.raises(SnapshotUnreadable, match="format_version"):
+        load_snapshot(PROJECT_ID)
 
 
 def test_delete_is_idempotent(store):
@@ -178,7 +208,7 @@ def test_delete_is_idempotent(store):
 def test_ensure_store_sweeps_stale_write_debris(store):
     _save()
     _abandoned(store / ".tmp-crashed-write")
-    _abandoned(store / ".old-crashed-swap")
+    _abandoned(store / ".del-crashed-delete")
 
     ensure_store()
 
@@ -239,7 +269,7 @@ def test_a_malformed_membership_is_refused_on_construction(store, overrides):
         {"subject_count": "3"},
     ],
 )
-def test_a_malformed_record_on_disk_is_treated_as_absent(store, patch_record):
+def test_a_malformed_record_on_disk_is_not_served(store, patch_record):
     _save()
     path = store / PROJECT_ID / "membership.json"
     record = json.loads(path.read_text())
@@ -252,39 +282,6 @@ def test_the_record_cannot_be_mutated_in_memory(store):
     snapshot = _save()
     assert isinstance(snapshot.person_ids, tuple)
     assert isinstance(snapshot.columns, tuple)
-
-
-def test_a_failed_replace_keeps_the_previous_membership(store):
-    """An overwrite must never destroy the last good record: if the new record cannot be moved
-    into place, the superseded one is put back."""
-    _save()
-    real_replace = cohort_snapshot.os.replace
-
-    def fail_activation(src, dst):
-        if str(src).rsplit("/", 1)[-1].startswith(".tmp-"):
-            raise OSError("disk full")
-        return real_replace(src, dst)
-
-    with patch("data_access_api.services.cohort_snapshot.os.replace", side_effect=fail_activation):
-        with pytest.raises(OSError, match="disk full"):
-            _save(person_ids=["9"], accession_ids=None, columns=["person_id"])
-
-    snapshot = get_snapshot(PROJECT_ID)
-    assert snapshot is not None
-    assert snapshot.person_ids == ("1", "2", "3")
-    assert [p.name for p in store.iterdir()] == [PROJECT_ID]
-
-
-def test_ensure_store_restores_a_superseded_record_orphaned_by_a_crash(store):
-    """A crash between the two renames leaves the last good record under ``.old-``: restore it."""
-    _save()
-    (store / PROJECT_ID).rename(store / f".old-{PROJECT_ID}-deadbeef")
-    _age(store / f".old-{PROJECT_ID}-deadbeef")
-
-    ensure_store()
-
-    assert get_snapshot(PROJECT_ID) is not None
-    assert sorted(p.name for p in store.iterdir()) == [PROJECT_ID]
 
 
 def test_ensure_store_never_restores_a_deletion(store):
@@ -301,14 +298,12 @@ def test_ensure_store_never_restores_a_deletion(store):
 
 def test_ensure_store_leaves_a_write_in_flight_alone(store):
     """On a shared (ReadWriteMany) store another replica may be mid-write while this one boots:
-    only debris old enough to have been abandoned is swept or restored."""
-    _save()
-    (store / PROJECT_ID).rename(store / f".old-{PROJECT_ID}-cafef00d")
+    only debris old enough to have been abandoned is swept."""
     (store / f".tmp-{PROJECT_ID}-cafef00d").mkdir()
 
     ensure_store()
 
-    assert sorted(p.name for p in store.iterdir()) == [f".old-{PROJECT_ID}-cafef00d", f".tmp-{PROJECT_ID}-cafef00d"]
+    assert sorted(p.name for p in store.iterdir()) == [f".tmp-{PROJECT_ID}-cafef00d"]
 
 
 def _age(path, seconds: int = 3600) -> None:

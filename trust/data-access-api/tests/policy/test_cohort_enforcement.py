@@ -507,13 +507,13 @@ def test_statistics_refuses_an_envelope_it_cannot_open_when_a_rule_needs_the_pro
 @patch("data_access_api.routers.cohort.decrypt", return_value=P_DENIED)
 @patch("data_access_api.routers.cohort.get_policy")
 @patch("data_access_api.routers.cohort.get_settings")
-@patch("data_access_api.routers.cohort.get_snapshot")
+@patch("data_access_api.routers.cohort.load_snapshot")
 @patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_records")
 def test_snapshot_policy_denial_freezes_nothing_and_uses_the_fixed_refusal_text(
     mock_get_records,
     mock_save_snapshot,
-    mock_get_snapshot,
+    mock_load_snapshot,
     mock_get_settings,
     mock_get_policy,
     mock_decrypt,
@@ -541,7 +541,7 @@ def test_snapshot_policy_denial_freezes_nothing_and_uses_the_fixed_refusal_text(
     assert "no-counts" in caplog.text
     assert "no-counts" not in response.text
     # Denied before anything is read or run: an existing record's facts are not disclosed either.
-    mock_get_snapshot.assert_not_called()
+    mock_load_snapshot.assert_not_called()
     mock_get_records.assert_not_called()
     mock_save_snapshot.assert_not_called()
 
@@ -552,13 +552,13 @@ def test_snapshot_policy_denial_freezes_nothing_and_uses_the_fixed_refusal_text(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query", return_value="SELECT 1")
 @patch("data_access_api.routers.cohort.count_distinct_subjects", return_value=20)
-@patch("data_access_api.routers.cohort.get_snapshot", return_value=None)
+@patch("data_access_api.routers.cohort.load_snapshot", return_value=None)
 @patch("data_access_api.routers.cohort.save_snapshot")
 @patch("data_access_api.routers.cohort.get_records")
 def test_snapshot_applies_the_policy_threshold(
     mock_get_records,
     mock_save_snapshot,
-    mock_get_snapshot,
+    mock_load_snapshot,
     mock_count,
     mock_validate,
     mock_get_settings,

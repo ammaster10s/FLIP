@@ -12,8 +12,8 @@
 
 """The approved-cohort membership store's wiring, asserted on the rendered chart (FLIP#857).
 
-If the mount, the env var or the fsGroup goes missing, data-access-api disables the store and
-refuses every approved project — an outage that looks like a policy refusal, not a deploy fault.
+If the mount, the env var or the fsGroup goes missing, data-access-api cannot write the store, so no
+project can be frozen and every approved one is refused — an outage that looks like a policy refusal, not a deploy fault.
 Needs helm, so the chart workflow's helm-template job runs it; the pytest job skips it.
 """
 

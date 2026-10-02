@@ -26,6 +26,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import CohortSnapshotStatus, Queries, Trust, TrustTask
 from flip_api.domain.schemas.status import CohortSnapshotState, TaskStatus, TaskType
+from flip_api.private_services.snapshot_notifications import MALFORMED_RESULT_ERROR
 
 # Category-only failure text: the task result carries the trust's own error string, which is
 # never passed through — it can name internals of the trust's stack.
@@ -35,6 +36,10 @@ REJECTED = "Rejected by the trust (the cohort query was not accepted)"
 TIMED_OUT = "The trust did not report a result in time"
 CANCELLED = "The snapshot task was cancelled"
 TRUST_ERROR = "The trust could not freeze the cohort"
+MALFORMED = "The trust's snapshot result could not be read"
+# Prefixed to the category when a re-check of a frozen trust failed. The hub cannot tell a trust that still holds
+# its membership (and keeps serving it) from one that lost it, so it says so rather than claiming either.
+RECHECK_FAILED = "The last re-check failed ({reason}); this trust may no longer hold its frozen membership"
 
 
 @dataclass(frozen=True)
@@ -45,7 +50,8 @@ class TrustSnapshotState:
         trust (Trust): The trust (id and name).
         state (CohortSnapshotState): Frozen, pending or failed.
         record (CohortSnapshotStatus | None): The hub's frozen-facts row, when the trust has reported one.
-        error (str | None): Category-only reason, set when ``state`` is FAILED.
+        error (str | None): Category-only reason: why the trust is FAILED, or, on a FROZEN trust, that its last
+            re-check failed.
     """
 
     trust: Trust
@@ -76,8 +82,11 @@ def failure_category(task: TrustTask) -> str:
         return REFUSED
     if status_code in (400, 422):
         return REJECTED
-    if str(result.get("error", "")).startswith("Exceeded maximum retries"):
+    error = str(result.get("error", ""))
+    if error.startswith("Exceeded maximum retries"):
         return TIMED_OUT
+    if error == MALFORMED_RESULT_ERROR:
+        return MALFORMED
     return TRUST_ERROR
 
 
@@ -116,9 +125,10 @@ def resolve_snapshot_states(project_id: UUID, trusts: list[Trust], db: Session) 
     """Derive each trust's cohort freeze state for a project.
 
     PENDING while the latest task is queued or running, or completed but its record not yet written
-    (post-processing retries it); FAILED when it failed or was cancelled, or when no task was ever
-    queued and no record exists; FROZEN when the latest task completed and the record exists, or when
-    only a record exists.
+    (post-processing retries it); FAILED when it failed or was cancelled with no record, or when no task
+    was ever queued and no record exists; FROZEN when a record exists and the latest task did not leave it
+    pending. A failed latest task with a record is a failed re-check of a frozen trust: FROZEN, with
+    ``error`` saying the re-check failed.
 
     Args:
         project_id (UUID): The project.
@@ -155,6 +165,8 @@ def resolve_snapshot_states(project_id: UUID, trusts: list[Trust], db: Session) 
         elif task.status == TaskStatus.COMPLETED:
             state = CohortSnapshotState.FROZEN if record else CohortSnapshotState.PENDING
             error = None
+        elif record:
+            state, error = CohortSnapshotState.FROZEN, RECHECK_FAILED.format(reason=failure_category(task))
         else:
             state, error = CohortSnapshotState.FAILED, failure_category(task)
         states.append(TrustSnapshotState(trust=trust, state=state, record=record, error=error))

@@ -28,14 +28,17 @@ Layout, one file per hub project id::
 
     <COHORT_SNAPSHOT_DIR>/<project-uuid>/membership.json
 
-Writes are atomic at directory granularity: the file lands in a ``.tmp-*`` sibling first and is
-activated with ``os.replace`` renames, so a reader never observes a half-written record and a crash
-mid-write leaves (at worst) a stale temp directory that the boot-time sweep removes. There is no TTL
-and no in-place mutation — a record is written once and then only deleted, never edited.
+Writes are atomic at directory granularity and write-once: the file lands in a ``.tmp-*`` sibling
+first and is activated with a single ``os.rename`` onto the project's directory, which the kernel
+refuses when a record is already there. So a reader never observes a half-written record, a crash
+mid-write leaves (at worst) a stale temp directory that the boot-time sweep removes, and no write —
+a re-queued snapshot, two racing ones — can replace a frozen membership. There is no TTL and no
+in-place mutation: a record is written once and then only deleted.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -50,14 +53,13 @@ from pathlib import Path
 from data_access_api.config import get_settings
 from data_access_api.utils.logger import logger
 
-# Bumped when the on-disk layout changes; a record with an unknown version is treated as absent
-# (the project refuses row-level serving until its snapshot is re-queued) rather than mis-read.
+# Bumped when the on-disk layout changes. A record with an unknown version is never mis-read: the
+# row-level routes refuse the project, and a freeze request answers an error rather than writing over it.
 _FORMAT_VERSION = 2
 _MEMBERSHIP_FILENAME = "membership.json"
-# Work-in-progress / superseded directories. Never valid records; swept at startup.
+# Work-in-progress directories. Never valid records; swept at startup.
 _TMP_PREFIX = ".tmp-"
-_OLD_PREFIX = ".old-"
-# A record being deleted. Unlike a superseded one, never restored: the deletion wins.
+# A record being deleted. Swept at startup: the deletion wins.
 _DEL_PREFIX = ".del-"
 # The boot sweep leaves work directories younger than this alone. A write takes well under a
 # second, so anything this old was abandoned by a crash; anything younger may belong to another
@@ -73,6 +75,18 @@ class SnapshotTooLarge(Exception):
     """Raised when the serialized record exceeds ``SNAPSHOT_MAX_BYTES`` (never truncated)."""
 
 
+class SnapshotExists(Exception):
+    """Raised when a write finds a membership already frozen for the project (records are write-once)."""
+
+
+class SnapshotUnreadable(Exception):
+    """Raised when a record is present but cannot be read: corrupt, an unknown format, or an I/O error.
+
+    Distinct from "no record" on purpose. Serving refuses either way, but a freeze must never treat an
+    unreadable record as absent: it would re-run the query and write today's cohort over the approved one.
+    """
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """A project's frozen cohort membership.
@@ -86,9 +100,10 @@ class Snapshot:
     # The raw SQL of record, re-run (through validate_query) on every row-level fetch.
     query: str
     query_hash: str
-    # The frozen member ids, as strings. None when the cohort does not project that column.
-    # Serving keeps a row only if every frozen column's value is in its set, so neither a new
-    # patient nor a new study of an existing patient can enter an approved cohort.
+    # The frozen member ids, as strings. None when the cohort does not project that column; empty
+    # when it does but every value was NULL. Serving keeps a row only when every frozen column it
+    # has a value in holds a member, and at least one does, so neither a new patient nor a new study
+    # of an existing patient can enter an approved cohort.
     person_ids: Sequence[str] | None
     accession_ids: Sequence[str] | None
     # Facts at approval, for the hub's audit strip and drift check. Serving re-counts live.
@@ -159,18 +174,13 @@ def _canonical_project_id(project_id: str) -> str | None:
         return None
 
 
-def _project_key_of(work_dir_name: str, prefix: str) -> str:
-    """The project UUID a ``<prefix><uuid>-<nonce>`` work directory belongs to."""
-    return work_dir_name[len(prefix) :].rsplit("-", 1)[0]
-
-
 def ensure_store() -> None:
     """Boot-time store check: create the directory, sweep stale temp dirs, probe writability.
 
     Never raises — a missing or unwritable store must not take the service (and the
     statistics route) down. Failures log at ERROR with the remediation; every subsequent
-    write fails loudly per-call and every read returns None, which the row-level routes
-    refuse (fail-closed).
+    write fails loudly per-call, so no new project can be frozen, and a project whose record
+    cannot be read is refused by the row-level routes (fail-closed).
     """
     if not snapshot_enabled():
         logger.error(
@@ -183,23 +193,20 @@ def ensure_store() -> None:
     base = _store_dir()
     try:
         base.mkdir(parents=True, exist_ok=True)
-        # Sweep leftovers from crashed writes — only those old enough that no writer can still
-        # own them (see _SWEEP_MIN_AGE_SECONDS). A superseded record whose replacement never
-        # landed (a crash between the two renames) is the project's last good membership:
-        # restore it.
+        # Sweep leftovers from crashed writes and deletes — only those old enough that no writer
+        # can still own them (see _SWEEP_MIN_AGE_SECONDS).
         cutoff = time.time() - _SWEEP_MIN_AGE_SECONDS
         for stale in sorted(base.iterdir(), key=lambda path: path.name):
-            if not stale.name.startswith((_TMP_PREFIX, _OLD_PREFIX, _DEL_PREFIX)) or stale.stat().st_mtime > cutoff:
+            if not stale.name.startswith((_TMP_PREFIX, _DEL_PREFIX)):
                 continue
-            if stale.name.startswith(_OLD_PREFIX):
-                project_key = _canonical_project_id(_project_key_of(stale.name, _OLD_PREFIX))
-                if project_key is not None and not (base / project_key).exists():
-                    os.replace(stale, base / project_key)
-                    logger.warning(f"Restored superseded cohort membership for project {project_key}")
+            try:
+                if stale.stat().st_mtime > cutoff:
                     continue
-            shutil.rmtree(stale, ignore_errors=True)
+                shutil.rmtree(stale)
+            except FileNotFoundError:
+                continue  # another replica finished with it first
             logger.warning(f"Removed stale snapshot work directory {stale.name}")
-        probe = base / f"{_TMP_PREFIX}write-probe"
+        probe = base / f"{_TMP_PREFIX}write-probe-{uuid.uuid4().hex[:8]}"
         probe.mkdir(exist_ok=True)
         probe.rmdir()
     except OSError:
@@ -223,7 +230,7 @@ def save_snapshot(
     subject_count: int,
     columns: Sequence[str],
 ) -> Snapshot:
-    """Persist the cohort membership for ``project_id``, atomically replacing any predecessor.
+    """Persist the cohort membership for ``project_id``, once: an existing record is never replaced.
 
     Args:
         project_id (str): The decrypted hub project id (must be a UUID).
@@ -240,6 +247,7 @@ def save_snapshot(
     Raises:
         SnapshotStoreDisabled: When no store directory is configured.
         SnapshotTooLarge: When the serialized record exceeds ``SNAPSHOT_MAX_BYTES``.
+        SnapshotExists: When a membership is already frozen for the project.
         ValueError: When ``project_id`` is not a UUID, or the membership is malformed (no id column).
         OSError: When the store directory is not writable.
     """
@@ -272,7 +280,6 @@ def save_snapshot(
     nonce = uuid.uuid4().hex[:8]
     workdir = base / f"{_TMP_PREFIX}{canonical}-{nonce}"
     final = base / canonical
-    superseded = base / f"{_OLD_PREFIX}{canonical}-{nonce}"
     try:
         workdir.mkdir()
         with open(workdir / _MEMBERSHIP_FILENAME, "wb") as handle:
@@ -280,20 +287,17 @@ def save_snapshot(
             handle.flush()
             os.fsync(handle.fileno())
 
-        # Two atomic renames. A reader sees the old record or the new one, never a half-written
-        # one. If the second rename fails the old record is put back; if the process dies between
-        # them, the boot sweep restores it.
-        if final.exists():
-            os.replace(final, superseded)
+        # One atomic rename. A directory renames over an EMPTY directory but never a non-empty one
+        # (ENOTEMPTY/EEXIST), so the check that no record exists and the write are a single step:
+        # a reader sees no record or the whole one, and two racing writers cannot both land.
         try:
-            os.replace(workdir, final)
-        except OSError:
-            if superseded.exists() and not final.exists():
-                os.replace(superseded, final)
+            os.rename(workdir, final)
+        except OSError as err:
+            if err.errno in (errno.ENOTEMPTY, errno.EEXIST):
+                raise SnapshotExists(f"a cohort membership is already frozen for project {canonical}") from err
             raise
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-    shutil.rmtree(superseded, ignore_errors=True)
 
     logger.info(
         f"Cohort membership saved for project {canonical}: {len(person_ids or [])} person ids, "
@@ -302,12 +306,22 @@ def save_snapshot(
     return snapshot
 
 
-def get_snapshot(project_id: str) -> Snapshot | None:
-    """The frozen membership for ``project_id``, or None when there is none to serve.
+def load_snapshot(project_id: str) -> Snapshot | None:
+    """The frozen membership for ``project_id``, or None ONLY when no record exists.
 
-    None covers every no-record case — store disabled, non-UUID project id, not approved yet,
-    unreadable/corrupt/unknown-version record (logged at ERROR). The row-level routes refuse on
-    None (fail-closed).
+    The strict read the freeze uses: a record that is present but cannot be read raises, so it is
+    never mistaken for "not frozen yet".
+
+    Args:
+        project_id (str): The decrypted hub project id.
+
+    Returns:
+        Snapshot | None: The record, or None when the store is disabled, the id is not a UUID, or
+        no record exists.
+
+    Raises:
+        SnapshotUnreadable: When a record exists but is corrupt, of an unknown format version, or
+            cannot be read (an I/O or permission error).
     """
     if not snapshot_enabled():
         return None
@@ -316,23 +330,37 @@ def get_snapshot(project_id: str) -> Snapshot | None:
         logger.debug(f"Project id {project_id!r} is not a UUID; no snapshot lookup")
         return None
 
-    path = _store_dir() / canonical / _MEMBERSHIP_FILENAME
     try:
-        if not path.exists():
-            return None
-        raw = json.loads(path.read_text())
+        text = (_store_dir() / canonical / _MEMBERSHIP_FILENAME).read_text()
+    except FileNotFoundError:
+        return None
+    except OSError as err:
+        raise SnapshotUnreadable(f"cohort membership for project {canonical} cannot be read: {err}") from err
+    try:
+        raw = json.loads(text)
         if raw.get("format_version") != _FORMAT_VERSION:
-            logger.error(
-                f"Cohort membership for project {canonical} has format_version "
-                f"{raw.get('format_version')} (expected {_FORMAT_VERSION}) — treating as absent"
+            raise SnapshotUnreadable(
+                f"cohort membership for project {canonical} has format_version "
+                f"{raw.get('format_version')} (expected {_FORMAT_VERSION})"
             )
-            return None
         return Snapshot(**raw)
-    except Exception:
-        logger.exception(
-            f"Cohort membership for project {canonical} is unreadable — treating as absent "
-            "(row-level routes refuse the project)"
-        )
+    except SnapshotUnreadable:
+        raise
+    except Exception as err:
+        raise SnapshotUnreadable(f"cohort membership for project {canonical} is malformed: {err}") from err
+
+
+def get_snapshot(project_id: str) -> Snapshot | None:
+    """The frozen membership for ``project_id``, or None when there is none to serve.
+
+    The lenient read the row-level routes use: None covers every no-record case — store disabled,
+    non-UUID project id, not approved yet — and an unreadable record (logged at ERROR). The routes
+    refuse on None (fail-closed).
+    """
+    try:
+        return load_snapshot(project_id)
+    except SnapshotUnreadable:
+        logger.exception("Cohort membership is unreadable — refusing the project's row-level routes")
         return None
 
 

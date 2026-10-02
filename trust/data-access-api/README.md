@@ -103,8 +103,8 @@ project id; the SQL the caller supplies is ignored (hash-compared against the qu
 logged when it differs). Consequences:
 
 - `/cohort/dataframe` re-runs the query of record against live OMOP (uncached) and keeps only the
-  rows whose `person_id` / `accession_id` are in the frozen sets — every frozen column must match —
-  so the cohort **can shrink but never grow**: a patient removed from OMOP (an opt-out, a
+  rows whose `person_id` / `accession_id` are in the frozen sets — every frozen column a row has a
+  value in must hold a member, and at least one must — so the cohort **can shrink but never grow**: a patient removed from OMOP (an opt-out, a
   correction) drops out on the next fetch, while neither a new patient nor a new study of an
   approved patient can enter;
 - `/cohort/accession-ids` never runs the cohort SQL: it serves the frozen accession ids that still
@@ -119,7 +119,9 @@ logged when it differs). Consequences:
 - freezing is once per project: a repeated `/cohort/snapshot` (the hub re-queues one whose result it
   never received, or re-checks a frozen trust with `include_frozen`) returns the frozen record's facts
   without re-running the query, so it cannot re-admit patients. There is no way to replace a membership:
-  only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh;
+  only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh. The
+  store is write-once at the filesystem level (a single rename the kernel refuses over an existing
+  record), and a record that is present but unreadable answers 500 rather than being frozen over;
 - the governance policy is asked at freeze time as for `cohort.statistics` — the freeze reports the
   same counts to the hub — so a project denied statistics is not frozen, and a policy
   `min_cohort_size` raise applies to the freeze as it does to the statistics route;
@@ -326,13 +328,14 @@ operator guide: [`../README.md`](../README.md#trust-governance-policy-optional))
 once, at import, and refuses to start on an invalid one (`data_access_api/policy/loader.py`); it logs
 one `[governance] policy ACTIVE from … sha256=…` line (or `[governance] no policy configured`) at
 startup. Each route asks the pure `policy.decide` (`/cohort` after `validate_query`; the two
-row-level routes, which ignore the caller's SQL, before reading the frozen membership): any matching deny
+row-level routes, which ignore the caller's SQL, before reading the frozen membership; `/cohort/snapshot`
+as `cohort.statistics`, since it reports the same counts, before reading the frozen record): any matching deny
 denies, otherwise the strictest matching permit sets the threshold, otherwise — for a route the
 document mentions — the request is denied. A denial answers exactly as a below-threshold cohort does
 (the fixed 403, or a suppressed `/cohort` response) and never runs the query;
 the rule id goes to the log only. The decision is taken live on every call, so a rule added after
-approval applies to an already-frozen cohort. `/cohort/snapshot` is not a policy action: it freezes
-at the kit's `COHORT_QUERY_THRESHOLD`, and a stricter rule then gates the serving routes.
+approval applies to an already-frozen cohort. `/cohort/snapshot` has no action of its own: it is
+decided as `cohort.statistics` and freezes at that decision's threshold.
 
 ### Cohort charts
 

@@ -14,13 +14,14 @@
 
 import json
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from flip_api.db.models.main_models import CohortSnapshotStatus, TrustTask
-from flip_api.domain.schemas.status import ProjectStatus, TaskStatus, TaskType
+from flip_api.db.models.main_models import CohortSnapshotStatus, TrustTask, XNATProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, TaskStatus, TaskType, XNATImageStatus
 from flip_api.private_services.snapshot_notifications import handle_snapshot_task_completed
 
 
@@ -41,7 +42,9 @@ def _completed_task(project, trust, row_count: int, snapshot_at: str) -> TrustTa
         task_type=TaskType.PERSIST_COHORT,
         status=TaskStatus.COMPLETED,
         payload=json.dumps({"project_id": str(project.id), "trust_id": str(trust.id), "query_id": None}),
-        result=json.dumps({"row_count": row_count, "has_accessions": True, "snapshot_at": snapshot_at}),
+        result=json.dumps(
+            {"row_count": row_count, "has_accessions": True, "snapshot_at": snapshot_at, "query_hash": "0" * 64}
+        ),
     )
 
 
@@ -72,3 +75,27 @@ def test_the_constraint_refuses_a_duplicate_row(session, project_and_trust):
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
+
+
+def test_a_late_first_freeze_reopens_the_reimport_budget_but_a_recheck_does_not(session, project_and_trust):
+    """Imaging was created before the cohort froze at this trust, and the sweep spent its budget on refusals."""
+    project, trust = project_and_trust
+    status_row = XNATProjectStatus(
+        xnat_project_id=uuid4(),
+        project_id=project.id,
+        trust_id=trust.id,
+        retrieve_image_status=XNATImageStatus.CREATED,
+        reimport_count=5,
+    )
+    session.add(status_row)
+    session.commit()
+
+    handle_snapshot_task_completed(_completed_task(project, trust, 30, "2026-09-01T00:00:00+00:00"), session)
+    session.refresh(status_row)
+    assert status_row.reimport_count == 0
+
+    status_row.reimport_count = 3
+    session.commit()
+    handle_snapshot_task_completed(_completed_task(project, trust, 30, "2026-09-02T00:00:00+00:00"), session)
+    session.refresh(status_row)
+    assert status_row.reimport_count == 3

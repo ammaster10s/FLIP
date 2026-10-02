@@ -98,7 +98,8 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
 
     Failure (including a below-threshold cohort, which data-access-api refuses with 403)
     marks the task FAILED at the hub with the category-only detail — nothing is persisted
-    trust-side in that case, and the project's row-level routes keep refusing.
+    trust-side in that case: a project never frozen keeps being refused, and a frozen one keeps its
+    membership.
 
     Args:
         payload: Task payload matching ``PersistCohortInput``.

@@ -447,7 +447,8 @@ class CohortSnapshotStatus(SQLModel, table=True):
     query_id: UUID | None = Field(default=None)
     row_count: int = Field()
     approved_record_count: int | None = Field(default=None)
-    # False = the frozen cohort has no accession_id column (tabular project; imaging no-ops).
+    # False = the frozen cohort holds no accession id (no accession_id column, or NULL on every row):
+    # there is no imaging to pull.
     has_accessions: bool = Field(default=False)
     query_hash: str | None = Field(default=None)
     snapshot_at: datetime = Field()

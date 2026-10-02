@@ -228,7 +228,11 @@ with the approval-time facts, written by the task's post-processing (retried by 
 - `GET /projects/{id}/cohort-snapshots` — one entry per approved trust with `status` `frozen` / `pending` /
   `failed`, derived from the latest PERSIST_COHORT task (`project_services/services/cohort_snapshot_service.py`).
   `failed` carries a category-only `error`, never the trust's raw error text; it also covers a trust that was never
-  asked (a project approved before the feature). Training at a trust that is not `frozen` is refused there.
+  asked (a project approved before the feature). Training at a trust never frozen is refused there. A `frozen` trust
+  whose last re-check (`include_frozen`) failed stays `frozen` with an `error` saying so — the hub cannot tell whether
+  it still holds its membership. A result the hub cannot parse fails the task (category "could not be read") rather
+  than leaving the trust `pending`; a trust's first record after its XNAT project exists resets that project's
+  reimport budget, so a late freeze still gets its studies pulled.
 - `POST /projects/{id}/cohort-snapshots` — re-queues PERSIST_COHORT on an APPROVED project at each approved trust
   the caller may decide (the approval authority: that trust's Trust Admin, else the hub admin) whose snapshot is
   missing or failed. Pending trusts are reported, never re-queued; frozen ones too unless `?include_frozen=true` —

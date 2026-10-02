@@ -11,6 +11,7 @@
 #
 
 import datetime
+import uuid
 from typing import Any
 
 import pandas as pd
@@ -47,9 +48,12 @@ from data_access_api.services.cohort import (
 )
 from data_access_api.services.cohort_snapshot import (
     Snapshot,
+    SnapshotExists,
     SnapshotTooLarge,
+    SnapshotUnreadable,
     delete_snapshot,
     get_snapshot,
+    load_snapshot,
     normalised_query_hash,
     save_snapshot,
     snapshot_enabled,
@@ -584,14 +588,19 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
         HTTPException: 400 if the query is invalid, exposes neither ``person_id`` nor
             ``accession_id``, or the project id cannot be opened or is not a UUID, 403 if policy
             denies the project or the cohort covers fewer subjects than the disclosure threshold, 413 if the serialized
-            record exceeds ``SNAPSHOT_MAX_BYTES``, 500 if the query fails to execute, 503 if the
-            snapshot store is not configured.
+            record exceeds ``SNAPSHOT_MAX_BYTES``, 500 if the query fails to execute or a frozen record
+            exists but cannot be read (nothing is written over it), 503 if the snapshot store is not
+            configured.
     """
     if not snapshot_enabled():
         raise HTTPException(status_code=503, detail="Cohort snapshot store is not configured on this trust.")
 
     project_id = _open_project_id(query_input.encrypted_project_id)
     logger.info(f"Received cohort snapshot request for project {project_id}")
+    try:
+        uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")
 
     # Decided before the frozen record is read, so a denied project answers the same whether or not
     # it holds a membership, and a denial never runs the query.
@@ -600,15 +609,9 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
         _log_denial(decision, project_id, "cohort snapshot")
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
-    existing = get_snapshot(project_id)
+    existing = _load_for_freeze(project_id)
     if existing is not None:
-        if normalised_query_hash(query_input.query) != existing.query_hash:
-            logger.warning(
-                f"Snapshot request for project {project_id} carries a different query from the frozen one — "
-                "kept the frozen membership"
-            )
-        logger.info(f"Cohort membership for project {project_id} is already frozen; returning its facts")
-        return _snapshot_response(existing)
+        return _kept_snapshot_response(project_id, existing, query_input.query)
 
     df = _run_cohort_query(query_input.query, use_cache=False, what="Snapshot cohort")
 
@@ -637,8 +640,16 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
             subject_count=subject_count,
             columns=[str(column) for column in df.columns],
         )
+    except SnapshotExists:
+        # Another freeze for this project landed while the query ran: the first one stands.
+        frozen = _load_for_freeze(project_id)
+        if frozen is None:
+            logger.error(f"Cohort membership for project {project_id} vanished after a concurrent freeze")
+            raise HTTPException(status_code=500, detail="Snapshot persistence failed.")
+        return _kept_snapshot_response(project_id, frozen, query_input.query)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")
+        logger.exception(f"Cohort membership for project {project_id} failed validation")
+        raise HTTPException(status_code=500, detail="Snapshot persistence failed.")
     except SnapshotTooLarge as err:
         logger.error(str(err))
         raise HTTPException(status_code=413, detail="Cohort snapshot exceeds the configured size limit.")
@@ -646,6 +657,31 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
         logger.exception("Cohort snapshot store write failed")
         raise HTTPException(status_code=500, detail="Snapshot persistence failed.")
 
+    return _snapshot_response(snapshot)
+
+
+def _load_for_freeze(project_id: str) -> Snapshot | None:
+    """The project's frozen membership for a freeze request: None only when there is no record.
+
+    A record that exists but cannot be read is a 500 and nothing is written. Treating it as absent
+    would re-run the query and write today's live cohort over the approved one, so a read blip during a
+    re-queued snapshot would let the cohort grow.
+    """
+    try:
+        return load_snapshot(project_id)
+    except SnapshotUnreadable:
+        logger.exception(f"Refusing to freeze project {project_id}: its frozen membership cannot be read")
+        raise HTTPException(status_code=500, detail="Cohort snapshot store read failed.")
+
+
+def _kept_snapshot_response(project_id: str, snapshot: Snapshot, requested_query: str) -> SnapshotResponse:
+    """The facts of a membership already frozen, which a freeze request keeps rather than replaces."""
+    if normalised_query_hash(requested_query) != snapshot.query_hash:
+        logger.warning(
+            f"Snapshot request for project {project_id} carries a different query from the frozen one — "
+            "kept the frozen membership"
+        )
+    logger.info(f"Cohort membership for project {project_id} is already frozen; returning its facts")
     return _snapshot_response(snapshot)
 
 

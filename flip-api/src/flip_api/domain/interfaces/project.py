@@ -266,8 +266,9 @@ class IImagingImportStatus(BaseModel):
 class ICohortSnapshot(BaseModel):
     """One approved trust's cohort freeze (FLIP#857) — aggregates only.
 
-    ``status`` is FROZEN, PENDING or FAILED; only a FROZEN trust serves the project's cohort, so
-    training at a PENDING or FAILED one is refused. The count fields are the approval-time facts
+    ``status`` is FROZEN, PENDING or FAILED, as the hub knows it: a trust never frozen (PENDING or FAILED)
+    refuses training, while a frozen trust being re-checked keeps serving (PENDING, or FROZEN with ``error``
+    set when the re-check failed). The count fields are the approval-time facts
     and are present once the trust has reported a snapshot. The frozen membership bounds what the
     project trains on at that trust (it can shrink as patients opt out, never grow), so
     ``rowCount`` is an upper bound. ``approvedRecordCount`` is the count the project was

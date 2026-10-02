@@ -303,7 +303,7 @@ define ensure_data_dirs
 endef
 
 # Prepare the membership store before compose would create it root-owned (the non-root
-# data-access-api then disables the store and refuses every row-level request). An absolute path is
+# data-access-api then fails every freeze and refuses every row-level request). An absolute path is
 # prepared by a throwaway container on the DOCKER HOST, so it works without sudo and over a remote
 # DOCKER_CONTEXT, where a local mkdir would touch the wrong machine — unless it is local and already
 # owned right (the provisioning playbooks create it), so a host without registry access still comes

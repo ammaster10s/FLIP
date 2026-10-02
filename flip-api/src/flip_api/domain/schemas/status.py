@@ -221,8 +221,9 @@ class TaskType(StrEnum):
 class CohortSnapshotState(StrEnum):
     """Where a trust's approval-time cohort freeze (FLIP#857) stands, from its latest PERSIST_COHORT task.
 
-    Derived per request; not persisted. Only FROZEN lets the trust serve the project's cohort — at a
-    PENDING or FAILED trust the row-level routes refuse the project.
+    Derived per request; not persisted. The hub's view: FROZEN confirms the trust reported a frozen
+    membership. A trust never frozen is PENDING or FAILED and refuses the project's row-level routes; a
+    frozen trust being re-checked is PENDING while it keeps serving, and stays FROZEN if the re-check fails.
     """
 
     FROZEN = "frozen"

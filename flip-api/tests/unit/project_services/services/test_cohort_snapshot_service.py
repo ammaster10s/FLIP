@@ -65,9 +65,8 @@ def make_db(tasks, records):
         (TaskStatus.COMPLETED, False, CohortSnapshotState.PENDING),
         (TaskStatus.FAILED, False, CohortSnapshotState.FAILED),
         (TaskStatus.CANCELLED, False, CohortSnapshotState.FAILED),
-        # A re-freeze in flight or failed is reported as such, even over an older record.
+        # A re-check in flight is reported as such, even over an older record.
         (TaskStatus.PENDING, True, CohortSnapshotState.PENDING),
-        (TaskStatus.FAILED, True, CohortSnapshotState.FAILED),
     ],
 )
 def test_state_follows_the_latest_task(task_status, has_record, expected):
@@ -80,6 +79,22 @@ def test_state_follows_the_latest_task(task_status, has_record, expected):
     assert entry.state == expected
     assert (entry.record is not None) == has_record
     assert (entry.error is not None) == (expected == CohortSnapshotState.FAILED)
+
+
+@pytest.mark.parametrize("task_status", [TaskStatus.FAILED, TaskStatus.CANCELLED])
+def test_a_failed_recheck_of_a_frozen_trust_stays_frozen_with_a_warning(task_status):
+    """The hub cannot tell a trust that still serves its membership from one that lost it: it keeps the record's
+    FROZEN state and says the re-check failed, never claiming training will be refused."""
+    trust = Trust(id=uuid4(), name="GSTT")
+    task = make_task(trust.id, task_status, result={"error": "Exceeded maximum retries (3)"})
+    db = make_db([task], [make_record(trust.id)])
+
+    (entry,) = service.resolve_snapshot_states(PROJECT_ID, [trust], db)
+
+    assert entry.state == CohortSnapshotState.FROZEN
+    assert entry.record is not None
+    assert entry.error is not None
+    assert entry.error.startswith("The last re-check failed")
 
 
 def test_a_trust_never_asked_is_failed_not_requested():
@@ -144,6 +159,7 @@ def test_no_trusts_queries_nothing():
         ({"error": "syntax error at or near SELEC", "status_code": 400}, service.REJECTED),
         ({"error": "validation", "status_code": 422}, service.REJECTED),
         ({"error": "Exceeded maximum retries (3)"}, service.TIMED_OUT),
+        ({"error": "Malformed cohort snapshot result"}, service.MALFORMED),
         ({"error": "psycopg2.OperationalError: host omop-db-1 port 5432"}, service.TRUST_ERROR),
         (None, service.TRUST_ERROR),
     ],
