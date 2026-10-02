@@ -78,6 +78,14 @@ def test_queues_every_approved_trust_without_a_record(session: MagicMock, seams:
     assert {o["trust_name"]: o["outcome"] for o in outcomes} == {"Missing": "queued", "Failed": "queued"}
 
 
+def test_include_frozen_also_queues_trusts_with_a_record(session: MagicMock, seams: SimpleNamespace):
+    """The fleet-wide recovery for a trust that lost its store; a pending trust is still skipped."""
+    backfill.backfill_cohort_snapshots(session, include_frozen=True)
+
+    queued = {(call.args[0], call.args[1].id) for call in seams.queue.call_args_list}
+    assert queued == {(PROJECT_A, RECORDED.id), (PROJECT_A, MISSING.id), (PROJECT_B, FAILED_NO_RECORD.id)}
+
+
 def test_selects_only_approved_live_projects(session: MagicMock, seams: SimpleNamespace):
     backfill.backfill_cohort_snapshots(session)
 

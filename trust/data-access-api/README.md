@@ -117,8 +117,15 @@ logged when it differs). Consequences:
 - a cohort frozen with no `accession_id` column returns an **empty** accession list — a
   tabular/OMOP-only project legitimately has no imaging to pull;
 - freezing is once per project: a repeated `/cohort/snapshot` (the hub re-queues one whose result it
-  never received) returns the frozen record's facts without re-running the query, so it cannot re-admit
-  patients; only an explicit `"replace": true` swaps in a fresh run, atomically;
+  never received, or re-checks a frozen trust with `include_frozen`) returns the frozen record's facts
+  without re-running the query, so it cannot re-admit patients. There is no way to replace a membership:
+  only a project with no record (never frozen, deleted, or lost with the store) is frozen afresh;
+- the governance policy is asked at freeze time as for `cohort.statistics` — the freeze reports the
+  same counts to the hub — so a project denied statistics is not frozen, and a policy
+  `min_cohort_size` raise applies to the freeze as it does to the statistics route;
+- a row is served when each frozen column it has a value in holds a member and at least one does,
+  so a member's row whose LEFT-JOINed `accession_id` is NULL is served as it was counted; a cohort that
+  froze no accession value at all is treated as tabular;
 - `POST /cohort/snapshot/delete` removes the record (the FLIP#997 teardown hook);
 - both write routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) require **cohort-admin** auth
   (AES-key possession) on top of the trust-internal key, so researcher FL code cannot define or
@@ -133,8 +140,8 @@ below-threshold cohort, nor for one exposing neither `person_id` nor `accession_
 membership to freeze — that is a 400 naming the column) and **re-counted on every row-level
 fetch** against the live threshold, so a cohort that shrinks below the floor stops being served and
 an operator raising their floor takes effect on already-approved projects. Snapshot creation reads
-OMOP with the query cache bypassed, so a re-approval freezes the live cohort, never a result cached
-at submission.
+OMOP (and counts its subjects) with the query cache bypassed, so it freezes the live cohort, never a
+result cached at submission.
 
 ## Authentication
 
@@ -145,7 +152,8 @@ running unrestricted queries against OMOP, every route under `/cohort` requires 
 against its own copy of the same per-trust key with a constant-time compare. `/health` stays
 unauthenticated so liveness probes keep working.
 
-Callers in this repo: trust-api (`/cohort`) and imaging-api (`/cohort/accession-ids`). The fl-client
+Callers in this repo: trust-api (`/cohort`, and `/cohort/snapshot` when the hub approves a project)
+and imaging-api (`/cohort/accession-ids`). The fl-client
 container calls `/cohort/dataframe` indirectly: user training code calls `flip.get_dataframe(...)`
 from the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
 (consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads

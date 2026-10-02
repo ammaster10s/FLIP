@@ -270,7 +270,10 @@ and the imaging pull both stop — until its membership is frozen. The project p
 as *not frozen*. A project approver re-freezes them with ``POST /api/projects/{project_id}/cohort-snapshots``;
 on a hub run with Docker Compose, ``make -C flip-api backfill_cohort_snapshots`` does it for every
 approved project at once (``EXTRA_ARGS="--dry-run"`` previews). Neither touches a site whose
-membership is already frozen: re-running the query there would let the cohort grow.
+membership is already frozen unless asked to (``?include_frozen=true`` on the endpoint,
+``EXTRA_ARGS="--include-frozen"`` on the backfill) — the recovery for a site that lost its snapshot
+store. A site that still holds its membership keeps it unchanged, so the cohort cannot grow; one that
+lost it freezes afresh from its live database.
 
 Deploying the hub itself — ``make deploy-centralhub PROD=true TAG=v<X.Y.Z>`` after enabling
 Deployment Mode and waiting for ``GET /fl/quiesce`` — is described in ``deploy/providers/AWS/README.md``

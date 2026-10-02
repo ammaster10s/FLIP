@@ -129,7 +129,8 @@ class Settings(BaseSettings):
     # Cohort-write authorisation (FLIP#857). The snapshot create/delete routes carry a second
     # gate on top of the trust-internal key: the caller must prove possession of AES_KEY_BASE64
     # by sending the SHA-256 of the key in this header. This separates the services trusted to
-    # DEFINE a project's approved cohort (trust-api, data-access-api — both hold the AES key)
+    # DEFINE a project's approved cohort (trust-api, which calls them; data-access-api checks the
+    # proof against its own copy of the key; imaging-api holds it too but never calls them)
     # from fl-client, which runs researcher training code, holds the trust-internal key for its
     # imaging reads, and deliberately has no AES key. The read routes are unaffected, so
     # fl-client's ``get_dataframe`` keeps working; only the cohort-defining writes are locked

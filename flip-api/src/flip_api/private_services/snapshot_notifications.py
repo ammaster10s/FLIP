@@ -60,8 +60,8 @@ def handle_snapshot_task_completed(task: TrustTask, db: Session) -> None:
     """Persist the frozen-cohort audit row for a successful PERSIST_COHORT task.
 
     Upserts the one ``CohortSnapshotStatus`` row per (project, trust) with a single
-    ``INSERT ... ON CONFLICT DO UPDATE`` on the table's unique constraint, so a re-approval
-    (or two post-processing runs racing — submission and the recovery job) updates the row
+    ``INSERT ... ON CONFLICT DO UPDATE`` on the table's unique constraint, so a re-queued
+    snapshot (or two post-processing runs racing — submission and the recovery job) updates the row
     in place rather than duplicating it or failing on the constraint. The row holds the
     approval-time facts; the frozen membership bounds what the project trains on at that
     trust (it can shrink, never grow). Logs a WARNING when the frozen member count differs

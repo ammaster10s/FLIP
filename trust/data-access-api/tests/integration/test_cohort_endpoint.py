@@ -143,12 +143,10 @@ _SEED_COHORT_QUERY = (
 )
 
 
-def _create_snapshot(http_client, query: str, project_id: str, replace: bool = False) -> httpx.Response:
+def _create_snapshot(http_client, query: str, project_id: str) -> httpx.Response:
     # The write route needs the cohort-admin proof on top of the client's trust-internal key.
     return http_client.post(
-        "/cohort/snapshot",
-        json={**_dataframe_payload(query, project_id), "replace": replace},
-        headers=COHORT_ADMIN_HEADERS,
+        "/cohort/snapshot", json=_dataframe_payload(query, project_id), headers=COHORT_ADMIN_HEADERS
     )
 
 
@@ -319,8 +317,8 @@ def test_snapshot_route_rejects_unsafe_sql(http_client):
     assert response.status_code == 400, response.text
 
 
-def test_snapshot_freezes_once_replace_refreezes_and_delete_removes_it(http_client):
-    """Freeze-once, an explicit replace, and the FLIP#997 teardown hook, end to end."""
+def test_snapshot_freezes_once_and_delete_removes_it(http_client):
+    """Freeze-once, the FLIP#997 teardown hook, and a fresh freeze once the record is gone, end to end."""
     from data_access_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 
     project_id = "97fca5ab-0000-4000-8000-000000000004"
@@ -332,16 +330,6 @@ def test_snapshot_freezes_once_replace_refreezes_and_delete_removes_it(http_clie
     repeated = _create_snapshot(http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id)
     assert repeated.status_code == 200, repeated.text
     assert repeated.json() == first.json()
-
-    second = _create_snapshot(
-        http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id, replace=True
-    )
-    assert second.status_code == 200, second.text
-
-    served = http_client.post(
-        "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
-    )
-    assert set(served.json().keys()) == {"person_id", "accession_id"}
 
     deleted = http_client.post(
         "/cohort/snapshot/delete",
@@ -361,3 +349,12 @@ def test_snapshot_freezes_once_replace_refreezes_and_delete_removes_it(http_clie
         "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
     )
     assert refused.status_code == 403
+
+    # A record that is gone (deleted here; lost with the store in the field) is frozen afresh when the hub
+    # re-queues the snapshot — the one way a trust's membership is ever written a second time.
+    refrozen = _create_snapshot(http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id)
+    assert refrozen.status_code == 200, refrozen.text
+    served = http_client.post(
+        "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
+    )
+    assert set(served.json().keys()) == {"person_id", "accession_id"}

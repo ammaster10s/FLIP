@@ -92,13 +92,27 @@ def test_requeues_only_missing_or_failed_snapshots(client: TestClient, seams: Si
     body = {entry["trustName"]: entry for entry in response.json()}
     assert {name for name, entry in body.items() if entry["queued"]} == {"Failed Trust", "Never Asked Trust"}
     assert body["Failed Trust"]["status"] == "pending"
-    # A frozen trust is never re-frozen (that would re-admit excluded patients); a pending one is already queued.
+    # A frozen trust is skipped unless asked for; a pending one is already queued.
     assert body["Frozen Trust"]["status"] == "frozen"
-    assert "re-approves" in body["Frozen Trust"]["reason"]
+    assert "include_frozen" in body["Frozen Trust"]["reason"]
     assert body["Pending Trust"]["status"] == "pending"
     assert "already pending" in body["Pending Trust"]["reason"]
     queued_trusts = {call.kwargs["trust"].id for call in seams.queue.call_args_list}
     assert queued_trusts == {FAILED.id, NEVER.id}
+
+
+def test_include_frozen_rechecks_frozen_trusts(client: TestClient, seams: SimpleNamespace):
+    """The recovery for a trust that lost its store: frozen trusts are re-queued too (the trust keeps a membership it
+    still holds), while a pending trust is still left alone."""
+    response = client.post(URL, params={"include_frozen": "true"})
+
+    assert response.status_code == status.HTTP_200_OK
+    body = {entry["trustName"]: entry for entry in response.json()}
+    assert body["Frozen Trust"]["queued"] is True
+    assert body["Frozen Trust"]["status"] == "pending"
+    assert body["Pending Trust"]["queued"] is False
+    queued_trusts = {call.kwargs["trust"].id for call in seams.queue.call_args_list}
+    assert queued_trusts == {FROZEN.id, FAILED.id, NEVER.id}
 
 
 def test_covers_only_the_trusts_the_caller_may_decide(client: TestClient, seams: SimpleNamespace):

@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
@@ -29,28 +29,37 @@ from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 
-ALREADY_FROZEN = "Already frozen; the frozen membership changes only when the trust re-approves"
+ALREADY_FROZEN = "Already frozen; re-check with include_frozen if the trust may have lost its frozen membership"
 ALREADY_PENDING = "A cohort snapshot is already pending at this trust"
 
 
-def requeue_trust_snapshots(project_id: UUID, trusts: list[Trust], db: Session) -> list[ICohortSnapshotRequeue]:
+def requeue_trust_snapshots(
+    project_id: UUID, trusts: list[Trust], db: Session, include_frozen: bool = False
+) -> list[ICohortSnapshotRequeue]:
     """Queue PERSIST_COHORT at each of ``trusts`` whose cohort is not frozen or pending, with no authority check.
 
-    A frozen trust is never re-frozen here: re-running the query would re-admit patients the frozen membership
-    excludes, and the cohort may only grow through a fresh approval. A pending trust already has a task queued.
+    A pending trust already has a task queued. A frozen trust is skipped unless ``include_frozen``: the hub's record
+    says it holds a membership, but cannot see whether the trust still does (a lost volume, an unreadable record).
+    Re-queuing one is safe because a trust never replaces a membership it holds — it answers with the frozen
+    record's facts — so only a trust that has lost its record freezes afresh, from live OMOP.
 
     Args:
         project_id (UUID): The approved project.
         trusts (list[Trust]): Approved trusts to consider.
         db (Session): Database session.
+        include_frozen (bool): Also re-queue trusts the hub records as frozen.
 
     Returns:
         list[ICohortSnapshotRequeue]: What was done at each trust, in the order given.
     """
-    return [_requeue_one(project_id, entry, db) for entry in resolve_snapshot_states(project_id, trusts, db)]
+    return [
+        _requeue_one(project_id, entry, db, include_frozen) for entry in resolve_snapshot_states(project_id, trusts, db)
+    ]
 
 
-def _requeue_one(project_id: UUID, entry: TrustSnapshotState, db: Session) -> ICohortSnapshotRequeue:
+def _requeue_one(
+    project_id: UUID, entry: TrustSnapshotState, db: Session, include_frozen: bool
+) -> ICohortSnapshotRequeue:
     trust = entry.trust
 
     def outcome(queued: bool, state: CohortSnapshotState, reason: str | None = None) -> ICohortSnapshotRequeue:
@@ -58,7 +67,7 @@ def _requeue_one(project_id: UUID, entry: TrustSnapshotState, db: Session) -> IC
             trust_id=trust.id, trust_name=trust.name, queued=queued, status=state, reason=reason
         )
 
-    if entry.state == CohortSnapshotState.FROZEN:
+    if entry.state == CohortSnapshotState.FROZEN and not include_frozen:
         return outcome(False, entry.state, ALREADY_FROZEN)
     if entry.state == CohortSnapshotState.PENDING:
         return outcome(False, entry.state, ALREADY_PENDING)
@@ -84,6 +93,13 @@ def _requeue_one(project_id: UUID, entry: TrustSnapshotState, db: Session) -> IC
 )
 def requeue_cohort_snapshots(
     project_id: UUID = Path(..., description="The approved project whose cohort snapshots to re-queue."),
+    include_frozen: bool = Query(
+        False,
+        description=(
+            "Also re-queue trusts recorded as frozen, to recover one that lost its frozen membership. A trust that "
+            "still holds its membership keeps it unchanged."
+        ),
+    ),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
 ) -> list[ICohortSnapshotRequeue]:
@@ -93,10 +109,12 @@ def requeue_cohort_snapshots(
     For a project approved before cohort snapshots existed, or one whose snapshot failed at a trust: the trust
     refuses to serve the project's cohort until it holds a frozen membership. Covers only the approved trusts the
     caller may decide — the same per-trust authority that approves the project (a trust's Trust Admin where it has
-    one, the hub admin where it does not). Frozen and pending trusts are reported, not re-queued.
+    one, the hub admin where it does not). Pending trusts are reported, not re-queued; so are frozen ones unless
+    ``include_frozen`` is set — the recovery for a trust whose store was lost, which the hub cannot see.
 
     Args:
         project_id (UUID): The approved project.
+        include_frozen (bool): Also re-queue trusts recorded as frozen.
         user_id (UUID): The caller.
         db (Session): Database session.
 
@@ -124,4 +142,4 @@ def requeue_cohort_snapshots(
             detail=f"User with ID: {user_id} was unable to re-queue this project's cohort snapshots",
         )
 
-    return requeue_trust_snapshots(project_id, decidable, db)
+    return requeue_trust_snapshots(project_id, decidable, db, include_frozen=include_frozen)

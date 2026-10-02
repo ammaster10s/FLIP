@@ -31,7 +31,7 @@ Layout, one file per hub project id::
 Writes are atomic at directory granularity: the file lands in a ``.tmp-*`` sibling first and is
 activated with ``os.replace`` renames, so a reader never observes a half-written record and a crash
 mid-write leaves (at worst) a stale temp directory that the boot-time sweep removes. There is no TTL
-and no in-place mutation — a record is replaced by a re-approval or deleted, never edited.
+and no in-place mutation — a record is written once and then only deleted, never edited.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ from data_access_api.config import get_settings
 from data_access_api.utils.logger import logger
 
 # Bumped when the on-disk layout changes; a record with an unknown version is treated as absent
-# (the project refuses row-level serving until it is re-approved) rather than mis-read.
+# (the project refuses row-level serving until its snapshot is re-queued) rather than mis-read.
 _FORMAT_VERSION = 2
 _MEMBERSHIP_FILENAME = "membership.json"
 # Work-in-progress / superseded directories. Never valid records; swept at startup.
@@ -117,7 +117,9 @@ class Snapshot:
 
     @property
     def has_accessions(self) -> bool:
-        return self.accession_ids is not None
+        """Whether the cohort froze any accession id — False for a tabular cohort, and for one whose
+        ``accession_id`` column was NULL on every row: neither has imaging to pull."""
+        return bool(self.accession_ids)
 
 
 def normalised_query_hash(query: str) -> str:

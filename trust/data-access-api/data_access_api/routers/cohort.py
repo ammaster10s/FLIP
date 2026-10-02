@@ -251,17 +251,21 @@ def _frozen_ids(df: pd.DataFrame, column: str) -> list[str] | None:
 
 
 def _restrict_to_membership(df: pd.DataFrame, snapshot: Snapshot) -> pd.DataFrame:
-    """Keep only the rows whose ids are all in the frozen membership.
+    """Keep only the rows whose ids are in the frozen membership.
 
-    Both frozen columns must match, so neither a patient who joined OMOP after approval nor a new
-    study of an approved patient enters the cohort. A frozen column the query no longer projects
-    matches nothing — fail-closed, since membership can no longer be checked — and so does a record
-    freezing no column at all, which ``Snapshot`` already refuses to construct.
+    A row is kept when every frozen column it carries a value in holds a member, and at least one
+    does. So neither a patient who joined OMOP after approval nor a new study of an approved patient
+    enters the cohort, while a row with no value in one frozen column (a member's row whose
+    LEFT-JOINed ``accession_id`` is NULL) is served as it was counted at approval. A row with no
+    value in any frozen column cannot be matched and is dropped. A frozen column the query no longer
+    projects matches nothing — fail-closed, since membership can no longer be checked — and so does
+    a record freezing no column at all, which ``Snapshot`` already refuses to construct.
     """
     if snapshot.person_ids is None and snapshot.accession_ids is None:
         logger.error("Cohort membership freezes no id column; releasing no rows")
         return df.iloc[0:0]
-    mask = pd.Series(True, index=df.index)
+    consistent = pd.Series(True, index=df.index)
+    matched = pd.Series(False, index=df.index)
     for column, ids in ((SUBJECT_ID_COLUMN, snapshot.person_ids), (ACCESSION_ID_COLUMN, snapshot.accession_ids)):
         if ids is None:
             continue
@@ -269,8 +273,11 @@ def _restrict_to_membership(df: pd.DataFrame, snapshot: Snapshot) -> pd.DataFram
             logger.error(f"Query of record no longer projects {column}; releasing no rows")
             return df.iloc[0:0]
         members = set(ids)
-        mask &= df[column].map(lambda value: pd.notna(value) and _id_str(value) in members)
-    return df[mask]
+        present = df[column].notna()
+        member = df[column].map(lambda value: pd.notna(value) and _id_str(value) in members).astype(bool)
+        consistent &= ~present | member
+        matched |= member
+    return df[consistent & matched]
 
 
 def _run_cohort_query(query: str, *, use_cache: bool, what: str) -> pd.DataFrame:
@@ -486,8 +493,8 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     are indistinguishable. The trust applies this itself rather than relying on the hub's
     staging guard — a trust must stay safe regardless of what the hub checked.
 
-    A cohort frozen without an ``accession_id`` column returns an EMPTY list rather than an
-    error: a tabular/OMOP-only project legitimately has no imaging to pull.
+    A cohort frozen without an ``accession_id`` column, or whose ``accession_id`` was NULL on every
+    row, returns an EMPTY list rather than an error: it has no imaging to pull.
 
     Args:
         query_input (DataframeQuery): The encrypted project id (and the advisory query).
@@ -513,10 +520,10 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     snapshot = _require_snapshot(project_id)
     _log_ignored_client_query(project_id, snapshot, query_input.query)
 
-    if snapshot.accession_ids is None:
+    if not snapshot.accession_ids:
         # Threshold before the shape answer: nothing about a below-threshold cohort is revealed.
         _check_threshold(project_id, snapshot.subject_count, decision.effective_threshold)
-        logger.info(f"Approved cohort for project {project_id} has no accession_id column (tabular project)")
+        logger.info(f"Approved cohort for project {project_id} froze no accession ids (tabular project)")
         return AccessionIdsResponse(accession_ids=[])
 
     # Guarded like the count: a lookup failure must be indistinguishable from a small cohort.
@@ -548,9 +555,15 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     to those ids, so the cohort can shrink but never grow.
 
     Freezing is once per project: when a membership already exists the route returns its facts
-    without running the query again, unless ``replace`` is set. A snapshot the hub re-queues
-    because its result never arrived (a timed-out task) therefore cannot re-admit patients the
-    frozen membership excludes. ``replace`` atomically swaps in a fresh run.
+    without running the query again. A snapshot the hub re-queues — because its result never
+    arrived, or to re-check a trust that may have lost its store — therefore cannot re-admit
+    patients the frozen membership excludes; only a project whose record is absent (never frozen,
+    deleted, or lost with the store) is frozen afresh from live OMOP.
+
+    The trust's governance policy is asked first, as for ``cohort.statistics``: the freeze reports
+    the same aggregates to the hub (row and subject counts), so a project denied statistics is not
+    frozen, and the threshold applied is the decision's ``effective_threshold`` — a policy
+    ``min_cohort_size`` raise holds here exactly as it does on the statistics route.
 
     The run is uncached, so it freezes LIVE OMOP (the statistics run at submission cached the
     same SQL for ``CACHE_TTL_DAYS``). ``validate_query`` remains the authority on the SQL
@@ -562,16 +575,15 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     only.
 
     Args:
-        query_input (SnapshotCreateRequest): The approved cohort query, encrypted project id, and
-            whether to replace an existing membership.
+        query_input (SnapshotCreateRequest): The approved cohort query and encrypted project id.
 
     Returns:
         SnapshotResponse: What was frozen — the existing record's facts when one was kept.
 
     Raises:
         HTTPException: 400 if the query is invalid, exposes neither ``person_id`` nor
-            ``accession_id``, or the project id cannot be opened or is not a UUID, 403 if the
-            cohort covers fewer subjects than the disclosure threshold, 413 if the serialized
+            ``accession_id``, or the project id cannot be opened or is not a UUID, 403 if policy
+            denies the project or the cohort covers fewer subjects than the disclosure threshold, 413 if the serialized
             record exceeds ``SNAPSHOT_MAX_BYTES``, 500 if the query fails to execute, 503 if the
             snapshot store is not configured.
     """
@@ -581,12 +593,19 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     project_id = _open_project_id(query_input.encrypted_project_id)
     logger.info(f"Received cohort snapshot request for project {project_id}")
 
-    existing = None if query_input.replace else get_snapshot(project_id)
+    # Decided before the frozen record is read, so a denied project answers the same whether or not
+    # it holds a membership, and a denial never runs the query.
+    decision = _evaluate(ACTION_COHORT_STATISTICS, project_id)
+    if not decision.permit:
+        _log_denial(decision, project_id, "cohort snapshot")
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
+
+    existing = get_snapshot(project_id)
     if existing is not None:
         if normalised_query_hash(query_input.query) != existing.query_hash:
             logger.warning(
                 f"Snapshot request for project {project_id} carries a different query from the frozen one — "
-                "kept the frozen membership (pass replace to re-freeze)"
+                "kept the frozen membership"
             )
         logger.info(f"Cohort membership for project {project_id} is already frozen; returning its facts")
         return _snapshot_response(existing)
@@ -596,7 +615,7 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     # The count sits outside get_records' handling on purpose: its 400s keep their diagnostic
     # shape, while a failure of the count itself is refused exactly as a small cohort is.
     try:
-        subject_count = count_distinct_subjects(df)
+        subject_count = count_distinct_subjects(df, use_cache=False)
     except Exception:
         logger.exception(f"Subject count unavailable for project {project_id}; refusing as below threshold")
         subject_count = 0
@@ -606,7 +625,7 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
             "accession_id, so its subject count cannot be established"
         )
         raise HTTPException(status_code=400, detail=_UNCOUNTABLE_SUBJECTS_DETAIL)
-    _check_threshold(project_id, subject_count, get_settings().COHORT_QUERY_THRESHOLD)
+    _check_threshold(project_id, subject_count, decision.effective_threshold)
 
     try:
         snapshot = save_snapshot(

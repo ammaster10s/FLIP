@@ -231,12 +231,14 @@ with the approval-time facts, written by the task's post-processing (retried by 
   asked (a project approved before the feature). Training at a trust that is not `frozen` is refused there.
 - `POST /projects/{id}/cohort-snapshots` — re-queues PERSIST_COHORT on an APPROVED project at each approved trust
   the caller may decide (the approval authority: that trust's Trust Admin, else the hub admin) whose snapshot is
-  missing or failed. Frozen and pending trusts are reported, never re-queued — re-freezing would re-admit patients
-  the frozen membership excludes.
+  missing or failed. Pending trusts are reported, never re-queued; frozen ones too unless `?include_frozen=true` —
+  the recovery for a trust that lost its snapshot store, which the hub cannot see. That is safe because a trust never
+  replaces a membership it holds (it answers with the frozen facts); only one that lost its record re-freezes.
 - `make backfill_cohort_snapshots` — the fleet-wide form for projects approved before the feature: queues
   PERSIST_COHORT at every approved trust of every APPROVED project with no `cohort_snapshot_status` row (pending
   trusts skipped, so it is idempotent). Runs `flip_api.scripts.backfill_cohort_snapshots` via `docker compose exec`
-  in the running flip-api container; `EXTRA_ARGS="--dry-run"` previews.
+  in the running flip-api container; `EXTRA_ARGS="--dry-run"` previews, `EXTRA_ARGS="--include-frozen"` also
+  re-queues trusts with a record (the fleet-wide store-loss recovery).
 
 ## Demo Video Recorder
 

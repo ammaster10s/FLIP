@@ -91,7 +91,7 @@ def test_the_record_holds_ids_and_sql_only(store):
     }
 
 
-def test_save_overwrites_atomically_on_reapproval(store):
+def test_save_overwrites_atomically(store):
     _save()
     _save(query="SELECT person_id FROM omop.person", person_ids=["1", "2"], accession_ids=None, columns=["person_id"])
 
@@ -255,7 +255,7 @@ def test_the_record_cannot_be_mutated_in_memory(store):
 
 
 def test_a_failed_replace_keeps_the_previous_membership(store):
-    """Re-approval must never destroy the last good record: if the new record cannot be moved
+    """An overwrite must never destroy the last good record: if the new record cannot be moved
     into place, the superseded one is put back."""
     _save()
     real_replace = cohort_snapshot.os.replace

@@ -146,8 +146,9 @@ Because the FL client legitimately holds this key — it reads the approved coho
 imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
 two ``data-access-api`` routes that record or delete the frozen cohort therefore carry a
 second gate on top of the shared key: proof of possessing the trust's payload-encryption key
-(``AES_KEY_BASE64``), which ``trust-api`` and ``data-access-api`` hold but the FL client does
-not. The proof is a one-way digest of the key, not the key itself, so it never appears on the
+(``AES_KEY_BASE64``). ``trust-api`` sends that proof when it records an approved cohort and
+``data-access-api`` checks it; ``imaging-api`` also holds the key but never calls these routes,
+and the FL client does not hold it. The proof is a one-way digest of the key, not the key itself, so it never appears on the
 wire or in logs. A caller that presents a valid shared key but not this proof is refused. No
 additional secret is provisioned; the control reuses a possession boundary that already exists.
 

@@ -429,7 +429,7 @@ class CohortSnapshotStatus(SQLModel, table=True):
 
     Aggregates only — the hub never sees a row of the cohort. Written by the PERSIST_COHORT
     task's post-processing from the trust's snapshot response; one row per (project, trust),
-    enforced by a unique constraint and updated in place on re-approval. The row holds the
+    enforced by a unique constraint and updated in place when the snapshot is re-queued. The row holds the
     approval-time facts: the frozen membership bounds what the project trains on at that trust
     (it can shrink as patients opt out, never grow), so ``row_count`` is an upper bound, not
     the live count. ``approved_record_count`` is the count the project was staged/approved on

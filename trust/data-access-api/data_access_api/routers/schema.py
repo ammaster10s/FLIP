@@ -101,15 +101,11 @@ class SnapshotResponse(BaseModel):
 
 
 class SnapshotCreateRequest(DataframeQuery):
-    """Input for ``POST /cohort/snapshot``: freeze a project's approved cohort membership."""
+    """Input for ``POST /cohort/snapshot``: freeze a project's approved cohort membership.
 
-    replace: bool = Field(
-        False,
-        description=(
-            "Replace a membership already frozen for this project. Off by default: the hub re-queues a "
-            "snapshot whose result it never received, and re-running the query then would let the cohort grow."
-        ),
-    )
+    There is deliberately no way to replace a membership already frozen: a repeated request returns the frozen
+    record's facts, so a re-queued snapshot can never let the cohort grow.
+    """
 
 
 class SnapshotDeleteRequest(BaseModel):
