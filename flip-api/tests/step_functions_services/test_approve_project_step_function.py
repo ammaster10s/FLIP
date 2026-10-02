@@ -181,7 +181,7 @@ def test_approve_project_with_failure_in_trust(
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 def test_a_late_trust_approval_freezes_that_trusts_cohort_before_its_imaging(
-    mock_approve_project, project_id, mock_trusts, override_dependencies
+    mock_approve_project, project_id, mock_trusts, override_dependencies, fake_idp
 ):
     """A trust approving an already-APPROVED project starts only itself (FLIP#1258), through the real fan-out.
 
@@ -202,9 +202,7 @@ def test_a_late_trust_approval_freezes_that_trusts_cohort_before_its_imaging(
     with (
         patch(f"{fan_out}.get_project", return_value=project),
         patch(f"{fan_out}.get_approved_trusts_for_project", return_value=[early_trust, late_trust]),
-        patch(f"{fan_out}.get_user_pool_id", return_value="pool-id"),
         patch(f"{fan_out}.get_users_with_access", return_value=[]),
-        patch(f"{fan_out}.get_cognito_users", return_value=[]),
     ):
         response = client.post(f"/api/step/project/{project_id}/approve", json={"trusts": [str(late_trust.id)]})
 
@@ -351,3 +349,30 @@ def test_approve_project_reports_the_permission_refusal_whether_or_not_the_proje
 
     assert statuses == [403, 403]
     assert mock_start_imaging.await_count == 0
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.queue_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_hands_the_identity_provider_to_the_imaging_fan_out(
+    mock_start_imaging,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+    fake_idp,
+):
+    """The fan-out calls ``queue_imaging_creation``, a plain function with no ``Depends()`` of its own: the
+    endpoint must resolve the provider once and hand it down. Left out, every CREATE_IMAGING task fails and
+    the image pull sits at 0/0 (seen on the dev stack)."""
+    mock_approve_project.return_value = mock_trusts
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    assert response.json()["trusts"]["succeeded"] == 2
+    assert mock_start_imaging.await_count == 2
+    for call in mock_start_imaging.await_args_list:
+        assert call.kwargs["idp"] is fake_idp
