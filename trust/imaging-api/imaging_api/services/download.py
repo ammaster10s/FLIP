@@ -25,6 +25,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import quote_path_segment
 
 # Get download directory
 XNAT_URL = get_settings().XNAT_URL
@@ -227,6 +228,8 @@ def format_download_url(
     """
     Formats the XNAT API URL to download experiment scan images.
 
+    Identifiers are quoted at this boundary even when a caller bypasses request validation.
+
     Args:
         project_id (str): XNAT project ID.
         subject_id (str): XNAT subject ID.
@@ -236,14 +239,17 @@ def format_download_url(
 
     Returns:
         str: Formatted URL for downloading images.
+
+    Raises:
+        ValueError: If an identifier is empty or a dot-segment.
     """
     assert assessor_type.lower() in [
         "scan",
         "assessor",
     ], "Type must be 'scan' or 'assessor'"
     base = (
-        f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/{assessor_type.lower()}s/ALL"
+        f"{XNAT_URL}/data/projects/{quote_path_segment(project_id)}/subjects/{quote_path_segment(subject_id)}/"
+        f"experiments/{quote_path_segment(experiment_id_or_label)}/{assessor_type.lower()}s/ALL"
     )
     # resource_type=ALL means "every resource on the scan". XNAT has no literal ALL
     # resource label — /resources/ALL/files 404s — so drop the resources segment and
@@ -252,7 +258,7 @@ def format_download_url(
     # Secondary Capture SOP classes, as produced by synthetic datasets).
     if resource_type.upper() == "ALL":
         return f"{base}/files?format=zip"
-    return f"{base}/resources/{resource_type}/files?format=zip"
+    return f"{base}/resources/{quote_path_segment(resource_type)}/files?format=zip"
 
 
 def download_file(url: str, destination_path: str, headers: dict[str, str]) -> str:
