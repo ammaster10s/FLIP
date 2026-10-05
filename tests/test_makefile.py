@@ -22,8 +22,14 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -69,7 +75,10 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert "site_upgrade.py plan" in out, out
         assert "--tag v0.6.0" in out, out
         assert "--yes" in out, out
-        assert "onboard_onprem_trust.py SCR --gate" in out, out  # the gate must not suggest up-onprem-trust
+        gate = next(line for line in out.splitlines() if "onboard_onprem_trust.py" in line)
+        assert "--gate" in gate, gate  # the gate must not suggest up-onprem-trust
+        assert "--kit-file" in gate, gate
+        assert ".env.SCR.production" in gate, gate
         assert "_upgrade-trust-apply" in out, out
         assert_data_safe(out, "upgrade-onprem-trust")
 
@@ -90,6 +99,123 @@ class CentralHubNetworks(unittest.TestCase):
         out = dry_run("remove-networks", "FLIP_INSTANCE=kc", subdir=".")
         for network in hub_only_networks():
             assert f"kc-{network}" in out, f"kc-{network}:\n{out}"
+
+
+ENVIRONMENTS = (
+    (None, "production"),
+    ("true", "production"),
+    ("stag", "stag"),
+    ("lza", "lza-prod"),
+    ("lza-stag", "lza-stag"),
+)
+KIT = (
+    "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
+    "FL_KIT_SLOT=Trust_9\n"
+    "FL_KIT_SLOT_NUMBER=9\n"
+    "NUM_AVAILABLE_GPUS=0\n"
+    "XNAT_AETITLE=XNAT\n"
+)
+
+
+class MakeKitSelection(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        for rel in (
+            "Makefile",
+            "deploy/env_mode.mk",
+            "deploy/fl_backend.mk",
+            "deploy/instance.mk",
+            "trust/Makefile",
+            "trust/xnat/Makefile",
+            "trust/xnat/.env",
+        ):
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / rel, target)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        uv = bin_dir / "uv"
+        uv.write_text(
+            f"#!{sys.executable}\nimport json, os, sys\n"
+            "with open(os.environ['ARGS_FILE'], 'w') as out: json.dump(sys.argv[1:], out)\n"
+        )
+        uv.chmod(0o755)
+        self.args_file = self.root / "args.json"
+        self.env = {
+            key: value for key, value in os.environ.items() if key not in {"PROD", "KIT", "KIT_FILE", "MAKEFLAGS"}
+        }
+        self.env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file))
+
+    def run_make(self, target, prod=None, *extra, dry=False, subdir="."):
+        command = [
+            "make",
+            "--no-print-directory",
+            *(["-n"] if dry else []),
+            "-C",
+            str(self.root / subdir),
+            target,
+            "KIT=SITE",
+        ]
+        if prod is not None:
+            command.append(f"PROD={prod}")
+        result = subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    def check_selected(self, expected, prod=None, *extra, subdir="."):
+        self.run_make("onboard-onprem-trust", prod, *extra, subdir=subdir)
+        args = json.loads(self.args_file.read_text())
+        assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
+        assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
+
+    def test_suffixed_kit_wins_over_legacy_in_every_onprem_environment(self):
+        (self.root / "trust/.env.SITE").write_text(KIT)
+        for prod, suffix in ENVIRONMENTS:
+            with self.subTest(prod=prod):
+                filename = f".env.SITE.{suffix}"
+                (self.root / "trust" / filename).write_text(KIT)
+                self.check_selected(filename, prod)
+
+    def test_legacy_kit_is_the_fallback_in_every_onprem_environment(self):
+        (self.root / "trust/.env.SITE").write_text(KIT)
+        for prod, _ in ENVIRONMENTS:
+            with self.subTest(prod=prod):
+                self.check_selected(".env.SITE", prod)
+
+    def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
+        self.check_selected(".env.SITE")
+
+    def test_a_development_kit_cannot_override_the_onprem_production_default(self):
+        (self.root / "trust/.env.SITE.development").write_text(KIT)
+        (self.root / "trust/.env.SITE.production").write_text(KIT)
+        self.check_selected(".env.SITE.production")
+        self.check_selected(".env.SITE.development", subdir="trust")
+
+    def test_explicit_kit_file_override_reaches_the_checklist(self):
+        (self.root / "trust/.env.SITE.production").write_text(KIT)
+        (self.root / "trust/operator-kit").write_text(KIT)
+        self.check_selected("operator-kit", None, "KIT_FILE=operator-kit")
+
+    def test_both_gate_callers_and_the_deployment_use_the_same_file(self):
+        for filename in (".env.SITE.production", ".env.SITE"):
+            with self.subTest(filename=filename):
+                kit_file = self.root / "trust" / filename
+                kit_file.write_text(KIT)
+                for target in ("up-onprem-trust", "upgrade-onprem-trust"):
+                    output = self.run_make(target, dry=True)
+                    gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
+                    args = shlex.split(gate)
+                    assert "--gate" in args, gate
+                    assert Path(args[args.index("--kit-file") + 1]) == kit_file, gate
+                    if target == "upgrade-onprem-trust":
+                        plan = next(line for line in output.splitlines() if "site_upgrade.py plan" in line)
+                        plan_args = shlex.split(plan)
+                        assert plan_args[plan_args.index("--kit-file") + 1] == filename, plan
+                    else:
+                        assert f"Using kit file trust/{filename}" in output, output
+                kit_file.unlink()
 
 
 if __name__ == "__main__":

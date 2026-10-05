@@ -11,7 +11,7 @@
 #
 
 .PHONY: build up down up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
-	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
+	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
@@ -407,6 +407,11 @@ endef
 
 build:
 	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+
+# The root on-prem verbs delegate here so readiness checks exactly the kit that
+# up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
+onboard-onprem-trust:
+	@uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file "$(abspath $(KIT_FILE))" $(ONBOARD_ARGS)
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The

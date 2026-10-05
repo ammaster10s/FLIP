@@ -486,6 +486,13 @@ system packages, or a `Dockerfile` — those live in the image layer, so a plain
 no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
+For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
+then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
+`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
+resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
+
 ## The contribution process
 
 *Fork the repository before making changes* [Learn how to fork](https://help.github.com/en/github/getting-started-with-github/fork-a-repo). All contributions to the `develop` branch must be made via pull requests. This allows us to review your changes and ensure they meet our quality standards before merging them into the main codebase.
