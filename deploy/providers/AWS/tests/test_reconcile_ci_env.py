@@ -499,9 +499,7 @@ class TestBuild:
         # source to read. Reading only the lookup recovered "", which
         # keys_expected_empty() reports as a failed recovery on prod — leaving
         # the LZA prod environment unseedable.
-        stub_aws.update(
-            _minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets", demo_managed=True)
-        )
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets", demo_managed=True))
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
 

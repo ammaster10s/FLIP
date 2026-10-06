@@ -35,7 +35,6 @@ PRs alongside the rest of ``tests/``.
 from pathlib import Path
 
 import pytest
-
 from tf_source import hcl_block, strip_comments
 
 AWS_DIR = Path(__file__).resolve().parent.parent
