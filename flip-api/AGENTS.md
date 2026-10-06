@@ -227,7 +227,7 @@ with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--networ
 (cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
 `flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
 `flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
-live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
+and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
 `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
 the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
 risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
