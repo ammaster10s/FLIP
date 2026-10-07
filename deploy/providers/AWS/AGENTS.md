@@ -192,6 +192,11 @@ Things worth knowing before touching any of it:
   only the Terraform inputs, so it refuses to overwrite a real operator env file,
   and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
   recovery rather than a value — empty there destroys the Ark+ demo resources.
+  The key recovers from one of two places depending on the estate (FLIP#1199):
+  `data.aws_s3_bucket.demo_assets` on legacy, where the bucket is adopted, and
+  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` on LZA, where Terraform
+  creates it. The module has to be matched by name, since every `flip_s3_bucket`
+  caller contributes an `aws_s3_bucket.this`.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
