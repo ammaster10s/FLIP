@@ -35,7 +35,7 @@ from imaging_api.services.users import create_user_from_central_hub_user, get_us
 from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import quote_path_segment
+from imaging_api.utils.xnat_url import xnat_url
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -894,12 +894,11 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
         project.
         Exception: If there is an error during the fetch process.
     """
-    quoted_project_id = quote_path_segment(project_id)
-    quoted_experiment_id = quote_path_segment(experiment_id_or_label)
+    url = xnat_url("data", "projects", project_id, "experiments", experiment_id_or_label, query={"format": "json"})
     get_project(project_id, headers)
 
     response = requests.get(
-        f"{XNAT_URL}/data/projects/{quoted_project_id}/experiments/{quoted_experiment_id}?format=json",
+        url,
         headers=headers,
     )
 

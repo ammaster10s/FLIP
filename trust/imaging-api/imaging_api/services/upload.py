@@ -25,9 +25,8 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import quote_path_segment
+from imaging_api.utils.xnat_url import xnat_url
 
-XNAT_URL = get_settings().XNAT_URL
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
 # Create router
@@ -191,10 +190,17 @@ def create_xnat_scan(
         ValueError: If an identifier is empty or a dot-segment.
         Exception: If there is an error during the creation of the scan.
     """
-    scan_url = (
-        f"{XNAT_URL}/data/projects/{quote_path_segment(project_id)}/subjects/{quote_path_segment(subject_id)}/"
-        f"experiments/{quote_path_segment(experiment_id_or_label)}/scans/{quote_path_segment(scan_id)}"
-        f"?xsiType=xnat:mrScanData"
+    scan_url = xnat_url(
+        "data",
+        "projects",
+        project_id,
+        "subjects",
+        subject_id,
+        "experiments",
+        experiment_id_or_label,
+        "scans",
+        scan_id,
+        query={"xsiType": "xnat:mrScanData"},
     )
 
     response = requests.put(scan_url, headers=headers)
@@ -231,10 +237,18 @@ def create_xnat_resource(
         AlreadyExistsError: If the resource already exists in XNAT.
         Exception: If there is an error during the creation of the resource.
     """
-    resource_url = (
-        f"{XNAT_URL}/data/projects/{quote_path_segment(project_id)}/subjects/{quote_path_segment(subject_id)}/"
-        f"experiments/{quote_path_segment(experiment_id_or_label)}/scans/{quote_path_segment(scan_id)}/"
-        f"resources/{quote_path_segment(resource_id)}"
+    resource_url = xnat_url(
+        "data",
+        "projects",
+        project_id,
+        "subjects",
+        subject_id,
+        "experiments",
+        experiment_id_or_label,
+        "scans",
+        scan_id,
+        "resources",
+        resource_id,
     )
 
     response = requests.put(resource_url, headers=headers)
@@ -294,10 +308,21 @@ def upload_file_to_xnat(
     """
     file_name = Path(file_path).name
 
-    url = (
-        f"{XNAT_URL}/data/projects/{quote_path_segment(project_id)}/subjects/{quote_path_segment(subject_id)}/"
-        f"experiments/{quote_path_segment(experiment_id_or_label)}/scans/{quote_path_segment(scan_id)}/"
-        f"resources/{quote_path_segment(resource_id)}/files/{quote_path_segment(file_name)}?inbody=true"
+    url = xnat_url(
+        "data",
+        "projects",
+        project_id,
+        "subjects",
+        subject_id,
+        "experiments",
+        experiment_id_or_label,
+        "scans",
+        scan_id,
+        "resources",
+        resource_id,
+        "files",
+        file_name,
+        query={"inbody": "true"},
     )
 
     # Check if the file already exists if exist_ok is False

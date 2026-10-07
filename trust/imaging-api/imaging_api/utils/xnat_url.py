@@ -10,7 +10,12 @@
 # limitations under the License.
 #
 
-from urllib.parse import quote
+from collections.abc import Mapping
+from urllib.parse import quote, urlencode
+
+from imaging_api.config import get_settings
+
+XNAT_URL = get_settings().XNAT_URL
 
 
 def quote_path_segment(value: str) -> str:
@@ -29,3 +34,20 @@ def quote_path_segment(value: str) -> str:
     if not value or value in (".", ".."):
         raise ValueError("XNAT path segment must not be empty or a dot-segment")
     return quote(value, safe="")
+
+
+def xnat_url(*segments: str, query: Mapping[str, str] | None = None) -> str:
+    """Build an XNAT URL from raw path segments, quoting each one.
+
+    Args:
+        segments (str): Raw path segments, including literal endpoint names.
+        query (Mapping[str, str] | None): Optional raw query parameters.
+
+    Returns:
+        str: The XNAT URL with encoded path segments and query parameters.
+
+    Raises:
+        ValueError: If any path segment is empty or a dot-segment.
+    """
+    url = f"{XNAT_URL}/{'/'.join(quote_path_segment(segment) for segment in segments)}"
+    return f"{url}?{urlencode(query)}" if query else url

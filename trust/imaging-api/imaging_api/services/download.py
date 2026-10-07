@@ -25,10 +25,9 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import quote_path_segment
+from imaging_api.utils.xnat_url import xnat_url
 
 # Get download directory
-XNAT_URL = get_settings().XNAT_URL
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
 
@@ -247,9 +246,16 @@ def format_download_url(
         "scan",
         "assessor",
     ], "Type must be 'scan' or 'assessor'"
-    base = (
-        f"{XNAT_URL}/data/projects/{quote_path_segment(project_id)}/subjects/{quote_path_segment(subject_id)}/"
-        f"experiments/{quote_path_segment(experiment_id_or_label)}/{assessor_type.lower()}s/ALL"
+    segments = (
+        "data",
+        "projects",
+        project_id,
+        "subjects",
+        subject_id,
+        "experiments",
+        experiment_id_or_label,
+        f"{assessor_type.lower()}s",
+        "ALL",
     )
     # resource_type=ALL means "every resource on the scan". XNAT has no literal ALL
     # resource label — /resources/ALL/files 404s — so drop the resources segment and
@@ -257,8 +263,8 @@ def format_download_url(
     # whose resource XNAT labels other than "DICOM" (e.g. "secondary" for
     # Secondary Capture SOP classes, as produced by synthetic datasets).
     if resource_type.upper() == "ALL":
-        return f"{base}/files?format=zip"
-    return f"{base}/resources/{quote_path_segment(resource_type)}/files?format=zip"
+        return xnat_url(*segments, "files", query={"format": "zip"})
+    return xnat_url(*segments, "resources", resource_type, "files", query={"format": "zip"})
 
 
 def download_file(url: str, destination_path: str, headers: dict[str, str]) -> str:
