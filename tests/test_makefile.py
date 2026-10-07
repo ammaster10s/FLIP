@@ -140,13 +140,17 @@ class MakeKitSelection(unittest.TestCase):
         uv.write_text(
             f"#!{sys.executable}\nimport json, os, sys\n"
             "with open(os.environ['ARGS_FILE'], 'w') as out: json.dump(sys.argv[1:], out)\n"
+            "with open(os.environ['PROD_FILE'], 'w') as out: out.write(os.environ.get('PROD', 'unset'))\n"
         )
         uv.chmod(0o755)
         self.args_file = self.root / "args.json"
+        self.prod_file = self.root / "prod.txt"
         self.env = {
             key: value for key, value in os.environ.items() if key not in {"PROD", "KIT", "KIT_FILE", "MAKEFLAGS"}
         }
-        self.env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file))
+        self.env.update(
+            PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), PROD_FILE=str(self.prod_file)
+        )
 
     def run_make(self, target, prod=None, *extra, dry=False, subdir="."):
         command = [
@@ -169,6 +173,7 @@ class MakeKitSelection(unittest.TestCase):
         args = json.loads(self.args_file.read_text())
         assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
         assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
+        assert self.prod_file.read_text() == (prod or ("" if subdir == "trust" else "true"))
 
     def test_suffixed_kit_wins_over_legacy_in_every_onprem_environment(self):
         (self.root / "trust/.env.SITE").write_text(KIT)
@@ -197,6 +202,159 @@ class MakeKitSelection(unittest.TestCase):
         (self.root / "trust/.env.SITE.production").write_text(KIT)
         (self.root / "trust/operator-kit").write_text(KIT)
         self.check_selected("operator-kit", None, "KIT_FILE=operator-kit")
+
+    def test_the_checklist_passes_shell_metacharacters_as_part_of_the_path(self):
+        for filename in ('operator kits/kit\'s $HOME `echo unsafe` "file"', "kit$(echo unsafe)`echo unsafe`\"file'"):
+            selected = self.root / "trust" / filename
+            selected.parent.mkdir(parents=True, exist_ok=True)
+            selected.write_text(KIT)
+            for path in (filename, str(selected)):
+                with self.subTest(path=path):
+                    # Dollars are escaped for Make's variable expansion, then passed literally to the shell.
+                    self.check_selected(filename, None, f"KIT_FILE={path.replace('$', '$$')}")
+
+    def test_copied_ready_and_governance_assignments_reach_make_unchanged(self):
+        selected = self.root / 'trust/operator kits/kit\'s $HOME `echo unsafe` "file"'
+        selected.parent.mkdir()
+        selected.write_text(KIT)
+        code = """
+import contextlib, io, json, sys
+from pathlib import Path
+from unittest import mock
+import onboard_onprem_trust as mod
+selected = Path(sys.argv[1])
+sys.argv = ['checklist', 'SITE', '--kit-file', str(selected)]
+out = io.StringIO()
+with contextlib.redirect_stdout(out), \\
+     mock.patch.object(mod, 'fetch_public_ip', return_value=None), \\
+     mock.patch.object(mod, 'run_checks', return_value=[mod.Check('x', mod.Status.PASS, 'mocked')]):
+    try:
+        mod.main()
+    except SystemExit as error:
+        assert error.code == 0
+ready = next(line.strip() for line in out.getvalue().splitlines() if 'sudo -E make up-onprem-trust' in line)
+with mock.patch.object(mod.subprocess, 'run', return_value=mod.subprocess.CompletedProcess([], 1, 'bad policy', '')):
+    check = mod.check_governance_document(
+        {'ACCESS_POLICY_FILE': 'governance.toml'}, True, 'SITE', selected.parents[2], selected)
+hint = next(hint for hint in check.hints if 'check-governance' in hint)
+print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
+"""
+        for prod in ("true", "stag", "lza", "lza-stag"):
+            generated = subprocess.run(
+                [sys.executable, "-c", code, str(selected)],
+                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "PROD": prod},
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert generated.returncode == 0, generated.stdout + generated.stderr
+            commands = json.loads(generated.stdout)
+            for name, command in commands.items():
+                with self.subTest(prod=prod, command=name):
+                    # Reuse the printed assignments, but run only the read-only checklist through stub uv.
+                    assignments = shlex.split(command)[4:]
+                    self.run_make(
+                        "onboard-onprem-trust",
+                        None,
+                        *assignments,
+                        subdir="trust" if name == "governance" else ".",
+                    )
+                    args = json.loads(self.args_file.read_text())
+                    assert Path(args[args.index("--kit-file") + 1]) == selected, args
+                    assert self.prod_file.read_text() == prod
+
+    def test_an_occupied_slot_allows_only_its_own_kit_for_absolute_and_relative_paths(self):
+        selected = self.root / "trust/.env.SITE.production"
+        selected.write_text(KIT)
+        calls_file = self.root / "docker-calls.jsonl"
+        docker = self.root / "bin/docker"
+        docker.write_text(
+            f"#!{sys.executable}\nimport json, os, sys\n"
+            "args = sys.argv[1:]\n"
+            "with open(os.environ['DOCKER_CALLS'], 'a') as out: out.write(json.dumps(args) + '\\n')\n"
+            "if args[0] == 'ps':\n"
+            "    if '-q' in args: print('occupied-container')\n"
+            "    elif 'environment_file' in args[-1]: print(os.environ['SLOT_OWNER'])\n"
+            "    elif 'working_dir' in args[-1]: print('/previous/checkout/trust')\n"
+            "elif args[0] != 'compose': sys.exit('Unexpected Docker command')\n"
+        )
+        docker.chmod(0o755)
+        self.env["DOCKER_CALLS"] = str(calls_file)
+        makefile = self.root / "trust/Makefile"
+        with makefile.open("a") as out:
+            out.write("\n_test-slot-guard:\n\t$(check_slot_not_taken)\n\t@echo slot guard passed\n")
+        overrides = (
+            self.root / "trust/operator kits" / selected.name,
+            self.root / 'trust/operator\'s $HOME `echo unsafe` "kits"' / selected.name,
+            self.root / 'trust/operator kits/kit\'s $HOME `echo unsafe` "file"',
+        )
+        for override in overrides:
+            override.parent.mkdir(parents=True, exist_ok=True)
+            override.write_text(KIT)
+        for requested in (selected.name, str(selected), *(str(override) for override in overrides)):
+            # The guard itself can accept arbitrary filenames; other deployment recipes still assume CODE kits.
+            target = "down-fl-clients-kit" if requested in (selected.name, str(selected)) else "_test-slot-guard"
+            for owner, allowed in (
+                (f"/previous/checkout/{Path(requested).name}", True),
+                ("/other/.env.OTHER.production", False),
+                ("", False),
+            ):
+                with self.subTest(requested=requested, owner=owner):
+                    self.env["SLOT_OWNER"] = owner
+                    calls_file.write_text("")
+                    result = subprocess.run(
+                        [
+                            "make",
+                            "--no-print-directory",
+                            "-C",
+                            str(self.root / "trust"),
+                            target,
+                            "KIT=SITE",
+                            "PROD=true",
+                            "FL_KIT_SLOT_NUMBER=9",
+                            f"KIT_FILE={requested.replace('$', '$$')}",
+                        ],
+                        env=self.env,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+                    assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+                    if target == "down-fl-clients-kit":
+                        assert any(call[0] == "compose" for call in calls) == allowed, calls
+                    else:
+                        assert ("slot guard passed" in result.stdout) == allowed, result.stdout
+                        assert all(call[0] == "ps" for call in calls), calls
+                    if not allowed:
+                        assert "trust//" not in result.stdout, result.stdout
+                        hint_path = requested if Path(requested).is_absolute() else f"trust/{requested}"
+                        assert f"in {hint_path}" in result.stdout, result.stdout
+                        expected = "already in use" if owner else "cannot be identified"
+                        assert expected in result.stdout, result.stdout
+
+    def test_missing_kit_diagnostics_show_absolute_or_repo_relative_paths(self):
+        for requested in ("missing-kit", str(self.root / "trust/missing-kit")):
+            result = subprocess.run(
+                [
+                    "make",
+                    "-C",
+                    str(self.root / "trust"),
+                    "up-trust-ec2",
+                    "KIT=SITE",
+                    "PROD=true",
+                    f"KIT_FILE={requested}",
+                ],
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            expected = requested if Path(requested).is_absolute() else f"trust/{requested}"
+            assert result.returncode != 0, result.stdout
+            assert f"Kit file {expected} not found" in result.stdout, result.stdout
+            assert f"Copy {expected}.example to {expected}" in result.stdout, result.stdout
+            assert "trust//" not in result.stdout, result.stdout
 
     def test_both_gate_callers_and_the_deployment_use_the_same_file(self):
         for filename in (".env.SITE.production", ".env.SITE"):

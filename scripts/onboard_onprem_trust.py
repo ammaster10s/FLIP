@@ -60,6 +60,12 @@ import site_upgrade  # noqa: E402 — resolves a CI-deployed hub's sha build to 
 
 WIDTH = 71
 
+
+def quote_make_assignment(key: str, value: str | Path) -> str:
+    """Escape Make's dollar expansion before quoting the assignment for the shell."""
+    return shlex.quote(f"{key}={value}".replace("$", "$$"))
+
+
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
 # scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
 # flip-api/src/flip_api/scripts/register_trust.py.
@@ -741,14 +747,19 @@ def check_governance_document(
     lines = result.stdout.strip().splitlines()
     if result.returncode:
         detail = (lines[0] if lines else result.stderr.strip()).removeprefix("❌ ")
+        command = (
+            f"make -C trust check-governance {quote_make_assignment('KIT', kit)} "
+            f"{quote_make_assignment('KIT_FILE', kit_file)}"
+        )
+        if prod := os.environ.get("PROD"):
+            command += f" {quote_make_assignment('PROD', prod)}"
         return Check(
             label,
             Status.FAIL,
             detail or "governance document validation failed",
             hints=[
                 f"Edit {document}; data-access-api refuses to start on an invalid document.",
-                f"`make -C trust check-governance {shlex.quote(f'KIT={kit}')} "
-                f"{shlex.quote(f'KIT_FILE={kit_file}')}` validates both halves with the details.",
+                f"`{command}` validates both halves with the details.",
             ],
         )
     facts = {line.split(":", 1)[0].strip(): line.split(":", 1)[1].strip() for line in lines if ":" in line}
@@ -946,7 +957,6 @@ def main() -> None:
     args = parser.parse_args()
 
     kit = args.kit or "Trust_2"
-    kit_defaulted = args.kit is None
 
     repo_root = Path(__file__).resolve().parent.parent
     kit_file = args.kit_file or Path("trust") / f".env.{kit}"
@@ -955,8 +965,6 @@ def main() -> None:
 
     print()
     heading(f"On-prem trust onboarding checklist — kit {kit_file_label(kit_file, repo_root)}")
-    if kit_defaulted:
-        print(f"  {DIM}(KIT defaulted to Trust_2 — override with: make onboard-onprem-trust KIT=<slot>){RESET}")
 
     print()
     ip = fetch_public_ip()
@@ -996,7 +1004,13 @@ def main() -> None:
             print("  Bring the stack up:")
             # sudo -E: the provisioned on-prem login user is deliberately not in the
             # docker group (root-equivalent), so the stack comes up via sudo.
-            command = f"sudo -E make up-onprem-trust {shlex.quote(f'KIT={kit}')} {shlex.quote(f'KIT_FILE={kit_file}')}"
+            command = (
+                f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
+                f"{quote_make_assignment('KIT_FILE', kit_file)}"
+            )
+            prod = os.environ.get("PROD", "true")
+            if prod and prod != "true":
+                command += f" {quote_make_assignment('PROD', prod)}"
             print(f"      {BOLD}{command}{RESET}")
         if n_warn:
             print(

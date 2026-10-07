@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import shlex
 import subprocess
 import sys
@@ -533,28 +534,34 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
     selected_paths = (
         SCRIPTS_DIR.parent / "trust/.env.SITE.stag",
         Path("/opt/operator kits/kit's file; echo unsafe"),
+        Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
     for selected in selected_paths:
-        out = io.StringIO()
-        exit_code = None
-        with (
-            mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
-            mock.patch.object(sys, "stdout", out),
-            mock.patch.object(mod, "fetch_public_ip", return_value=None),
-            mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
-        ):
-            try:
-                mod.main()
-            except SystemExit as error:
-                exit_code = error.code
-        text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
-        command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
-        _assert(exit_code == 0, f"{selected.name}: READY exits 0")
-        _assert(
-            shlex.split(command) == ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}"],
-            f"{selected.name}: selected path remains one command argument",
-            command,
-        )
+        for prod in (None, "true", "stag", "lza", "lza-stag"):
+            out = io.StringIO()
+            exit_code = None
+            with (
+                mock.patch.dict(os.environ, {} if prod is None else {"PROD": prod}, clear=True),
+                mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
+                mock.patch.object(sys, "stdout", out),
+                mock.patch.object(mod, "fetch_public_ip", return_value=None),
+                mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
+            ):
+                try:
+                    mod.main()
+                except SystemExit as error:
+                    exit_code = error.code
+            text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
+            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            _assert(exit_code == 0, f"{selected.name}: READY exits 0")
+            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            if prod and prod != "true":
+                expected.append(f"PROD={prod}")
+            _assert(
+                shlex.split(command) == expected,
+                f"{selected.name}: selected path remains one argument and PROD={prod} is preserved",
+                command,
+            )
 
 
 def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
@@ -562,26 +569,39 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
     print("▶ failed governance advice preserves and shell-quotes the selected kit")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        selected = root / "trust/kit's file; echo unsafe.production"
+        selected = root / 'trust/kit\'s $HOME `echo unsafe` "file".production'
         selected.parent.mkdir()
         selected.write_text("ACCESS_POLICY_FILE=./governance.toml\n")
         passed = mod.Check("external probe", mod.Status.PASS, "mocked")
-        with (
-            mock.patch.object(mod, "check_swarm", return_value=passed),
-            mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
-            mock.patch.object(
-                mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
-            ),
-        ):
-            checks = mod.run_checks("SITE", root, selected)
-        result = next(check for check in checks if check.label == "Governance document")
-        _assert(result.status == mod.Status.FAIL, "governance validation still fails")
-        command = next(hint.split("`")[1] for hint in result.hints if "check-governance" in hint)
-        _assert(
-            shlex.split(command) == ["make", "-C", "trust", "check-governance", "KIT=SITE", f"KIT_FILE={selected}"],
-            "detailed-check advice keeps the selected path as one argument",
-            command,
-        )
+        for prod in (None, "true", "stag", "lza", "lza-stag"):
+            with (
+                mock.patch.dict(os.environ, {} if prod is None else {"PROD": prod}, clear=True),
+                mock.patch.object(mod, "check_swarm", return_value=passed),
+                mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+                mock.patch.object(
+                    mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
+                ),
+            ):
+                checks = mod.run_checks("SITE", root, selected)
+            result = next(check for check in checks if check.label == "Governance document")
+            _assert(result.status == mod.Status.FAIL, "governance validation still fails")
+            hint = next(hint for hint in result.hints if "check-governance" in hint)
+            command = hint[1 : hint.rfind("`")]
+            expected = [
+                "make",
+                "-C",
+                "trust",
+                "check-governance",
+                "KIT=SITE",
+                f"KIT_FILE={selected}".replace("$", "$$"),
+            ]
+            if prod:
+                expected.append(f"PROD={prod}")
+            _assert(
+                shlex.split(command) == expected,
+                "detailed-check advice keeps the selected path as one argument and preserves PROD",
+                command,
+            )
 
 
 def main() -> None:
