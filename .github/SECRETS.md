@@ -89,6 +89,9 @@ All secrets have fallback values that will be used if the secret is not configur
 
 This ensures CI doesn't break if secrets are missing, but these fallback values should **never** be used in production.
 
+The local hub smoke (`local_auth_smoke.yml`) reads no secrets: it generates a throwaway `AES_KEY_BASE64` and
+`POSTGRES_PASSWORD` per run with `openssl rand`, because a pull request from a fork is given no secrets.
+
 ## How CI Workflows Use Secrets
 
 Each CI workflow follows this pattern:
