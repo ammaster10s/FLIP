@@ -361,8 +361,9 @@ export AWS_PROFILE=<your-profile-name>
 
 ### GitHub Secrets for CI
 
-The CI/CD pipeline requires GitHub repository secrets to run tests and deployments. See
-[.github/SECRETS.md](.github/SECRETS.md) for the complete list, how to generate them, and security best practices.
+Test workflows need no secrets beyond `CODECOV_TOKEN`: the credentials of their throwaway stacks are generated per
+run, so they behave the same on a pull request from a fork. Deployments read GitHub environment secrets. See
+[.github/SECRETS.md](.github/SECRETS.md) for the complete list and how to add one.
 
 ### Running the CI pipeline locally
 
