@@ -68,7 +68,20 @@ mkdir -p "${TEST_ROOT}/bin"
 cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "gh $*" >>"${CALLS}"
-cat >/dev/null
+if [[ "$1 $2" == "variable set" ]]; then
+    echo "   value=$(cat)" >>"${CALLS}"
+else
+    cat >/dev/null
+fi
+# The read-only listing of what the environment already holds: names only, from
+# STUB_GH_VARIABLES / STUB_GH_SECRETS; STUB_GH_LIST_FAIL makes it fail.
+if [[ "$1" == "api" && "$*" == *"/environments/"*"?per_page="* ]]; then
+    [[ -z "${STUB_GH_LIST_FAIL:-}" ]] || { echo "HTTP 404: Not Found" >&2; exit 1; }
+    case "$*" in
+        *"/variables?"*) printf '%s\n' ${STUB_GH_VARIABLES:-} ;;
+        *"/secrets?"*) printf '%s\n' ${STUB_GH_SECRETS:-} ;;
+    esac
+fi
 STUB
 cat >"${TEST_ROOT}/bin/aws" <<'STUB'
 #!/usr/bin/env bash
@@ -181,6 +194,15 @@ expect_silent_about() {
     fi
 }
 
+# A dry run may read the environment (what it already holds) but never write.
+expect_no_gh_writes() {
+    if grep -E '^gh (variable set|secret set|variable delete|secret delete|api -X)' "${CALLS}" >/dev/null; then
+        no "gh made no write" "$(grep -E '^gh (variable|secret|api -X)' "${CALLS}" | head -3)"
+    else
+        ok "gh made no write"
+    fi
+}
+
 expect_no_gh() {
     if grep -q '^gh ' "${CALLS}"; then
         no "gh was never called" "$(grep '^gh ' "${CALLS}" | head -3)"
@@ -205,7 +227,7 @@ echo "==== setup-github-environments.sh ===="
 #    job. AWS_REGION is first in the list, LOCAL_TRUST_PUBLIC_IPS last.
 run_case "a partial env file is read in dry-run" -- \
     --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
-expect_rc 0 "dry run succeeds (and never called gh)"
+expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
 expect_mentions "- LOCAL_TRUST_PUBLIC_IPS" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
@@ -226,12 +248,19 @@ expect_silent_about "SECRETVALUEMARKER" "a secret value is not printed"
 expect_silent_about "service-key-marker" "nor is a variable's value"
 expect_silent_about "ARNMARKER" "nor a role ARN read from IAM"
 expect_silent_about "${ACCOUNT}" "nor the account ID"
-expect_no_gh
+expect_no_gh_writes
 expect_mentions "nothing was written" "the dry run says so"
 
 # 4. The mode reaches the environment as TF_PROD, from the same token the workflows
 #    read — the two cannot disagree if only this one sets it.
 expect_mentions "set TF_PROD=stag" "the mode is written as TF_PROD"
+# TF_PROD comes from --mode, so it is never reported as absent from the file.
+absent_line="$(grep 'optional key(s) absent' <<<"${STDOUT}")"
+if [[ "${absent_line}" != *TF_PROD* ]]; then
+    ok "TF_PROD is not listed as an absent key"
+else
+    no "TF_PROD is not listed as an absent key" "${absent_line}"
+fi
 
 # 5. Prod-only asymmetry: an empty demo bucket on prod is a gap, not an omission
 #    (cloudfront.tf gates four objects on it being non-empty). The env file is the
@@ -245,6 +274,19 @@ expect_rc 0 "dry run succeeds"
 expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
 expect_mentions "branch policy: main only" "and prod's branch policy is stated"
 
+# 5b. FLIP#1199: the same asymmetry on the LZA prod mode, where the key gates
+#     module.flip_demo_assets_bucket — the bucket itself — rather than four
+#     CloudFront-side objects. The classification is keyed on ENV, not MODE, and
+#     this pins that: `--mode lza` is prod, so the demo bucket is required there
+#     too, which is what makes the LZA prod environment seedable at all.
+run_case "lza prod treats an absent demo bucket as required" \
+    STUB_SUB="repo:acme/flip:environment:aws-prod" \
+    STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
+    --mode lza --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on LZA prod too"
+expect_mentions "set TF_PROD=lza" "and the LZA prod token is what TF_PROD gets"
+
 # 6. The LZA modes require their extra keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.
 run_case "lza modes require the LZA keys" -- \
@@ -254,6 +296,59 @@ expect_mentions "- NETWORKING_INGRESS_CIDRS" "an LZA key is required"
 expect_mentions "- AWS_REGION" "the base list is still classified as required"
 expect_mentions "- EFS_PROVISION_IMAGE" "all six LZA keys, not only the last one"
 expect_mentions "set TF_PROD=lza-stag" "and the LZA token is what TF_PROD gets"
+
+# 6b. The two LZA inputs with no Makefile export of their own are written in the
+#     operator's file as `export TF_VAR_<name>=…` — the spelling make hands to
+#     Terraform. Read only as plain KEY= lines, a correctly filled file reported
+#     both as REQUIRED-missing. A plain KEY= line still beats the raw spelling.
+ENV_RAW="${TEST_ROOT}/raw-tf-vars.env"
+cp "${ENV_FILE}" "${ENV_RAW}"
+cat >>"${ENV_RAW}" <<'ENVFILE'
+export TF_VAR_networking_ingress_cidrs=["10.99.0.0/16"]
+export TF_VAR_lza_elb_access_logs_bucket=raw-bucket-marker
+LZA_ELB_ACCESS_LOGS_BUCKET=plain-bucket-marker
+ENVFILE
+run_case "lza raw TF_VAR_ lines are read under their GitHub keys" -- \
+    --mode lza-stag --env-file "${ENV_RAW}" --repo acme/flip
+expect_rc 0 "succeeds"
+expect_silent_about "- NETWORKING_INGRESS_CIDRS" "the raw spelling satisfies the required key"
+expect_silent_about "- LZA_ELB_ACCESS_LOGS_BUCKET" "for both raw keys"
+expect_mentions "- EFS_PROVISION_IMAGE" "a key with neither spelling is still required"
+if grep -A1 '^gh variable set NETWORKING_INGRESS_CIDRS ' "${CALLS}" | grep -qF 'value=["10.99.0.0/16"]'; then
+    ok "the raw value is what is written"
+else
+    no "the raw value is what is written" "$(grep -A1 'NETWORKING_INGRESS_CIDRS' "${CALLS}")"
+fi
+if grep -A1 '^gh variable set LZA_ELB_ACCESS_LOGS_BUCKET ' "${CALLS}" | grep -qF 'value=plain-bucket-marker'; then
+    ok "a plain KEY= line beats the raw spelling"
+else
+    no "a plain KEY= line beats the raw spelling" "$(grep -A1 'LZA_ELB_ACCESS_LOGS_BUCKET' "${CALLS}")"
+fi
+
+# 6c. Keys the file leaves unset keep whatever the environment held before, and the
+#     workflows read them — how a repoint carried legacy staging's
+#     ENFORCE_MFA=false onto a new account. They are listed, with the delete
+#     command; keys the file does set are not; nothing is deleted.
+HELD_SECRET_NAMES="INTERNAL_SERVICE_KEY_HASH AES_KEY_BASE64" # pragma: allowlist secret — names, not values
+run_case "keys the file leaves unset but the environment holds are listed" \
+    STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS VPC_NAME TF_PROD" \
+    STUB_GH_SECRETS="${HELD_SECRET_NAMES}" -- \
+    --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "Still set on aws-stag" "under its own heading"
+expect_mentions "gh variable delete ENFORCE_MFA --env aws-stag --repo acme/flip" "the skipped ENFORCE_MFA is listed"
+expect_mentions "gh variable delete JOB_RESOURCE_SPEC_NUM_GPUS" "and an optional key the file omits"
+expect_mentions "gh secret delete INTERNAL_SERVICE_KEY_HASH" "a secret gets the secret command"
+expect_silent_about "delete VPC_NAME" "a key the file sets is not listed"
+expect_silent_about "delete AES_KEY_BASE64" "nor a secret it sets"
+expect_silent_about "delete TF_PROD" "nor TF_PROD, which the script writes itself"
+expect_no_gh_writes
+
+run_case "an environment that cannot be listed is said so, not passed as clean" STUB_GH_LIST_FAIL=1 -- \
+    --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "Could not list what aws-stag already holds" "the failed listing is reported"
+expect_mentions "ENFORCE_MFA" "with the keys to check by hand"
 
 # 7. Failures an operator has to get right. Nothing here may be a warning.
 run_case "the old flag is refused with the new name" -- \

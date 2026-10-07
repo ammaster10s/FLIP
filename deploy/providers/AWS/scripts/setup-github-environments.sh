@@ -128,9 +128,31 @@ set_gh() {
 
 # Read the env file the way make does: last assignment wins, value verbatim.
 declare -A VALUES=()
+declare -A RAW_TF_VALUES=()
 while IFS= read -r line; do
-    [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] && VALUES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+        VALUES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    elif [[ "${line}" =~ ^export[[:space:]]+TF_VAR_([A-Za-z0-9_]+)=(.*)$ ]]; then
+        RAW_TF_VALUES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    fi
 done <"${ENV_FILE}"
+
+# The LZA inputs with no Makefile `export TF_VAR_…` line of their own
+# (compose-ci-env.sh's LZA_RAW_TF_VARS) are written in the operator's file the
+# way make hands them to Terraform: `export TF_VAR_networking_ingress_cidrs=…`.
+# Read that spelling back under the GitHub key; a plain `KEY=` line still wins.
+mapfile -t RAW_TF_VARS < <(
+    sed -n '/^LZA_RAW_TF_VARS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
+        grep -oE '"[A-Z][A-Z0-9_]*:[a-z0-9_]+"' | tr -d '"'
+)
+((${#RAW_TF_VARS[@]} > 0)) || die "could not read LZA_RAW_TF_VARS from compose-ci-env.sh"
+for pair in "${RAW_TF_VARS[@]}"; do
+    key="${pair%%:*}"
+    tf_var="${pair##*:}"
+    if [[ -z "${VALUES[${key}]+set}" && -n "${RAW_TF_VALUES[${tf_var}]+set}" ]]; then
+        VALUES["${key}"]="${RAW_TF_VALUES[${tf_var}]}"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # 0. The AWS side, verified before anything is written to GitHub
@@ -356,13 +378,22 @@ set_one() {
     if [[ -z "${value}" ]]; then
         # ENFORCE_MFA is legitimately empty in production — locals.tf omits it
         # from the task env so flip-api's secure default applies.
-        [[ "${key}" == "ENFORCE_MFA" ]] && { echo "   skip ${key} (intentionally empty)"; return 0; }
+        [[ "${key}" == "ENFORCE_MFA" ]] && {
+            echo "   skip ${key} (intentionally empty)"
+            UNSET_HERE+=("${key}")
+            return 0
+        }
         # DEMO_ASSETS_BUCKET_NAME is OPTIONAL in the manifest because empty is
         # correct on stag, which hosts no public Ark+ demo. On prod empty is not
-        # a value but a gap: cloudfront.tf gates the demo's bucket policy,
-        # public-access block, OAC and /ark_demo/* behaviour on it being
-        # non-empty, so seeding prod without it destroys all four on the next
-        # apply. Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
+        # a value but a gap, in either estate — and the mode does not change the
+        # answer, which is why this stays keyed on ENV alone:
+        #   * legacy prod: cloudfront.tf gates the demo's bucket policy,
+        #     public-access block, OAC and /ark_demo/* behaviour on it being
+        #     non-empty, so seeding prod without it destroys all four.
+        #   * LZA prod (FLIP#1199): it gates module.flip_demo_assets_bucket, the
+        #     Terraform-managed bucket itself. prevent_destroy makes that a hard
+        #     apply failure rather than a silent loss — still a broken apply.
+        # Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
         if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${ENV}" == "prod" ]]; then
             MISSING+=("${key}")
             return 0
@@ -401,8 +432,13 @@ fi
 SET=()
 MISSING=()
 OPTIONAL_ABSENT=()
+UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
-for key in "${VARIABLE_KEYS[@]}"; do set_one variable "${key}"; done
+for key in "${VARIABLE_KEYS[@]}"; do
+    # Written in step 2 from --mode, never from the env file.
+    [[ "${key}" == "TF_PROD" ]] && continue
+    set_one variable "${key}"
+done
 
 echo ""
 echo "   ${#SECRET_KEYS[@]} secret(s) + ${#VARIABLE_KEYS[@]} variable(s) referenced by the workflows"
@@ -418,6 +454,41 @@ if ((${#MISSING[@]} > 0)); then
     echo "      scripts/reconcile_ci_env.py --env ${ENV} --profile ${AWS_PROFILE_FOR_ENV} --compare ${ENV_FILE}"
     echo "      recovers most of them from the deployed infrastructure."
 fi
+# What the file leaves unset is not cleared on GitHub: an environment that held a
+# value before keeps it, and the workflows read it. Repointing aws-stag from one
+# account to another left legacy staging's ENFORCE_MFA=false in place — the next
+# apply would have switched MFA off. List those keys; deleting stays the
+# operator's call, since a few (the demo bucket on prod) are absent by mistake.
+# Reads only, so a dry run makes the same check.
+UNSET_HERE+=("${OPTIONAL_ABSENT[@]}" "${MISSING[@]}")
+if ((${#UNSET_HERE[@]} > 0)); then
+    held=""
+    if held="$(
+        {
+            gh api --paginate "repos/${REPO}/environments/${GH_ENV}/variables?per_page=100" --jq '.variables[].name'
+            gh api --paginate "repos/${REPO}/environments/${GH_ENV}/secrets?per_page=100" --jq '.secrets[].name'
+        } 2>/dev/null </dev/null
+    )"; then
+        STALE=()
+        for key in "${UNSET_HERE[@]}"; do
+            grep -qxF "${key}" <<<"${held}" && STALE+=("${key}")
+        done
+        if ((${#STALE[@]} > 0)); then
+            echo ""
+            echo "   ⚠️  Still set on ${GH_ENV} but unset in ${ENV_FILE} — the old value stays and the workflows read it:"
+            for key in "${STALE[@]}"; do
+                kind=variable
+                [[ " ${SECRET_KEYS[*]} " == *" ${key} "* ]] && kind=secret
+                echo "      - ${key}    gh ${kind} delete ${key} --env ${GH_ENV} --repo ${REPO}"
+            done
+        fi
+    else
+        echo ""
+        echo "   Could not list what ${GH_ENV} already holds (new environment, or no access)."
+        echo "   If it existed, check it by hand for keys this file leaves unset: ${UNSET_HERE[*]}"
+    fi
+fi
+
 # Not `((DRY_RUN)) && echo …` as the last statement: on a real run `((0))` is
 # false, that becomes the script's exit status, and every non-dry-run exited 1
 # while having done its job perfectly.
