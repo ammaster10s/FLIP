@@ -408,6 +408,12 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 # shapes. Note the asymmetry when it is cleared: on legacy that silently
 # removes four access-edge resources; on LZA it would propose destroying a
 # managed bucket, which `prevent_destroy` turns into a loud apply failure.
+#
+# No live estate runs the legacy shape any more — aws-prod was repointed at
+# LZA prod on 2026-10-06 and the legacy prod account (which held
+# flipprod-demo-assets) was closed the same day. The branch stays because
+# lza_managed_network = false remains the self-contained shape a standalone
+# account gets; collapsing the two onto flip_s3_bucket is a follow-up.
 ############################
 
 locals {
