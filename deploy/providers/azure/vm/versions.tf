@@ -31,7 +31,9 @@ terraform {
 # Network and Storage were registered by hand; DevTestLab backs the auto-shutdown schedule.
 provider "azurerm" {
   features {}
-  subscription_id                 = var.subscription_id
+  subscription_id = var.subscription_id
+  # The kit drop has shared keys off, so the provider's storage calls must use Entra.
+  storage_use_azuread             = true
   resource_provider_registrations = "none"
   resource_providers_to_register  = ["Microsoft.DevTestLab"]
 }

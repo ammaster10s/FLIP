@@ -28,3 +28,8 @@ output "cloud_init" {
   description = "The rendered first-boot cloud-init. No secrets: settings and the flip-node helper only."
   value       = local.cloud_init
 }
+
+output "kit_drop_url" {
+  description = "Where kit-upload puts kits and flip-node fetches them (empty when the kit drop is off)."
+  value       = local.kit_drop_url
+}
