@@ -46,7 +46,7 @@ locals {
     fl_server = "fl-server-net-1.${local.flip_local_domain}"
   }
 
-  # Container port for flip-api. On EC2 + Docker Compose, var.API_PORT is the
+  # Container port for flip-api. On EC2 + Docker Compose, the compose API_PORT is the
   # host-side port (8080) mapped to container port 8000. ECS Fargate has no
   # host mapping - the container port IS the reachable port. Service Discovery
   # resolves to the task IP, so fl-server calls flip-api on port 8000.
