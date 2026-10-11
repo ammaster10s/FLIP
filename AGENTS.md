@@ -80,7 +80,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 ### Running Services
 
 ```bash
-make up                    # Start all services — pulls images from GHCR (the hub needs no AWS; the two example trusts' artifact fetches still do)
+make up                    # Start all services — pulls images from GHCR; needs no AWS (run `make -C trust prepare-artifacts` once first for the trusts' XNAT plugins)
 make up BUILD=true         # Same, but rebuild repo-built services from local source instead of pulling
 make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
@@ -378,7 +378,7 @@ After changes, evaluate if docs need updating:
 1. `cp .env.development.example .env.development`
 2. Per service: `cd <service-dir> && uv sync`
 3. UI: `cd flip-ui && npm install`
-4. AWS: `aws configure sso` (only for the example trusts' artifact fetches and the AWS deploy targets — the hub itself needs no AWS, FLIP#919/#1291)
+4. AWS: `aws configure sso` (only for the optional OMOP vocabulary load, FL kit uploads and the AWS deploy targets — the dev hub and the example trusts need no AWS, FLIP#919/#1291/#1292)
 5. Install AWS Session Manager plugin
 6. `make create-networks`
 
