@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+from typing import Any
 
 # Written to the output file, never echoed. Anything whose name matches is
 # summarised as a digest.
@@ -86,7 +87,7 @@ class State:
     def __init__(self, doc: dict) -> None:
         self.doc = doc
 
-    def attrs(self, rtype: str, name: str) -> dict:
+    def attrs(self, rtype: str, name: str) -> dict[str, Any]:
         # `mode` matters: a `data` source and a `managed` resource can share a
         # type and name (aws_ecs_task_definition.flip_api is both, by design —
         # see the revision-tracking block in ecs_services.tf). Matching without
@@ -105,7 +106,7 @@ class State:
                 return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
         return []
 
-    def data_attrs(self, rtype: str, name: str) -> dict:
+    def data_attrs(self, rtype: str, name: str) -> dict[str, Any]:
         """Attributes of a `data` source — the mirror of `attrs`.
 
         Needed where the deployed value only exists as a lookup: the Ark+ demo
@@ -119,7 +120,7 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
-    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict:
+    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict[str, Any]:
         """Attributes of a managed resource inside a specific module instance.
 
         `attrs` ignores the module an address sits in, which is fine while the
@@ -129,6 +130,14 @@ class State:
         the four buckets state happens to list first. The module is the only
         thing that distinguishes them, so it is matched — on a module boundary,
         exactly as `has_module_resource` does.
+
+        Args:
+            module_prefix (str): Module address to match, e.g. `module.flip_demo_assets_bucket`.
+            rtype (str): Terraform resource type, e.g. `aws_s3_bucket`.
+            name (str): Resource name within the module, e.g. `this`.
+
+        Returns:
+            dict[str, Any]: Attributes of the first instance, or an empty dict when none matches.
         """
         for r in self.doc.get("resources", []):
             if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
@@ -177,7 +186,7 @@ class State:
         raw = self.attrs("aws_ecs_task_definition", task_family).get("container_definitions")
         return json.loads(raw) if raw else []
 
-    def container(self, task_family: str, container_name: str) -> dict:
+    def container(self, task_family: str, container_name: str) -> dict[str, Any]:
         for c in self.containers(task_family):
             if c.get("name") == container_name:
                 return c
