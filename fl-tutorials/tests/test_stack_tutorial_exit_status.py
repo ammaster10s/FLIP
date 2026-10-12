@@ -9,9 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# run-tutorial.sh's exit status is the release check's verdict (FLIP#1432): `run-all-tutorials
-# FL_BACKEND=flower` stops on the first non-zero exit, so a run that did not FINISH must not exit 0.
-# It used to: STOPPED and a timeout printed a warning and returned 0, so an unfinished tutorial
+# stack-tutorial.sh's exit status is its verdict (FLIP#1432): a run that did not FINISH must not exit
+# 0. It used to: STOPPED and a timeout printed a warning and returned 0, so an unfinished tutorial
 # counted as a pass.
 #
 # The real script runs from a throwaway git checkout (it derives REPO_ROOT from git and the data
@@ -29,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-RUN_TUTORIAL = Path(__file__).resolve().parents[1] / "flower" / "run-tutorial.sh"
+STACK_TUTORIAL = Path(__file__).resolve().parents[1] / "flower" / "stack-tutorial.sh"
 TUTORIAL = "xray_classification"
 
 # FAKE_STATUSES: one /list_runs answer per poll, comma-separated, the last repeating.
@@ -53,11 +52,11 @@ esac
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """A minimal git checkout holding run-tutorial.sh, one tutorial and its dev data."""
+    """A minimal git checkout holding stack-tutorial.sh, one tutorial and its dev data."""
     root = tmp_path / "repo"
     flower = root / "fl-tutorials" / "flower"
     (flower / TUTORIAL / "app").mkdir(parents=True)
-    shutil.copy(RUN_TUTORIAL, flower / "run-tutorial.sh")
+    shutil.copy(STACK_TUTORIAL, flower / "stack-tutorial.sh")
     data = root / "fl-tutorials" / "data" / "xrays_mini_300"
     (data / "accession-resources").mkdir(parents=True)
     (data / "dataframe.csv").write_text("accession_id\n")
@@ -84,7 +83,7 @@ def _run(checkout: Path, tmp_path: Path, **env: str) -> tuple[subprocess.Complet
         **env,
     }
     proc = subprocess.run(
-        ["bash", str(checkout / "fl-tutorials" / "flower" / "run-tutorial.sh"), TUTORIAL],
+        ["bash", str(checkout / "fl-tutorials" / "flower" / "stack-tutorial.sh"), TUTORIAL],
         env=run_env,
         capture_output=True,
         text=True,
@@ -129,9 +128,9 @@ def test_submit_failure_exits_one_with_the_reason(checkout, tmp_path):
     [
         ({"FAKE_NVIDIA_RC": "0"}, True),  # a GPU host
         ({"FAKE_NVIDIA_RC": "1"}, False),  # no usable GPU
-        ({"FAKE_NVIDIA_RC": "0", "RUN_TUTORIAL_GPU": "0"}, False),
-        ({"FAKE_NVIDIA_RC": "0", "RUN_TUTORIAL_GPU": "false"}, False),
-        ({"FAKE_NVIDIA_RC": "1", "RUN_TUTORIAL_GPU": "1"}, True),
+        ({"FAKE_NVIDIA_RC": "0", "STACK_TUTORIAL_GPU": "0"}, False),
+        ({"FAKE_NVIDIA_RC": "0", "STACK_TUTORIAL_GPU": "false"}, False),
+        ({"FAKE_NVIDIA_RC": "1", "STACK_TUTORIAL_GPU": "1"}, True),
     ],
 )
 def test_gpu_overlay_selection(checkout, tmp_path, env, overlay):

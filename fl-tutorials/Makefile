@@ -19,7 +19,7 @@
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
-TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial
+TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials sim-tutorial stack-tutorial
 # Dataset targets are backend-agnostic: one download per dataset under the shared data root,
 # read by both harnesses (single copy in datasets/), so FL_BACKEND plays no part in them.
 DATASET_TARGETS := download-xray-data download-weights \

@@ -12,7 +12,7 @@
 # GPU overlay for compose.dev.yml: both SuperNodes reserve one NVIDIA GPU, so the
 # ClientApps train on it (the FL images carry PyTorch's CUDA builds). On a one-GPU host
 # both reserve the same device and share it, as the trusts' GPU overlay does.
-# fl-tutorials/flower/run-tutorial.sh decides when to add it. It is not part of
+# fl-tutorials/flower/stack-tutorial.sh decides when to add it. It is not part of
 # compose.dev.yml because a device reservation fails outright on a host with no NVIDIA driver.
 
 services:

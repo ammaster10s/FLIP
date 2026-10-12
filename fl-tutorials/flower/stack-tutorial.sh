@@ -14,12 +14,15 @@
 # Run one Flower tutorial on the standalone compose stack (fl-services/flower):
 # bring up SuperLink + 2 SuperNodes + fl-api with the tutorial's dev data mounted,
 # submit the job to the fl-api control plane, wait for it to finish (or fail), and
-# tear down. Called by fl-tutorials/flower/Makefile's run-tutorial / run-all-tutorials.
+# tear down. Called by fl-tutorials/flower/Makefile's stack-tutorial. The release check and
+# `run-tutorial` / `run-all-tutorials` use the simulator (sim-tutorial.sh), as on NVFLARE; this
+# is the optional check of the deployment wiring the simulator skips (fl-api submit, SuperNode
+# registration, the FL images).
 #
 # The run uses the tutorial's own pyproject.toml values, as sim-tutorial.sh does: fl-api's
 # /submit_tutorial leaves out app/config.toml, which carries the platform settings (FLIP#1432).
 # The SuperNodes get the GPU overlay (fl-services/flower/compose.dev.gpu.yml) when nvidia-smi
-# sees a GPU; RUN_TUTORIAL_GPU=0 keeps the CPU, =1 forces the overlay.
+# sees a GPU; STACK_TUTORIAL_GPU=0 keeps the CPU, =1 forces the overlay.
 # Exit 0 means the run FINISHED. FAILED, STOPPED, a SuperNode that is not running, fl-api
 # polls failing for a minute, or no terminal status within WAIT_SECS (default 3600) exit 1,
 # so run-all-tutorials never counts an unfinished tutorial as a pass.
@@ -30,9 +33,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
 COMPOSE_FILES="-f $REPO_ROOT/fl-services/flower/compose.dev.yml"
 # The SuperNodes train on the GPU when the host has one (both reserve the same device, where
-# sim-tutorial.sh gives each simulated site a fraction of it). RUN_TUTORIAL_GPU=0 keeps the CPU;
+# sim-tutorial.sh gives each simulated site a fraction of it). STACK_TUTORIAL_GPU=0 keeps the CPU;
 # =1 adds the overlay even where nvidia-smi is missing, and `compose up` then fails loudly.
-case "${RUN_TUTORIAL_GPU:-auto}" in
+case "${STACK_TUTORIAL_GPU:-auto}" in
   0|false|no) GPU=off ;;
   auto) if nvidia-smi -L >/dev/null 2>&1; then GPU=on; else GPU=off; fi ;;
   *) GPU=on ;;

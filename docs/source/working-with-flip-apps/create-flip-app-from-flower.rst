@@ -494,12 +494,12 @@ Local testing before upload
 
 Two local paths are supported, and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
 
-**Fast inner loop: the flwr simulator.** ``make sim-tutorial`` runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
+**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, the same as on NVFLARE) runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
 
 .. code-block:: bash
 
    make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # reference dataset into fl-tutorials/data/
-   make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
+   make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
 The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Its exit status is the run's terminal status as the SuperLink reports it (``flwr run`` alone returns 0 whatever became of the run), and it refuses to start against a local SuperLink another checkout left listening on the Control API port, which would otherwise execute the app in that checkout's environment (naming the pid and command line where ``ss`` can see them). Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
 
@@ -507,9 +507,9 @@ The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variable
 
 .. code-block:: bash
 
-   make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
+   make -C fl-tutorials stack-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
-The harness brings the stack up, submits the app to the FL API through the platform's submit path, waits for the run and tears the stack down. It runs the tutorial's own ``pyproject.toml`` values, as the simulator does, not the platform settings in ``app/config.toml`` (the spleen tutorial's 3 rounds of 1 epoch rather than 30 of 5). The SuperNodes train on the GPU when ``nvidia-smi`` sees one (``RUN_TUTORIAL_GPU=0`` keeps the CPU), and the harness exits non-zero unless the run finishes within ``WAIT_SECS`` (default 3600). To iterate by hand instead:
+The harness brings the stack up, submits the app to the FL API through the platform's submit path, waits for the run and tears the stack down. It runs the tutorial's own ``pyproject.toml`` values, as the simulator does, not the platform settings in ``app/config.toml`` (the spleen tutorial's 3 rounds of 1 epoch rather than 30 of 5). The SuperNodes train on the GPU when ``nvidia-smi`` sees one (``STACK_TUTORIAL_GPU=0`` keeps the CPU), and the harness exits non-zero unless the run finishes within ``WAIT_SECS`` (default 3600). To iterate by hand instead:
 
 .. code-block:: bash
 

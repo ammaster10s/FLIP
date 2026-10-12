@@ -55,7 +55,7 @@ A full, runnable reference is available in-tree:
      - ``flip_local_dp_mod`` registered by the uploaded ``client_app.py``
      - ``PercentilePrivacy`` wired by the template (nothing to do)
    * - Local run
-     - ``make sim-tutorial`` (simulator) or the ``fl-services/flower`` compose stack
+     - ``make run-tutorial`` (simulator) or ``make stack-tutorial`` (the ``fl-services/flower`` compose stack)
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
 *****************
