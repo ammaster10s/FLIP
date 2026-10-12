@@ -58,6 +58,7 @@ on:
       - "trust/xnat/xnat/Dockerfile"
       - "deploy/providers/AWS/site.yml"
       - "trust/deploy/ansible/onprem.yml"
+      - "trust/deploy/ansible/roles/**"
       - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
@@ -89,6 +90,7 @@ on:
       - "trust/xnat/xnat/Dockerfile"
       - "deploy/providers/AWS/site.yml"
       - "trust/deploy/ansible/onprem.yml"
+      - "trust/deploy/ansible/roles/**"
       - ".github/workflows/test_trust_xnat.yml"
 
 permissions:
