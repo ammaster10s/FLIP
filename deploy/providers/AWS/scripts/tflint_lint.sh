@@ -40,6 +40,12 @@
 
 set -euo pipefail
 
+# Lint the source as CI does, with no variable values supplied: tflint resolves variables from
+# TF_VAR_*, which the AWS Makefile exports from the deploy env file (empty strings without one).
+for var in $(compgen -e); do
+    case "${var}" in TF_VAR_*) unset "${var}" ;; esac
+done
+
 # Keep in sync with tflint_version in .github/workflows/validate_terraform.yml.
 TFLINT_VERSION="0.64.0"
 

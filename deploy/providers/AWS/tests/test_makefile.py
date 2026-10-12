@@ -160,7 +160,7 @@ def _make_dry_run(*goals: str, tmp_path: Path) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize("goal", ["lint", "checkov-lint", "help"])
+@pytest.mark.parametrize("goal", ["lint", "fmt-check", "tflint-lint", "checkov-lint", "help"])
 def test_a_static_goal_needs_no_env_file(goal: str, tmp_path: Path) -> None:
     result = _make_dry_run(goal, tmp_path=tmp_path)
     assert result.returncode == 0, result.stderr
@@ -171,25 +171,6 @@ def test_lint_runs_the_three_static_checks_ci_runs(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     for command in ("terraform fmt -check -recursive", "scripts/tflint_lint.sh", "scripts/checkov_lint.sh"):
         assert command in result.stdout, f"lint must run {command}"
-
-
-def test_lint_supplies_no_terraform_variable_values(tmp_path: Path) -> None:
-    """This Makefile exports TF_VAR_* (empty without an env file), and tflint resolves variables from them.
-
-    With them, tflint rejected the empty FL_SERVER_PORT and bucket names that CI, which sets none,
-    never sees. The recipe's prefix must leave no TF_VAR_* in the linters' environment.
-    """
-    result = _make_dry_run("lint", tmp_path=tmp_path)
-    for line in (ln for ln in result.stdout.splitlines() if "_lint.sh" in ln):
-        prefix = line.split("bash scripts/", 1)[0]
-        probe = subprocess.run(
-            ["bash", "-c", f"{prefix} env"],
-            env={"PATH": os.environ["PATH"], "TF_VAR_FL_SERVER_PORT": "", "TF_VAR_bucket": "x"},
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        assert "TF_VAR_" not in probe.stdout, f"{line!r} leaves TF_VAR_* set"
 
 
 @pytest.mark.parametrize("goals", [("plan",), ("deploy-centralhub",), ("lint", "plan")])
