@@ -61,7 +61,8 @@ prepended to `sys.path`. **FLIP turns this off on both sides** (FLIP#1418): the 
 estate), and the SuperNodes do not pass `--allow-runtime-dependency-installation`, which is
 Flower's default. The ServerApp and the ClientApps run in the image's own environment, where
 `fl-base` installs `flip-utils[full]` from `/opt/flip-utils`, which covers every dependency the Flower
-templates declare. A dependency an app needs beyond them ships by rebuilding the FL images.
+templates declare. A dependency an app needs beyond them ships by adding it to flip-utils' `full`
+extra (what `fl-base` installs) and rebuilding the FL images.
 
 Two failures made the per-run install unusable, in flwr 1.36 through 1.39:
 

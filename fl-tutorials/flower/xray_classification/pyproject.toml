@@ -29,8 +29,8 @@ license = "Apache-2.0"
 # flip-utils is deliberately NOT declared here. A local `flwr run` (sim-tutorial) still
 # runtime-installs an app's declared dependencies (`uv sync`) into a per-run environment that it
 # PREPENDS to sys.path, so declaring flip-utils resolves it from PyPI and shadows the copy the run
-# should use — the tutorial-side half of FLIP#767. PyPI currently serves 0.1.8 against the
-# repo's 0.4.0, and 0.1.8 has no flip/flower/strategy.py, so a declared dependency breaks
+# should use — the tutorial-side half of FLIP#767. PyPI's release follows main and can lag the
+# checkout: when it was 0.1.8, which had no flip/flower/strategy.py, a declared dependency broke
 # `from flip.flower.strategy import FlipFedAvg` outright. Undeclared, `import flip` resolves to
 # the environment running the app: the checkout's flip-utils under sim-tutorial, the FL image's
 # copy on the compose stacks, where nothing installs at run time (FLIP#1418). The fl-apps templates

@@ -42,18 +42,18 @@ packages = ["."]
 
 # On-platform, nothing installs these at run time (FLIP#1418): the ServerApp and
 # the ClientApps run in the FL image's environment, which already carries every
-# dependency declared above, so a new one ships by rebuilding the FL images, not
-# by adding it here. The [tool.uv] tables below steer any `uv sync` that does run
-# against this file, inside an FL image (Flower's per-run install, were it ever
-# re-enabled) (FLIP#767):
+# dependency declared above. A new one ships by adding it to flip-utils' `full`
+# extra (what fl-base installs) and rebuilding the FL images, not by adding it
+# here. The [tool.uv] tables below steer any `uv sync` that does run against this
+# file inside an FL image (Flower's per-run install, were it ever re-enabled;
+# FLIP#767):
 #   * flip-utils installs from the source baked into the FL images at
 #     /opt/flip-utils — never from PyPI — so FL runs always execute the in-repo
 #     flip-utils. To test unpublished flip-utils changes, rebuild the FL images
 #     (`make build-fl FL_BACKEND=flower`).
 #   * torch/torchvision come from PyTorch's cu130 index and need NVIDIA driver >=580.
-#     This mirrors the
-#     pin in flip-utils' own pyproject, which does NOT apply here — uv honors
-#     only the root project's [tool.uv] tables.
+#     This mirrors the pin in flip-utils' own pyproject, which does NOT apply
+#     here — uv honors only the root project's [tool.uv] tables.
 # /opt/flip-utils exists only inside the FL containers; for local simulation
 # work, start from fl-tutorials/flower/ instead of this template.
 [[tool.uv.index]]

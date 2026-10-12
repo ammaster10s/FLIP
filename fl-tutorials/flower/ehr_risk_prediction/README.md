@@ -50,7 +50,7 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
 > `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
 > declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
 > platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
-> up a flip-utils change there with `make build-fl FL_BACKEND=flower`.
+> up a flip-utils change on the compose stacks with `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 

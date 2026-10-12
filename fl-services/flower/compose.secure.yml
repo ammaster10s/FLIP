@@ -61,7 +61,7 @@ services:
     group_add: *host-gid
     environment:
       - LOCAL_DEV=true
-      # The ServerApp runs in the image's environment, as on the LZA estate: a cold
+      # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - WORKING_DIR=/app/runs
