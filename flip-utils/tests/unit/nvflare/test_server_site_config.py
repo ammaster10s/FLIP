@@ -76,3 +76,15 @@ def test_it_runs_as_the_entrypoint_script(tmp_path, monkeypatch):
 
     assert exit_info.value.code == 0
     assert (tmp_path / PARENT_RESOURCES_FILE).is_file()
+
+
+def test_the_entrypoint_fails_with_a_message_when_the_local_dir_is_missing(tmp_path, capsys):
+    """A kit staged without ``local/`` must stop the fl-server start, not start it without the reporter."""
+    from flip.nvflare.server_site_config import main
+
+    assert main([str(tmp_path / "absent")]) == 1
+
+    err = capsys.readouterr().err
+    assert "cannot register FLIP's server components" in err
+    assert str(tmp_path / "absent") in err
+    assert not (tmp_path / "absent").exists()
