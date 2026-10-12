@@ -40,7 +40,7 @@ def xnat_url(*segments: str, query: Mapping[str, str] | None = None) -> str:
     """Build an XNAT URL from raw path segments, quoting each one.
 
     Args:
-        segments (str): Raw path segments, including literal endpoint names.
+        *segments (str): Raw path segments, including literal endpoint names.
         query (Mapping[str, str] | None): Optional raw query parameters.
 
     Returns:

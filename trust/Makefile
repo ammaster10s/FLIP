@@ -54,8 +54,10 @@ ifeq ($(ENV),development)
 -include ../$(MAIN_ENV_FILE)
 # DOCKER_FL_REGISTRY is deliberately absent: ../deploy/fl_backend.mk defaults it with `?=
 # $(DOCKER_REGISTRY)` and exports it. Exported here first while unset, it is defined as empty, the
-# default never applies and the FL images lose their registry (FLIP#1384).
-export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
+# default never applies and the FL images lose their registry (FLIP#1384). FL_BACKEND has the same
+# trap (`FL_BACKEND ?= nvflare` there never fires on a defined-but-empty variable, and the backend
+# guard then rejects ''), so it is exported after that include instead, once the default has applied.
+export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
 # UID/GID/UNAME come from the same hub .env and must be exported too:
@@ -69,6 +71,7 @@ export UID GID UNAME
 endif
 
 include ../deploy/fl_backend.mk
+export FL_BACKEND
 # INSTANCE_PREFIX + the export of FLIP_INSTANCE that the trust compose files interpolate.
 # Must follow the kit / ../.env.development includes above, which is where FLIP_INSTANCE
 # comes from on the standalone `make -C trust ...` path.

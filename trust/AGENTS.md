@@ -96,13 +96,25 @@ GHCR login from `~/.docker/config.json`.
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host (Docker, `/opt/flip` dirs, uid rules) for the compose stack; on-prem twin of `deploy/providers/AWS/site.yml`. Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.production` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> PROD=<env>` is the only dispatch |
+
+On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`
+patches them into the chart Secret (field manager `kubectl-patch`) and the chart templates
+the same keys from the generated `values-secrets.yaml`. Helm 4 applies server-side, so the
+two must agree or `helm upgrade` is refused with `conflict with "kubectl-patch"`, a
+refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` keeps them
+in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
+server-side-apply a subset of that Secret (it prunes the keys it does not list).
+`PROD` → kit-file token comes only from `deploy/env_mode.mk`: the chart Makefile injects it
+as `KIT_ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
+without it instead of keeping their own map (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
 
 ## Commands (from `trust/`)
 
@@ -214,7 +226,13 @@ posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP ha
 omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
 passes it) to create the read-only role on that first start. Adding a dataset means publishing its
 `omop-csv/<project>/` tables and `dicom/<project>.tar.gz` (`trust/orthanc/publish_dicom.py` verifies
-both agree before packaging). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per
+`source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
+`fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
+with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
+`upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
+`make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
+`flower/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
