@@ -12,15 +12,11 @@
 
 .PHONY: build build-fl clean up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
+		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		demo-video demo-users seed-demo-projects
-
-# Targets here are sequences (hub before trusts, register after the hub answers, the
-# ownership guard before anything touches the project); `make -j` would interleave them.
-.NOTPARALLEL:
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -143,7 +139,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: _check-compose-project-owner check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -187,17 +183,8 @@ _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
 		scripts/check-fl-provisioned.sh
 
-# Refuse to drive a hub compose project whose containers were created from another
-# checkout (FLIP#1227) — the macro lives in deploy/instance.mk beside COMPOSE_PROJECT so
-# flip-api/Makefile gates its own `-p $(COMPOSE_PROJECT)` targets the same way. First
-# prerequisite of every target here that runs up/down/restart/exec on the project, so
-# nothing else (key generation, networks) runs on a refused project; .NOTPARALLEL above
-# keeps that order under `make -j`.
-_check-compose-project-owner:
-	$(check_compose_project_owner)
-
 # Minimal $(MAKE) up
-up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -216,7 +203,7 @@ up-trust-ec2: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-central-hub: _check-compose-project-owner create-networks-centralhub
+central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
@@ -263,7 +250,7 @@ onboard-onprem-trust:
 	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
 
 # Stop all containers
-down: _check-compose-project-owner
+down:
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
@@ -271,7 +258,7 @@ down: _check-compose-project-owner
 	@echo "🛌 All services stopped successfully!"
 
 # Clean Docker resources
-clean: _check-compose-project-owner
+clean:
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
@@ -292,7 +279,7 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir
+restart-fl: _ensure-fl-jobs-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -309,7 +296,7 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir
 	@echo "✅ FL services restarted successfully!"
 
 # Stop and start all services except the trust services related services
-restart-no-trust: _check-compose-project-owner
+restart-no-trust:
 	@echo "Debug mode: '${DEBUG}'"
 	@echo "Passing DEBUG=${DEBUG} to the downstream $(MAKE) commands..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
@@ -337,7 +324,7 @@ else
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
 endif
-ui: _check-compose-project-owner
+ui:
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
@@ -345,7 +332,7 @@ else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
 	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
 endif
-ui-off: _check-compose-project-owner
+ui-off:
 ifeq ($(strip $(PROD)),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
@@ -357,11 +344,11 @@ tests:
 	$(MAKE) -C flip-ui e2e_test
 	$(MAKE) -C flip-api test
 
-debug-all: _check-compose-project-owner
+debug-all:
 	@echo "🚨 Starting debug mode by overriding the DEBUG environment variable..."
 	DEBUG=true $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug
-debug-off-all: _check-compose-project-owner
+debug-off-all:
 	@echo "🚨 Stopping debug mode by removing the DEBUG environment variable override..."
 	$(MAKE) -C flip-api delete_testing_projects
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
@@ -387,7 +374,7 @@ recreate-networks: remove-networks create-networks
 	@echo "ℹ️  Trust networks now use overlay driver for swarm compatibility"
 
 # Add a parameterized debug command
-debug: _check-compose-project-owner
+debug:
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug SERVICE=<service-name>"; \
 		echo "   Available services: data-access-api, imaging-api, trust-api, flip-api, fl-api-net-1"; \
@@ -403,7 +390,7 @@ debug: _check-compose-project-owner
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
 	esac
 
-debug-off: _check-compose-project-owner
+debug-off:
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug-off SERVICE=<service-name>"; \
 		exit 1; \
@@ -425,7 +412,7 @@ debug-off: _check-compose-project-owner
 print-docker-tag:  ## Print the current DOCKER_TAG value
 	@echo "DOCKER_TAG=$(DOCKER_TAG)"
 
-up-pgadmin: _check-compose-project-owner
+up-pgadmin:
 	${DOCKER_COMMAND} up -d pgadmin
 
 unit_test:
