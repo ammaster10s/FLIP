@@ -73,6 +73,7 @@
 - `make central-hub` creates `central-hub-trust-apis-network` on a fresh host (#1347). The on-prem readiness checklist resolves the kit through Make (#1355).
 - The dev env example no longer pads `AWS_REGION` with trailing spaces, which made every presign return 500 on a fresh dev hub. `make restart-fl` creates the object-store dir before stopping any FL client (#1403).
 - Every tracked shell script works on macOS bash 3.2 (#1395).
+- The Flower tutorial runner (`make -C fl-tutorials run-tutorial FL_BACKEND=flower`) runs each tutorial's own `pyproject.toml` values, as the simulator does, instead of the platform settings in its `app/config.toml` (spleen: 3 rounds of 1 epoch, not 30 of 5). It now trains on the GPU when the host has one. A run that does not finish now fails, with the reason, instead of passing on timeout (#1433).
 - Dependencies with open security advisories are upgraded (#1388).
 
 ## :white_check_mark: Release checks
