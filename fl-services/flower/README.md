@@ -80,7 +80,8 @@ With nothing installed at run time, no FL host needs a route to PyPI or `downloa
 during a run, which is what the LZA estate's sealed egress (FLIP#749) already required.
 
 The `[tool.uv]` tables in the `fl-apps/flower/*` template pyprojects stay as a guard for anything
-that does run `uv sync` against a template (a local `flwr run`, or per-run install re-enabled):
+that does run `uv sync` against a template inside an FL image (per-run install re-enabled; the
+`/opt/flip-utils` path exists nowhere else, so a template cannot be synced on a workstation):
 `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` stops uv resolving flip-utils from
 **PyPI**, which would shadow the in-repo copy baked into the images
 ([#767](https://github.com/londonaicentre/FLIP/issues/767)), and `torch`/`torchvision` are pinned
@@ -98,9 +99,11 @@ so confirm the running container carries your change by inspecting the file you 
 > pyproject cannot carry the template's `/opt/flip-utils` pin (the path does not exist on a
 > workstation, so a local `uv sync` would fail), and declaring flip-utils without the pin would make
 > any `uv sync` resolve it from **PyPI**, a release that can drift from the in-repo `flip-utils/`.
-> Undeclared, `import flip` always resolves to the image's baked-in copy, the same flip-utils the
-> platform runs; a flip-utils change reaches the tutorials only via an image rebuild
-> (`make build-fl FL_BACKEND=flower`).
+> That includes a local `flwr run` (`sim-tutorial`), whose SuperLink still runtime-installs an app's
+> declared dependencies into a per-run environment prepended to `sys.path`. Undeclared, `import flip`
+> resolves to the environment running the app and never to PyPI: the image's baked-in copy on the
+> compose stacks, where a flip-utils change arrives only via an image rebuild
+> (`make build-fl FL_BACKEND=flower`), and the checkout's `flip-utils/` under `sim-tutorial`.
 
 ## Step-by-step provisioning
 

@@ -42,8 +42,9 @@ packages = ["."]
 
 # On-platform, nothing installs these at run time (FLIP#1418): the ServerApp and
 # the ClientApps run in the FL image's environment, which already carries every
-# dependency below. The [tool.uv] tables below steer any `uv sync` that does run
-# against this file (a local `flwr run`, or Flower's per-run install if it is ever
+# dependency declared above, so a new one ships by rebuilding the FL images, not
+# by adding it here. The [tool.uv] tables below steer any `uv sync` that does run
+# against this file, inside an FL image (Flower's per-run install, were it ever
 # re-enabled) (FLIP#767):
 #   * flip-utils installs from the source baked into the FL images at
 #     /opt/flip-utils — never from PyPI — so FL runs always execute the in-repo

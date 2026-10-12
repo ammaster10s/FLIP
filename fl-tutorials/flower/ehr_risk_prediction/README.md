@@ -46,10 +46,11 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
   `flwr run --run-config` at submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
 
-> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — Flower
-> runtime-installs an app's declared deps and prepends them to `sys.path`, so declaring it would
-> shadow the in-image `/opt/flip-utils` copy the platform actually runs (FLIP#767). Pick up a
-> flip-utils change with `make build-fl FL_BACKEND=flower`.
+> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
+> `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
+> declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
+> platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
+> up a flip-utils change there with `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 
