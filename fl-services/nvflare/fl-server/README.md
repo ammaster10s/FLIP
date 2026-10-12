@@ -55,8 +55,10 @@ the container. NVFLARE in an fl-server image older than FLIP#1390 still loads it
 `local/flip__p_resources.json` before starting an older image. On a compose host it is in the mounted kit:
 `/opt/flip/services/fl-server-net-<N>/local/` in production,
 `$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/` in development. On ECS `local/` is an EFS
-volume, so before `make rollback-centralhub` (in `deploy/providers/AWS`) run the one-shot task Terraform
-runs when the kit changes, which empties `local/` and re-syncs the kit from S3:
+volume, and `make rollback-centralhub` (in `deploy/providers/AWS`) takes care of it: before it repoints any
+service it runs the one-shot task Terraform runs when the kit changes, which empties `local/` and re-syncs
+the kit from S3 (`scripts/reset-fl-server-local.sh`). To do the same by hand, for instance before rolling
+back with plain `aws ecs update-service`:
 
 ```bash
 NET=$(aws ecs describe-services --cluster flip-cluster --services fl-server-net-1 \
