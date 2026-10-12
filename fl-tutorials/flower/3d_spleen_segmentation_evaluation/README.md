@@ -52,11 +52,41 @@ pip install -e .
 
 ## Running this tutorial
 
-> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=<this tutorial> FL_BACKEND=flower`
-> runs it on the flwr simulator (below), as NVFLARE's tutorials do — what the release check runs.
-> To run it on the Flower containers by hand, use `fl-services/flower` as shown here. The
+> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+> runs it on the flwr simulator (first below), as NVFLARE's tutorials do — what the release check
+> runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
 > deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
-> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Avoid a raw `flwr run`.
+> by `make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` against the dev stack
+> (FLIP#1435). Use the make target rather than invoking `flwr run` directly.
+
+### Run on the flwr simulator (`make run-tutorial`)
+
+```bash
+make -C fl-tutorials download-spleen-data          # MSD images + the evaluation checkpoint
+make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower
+```
+
+Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
+with the same `app/` code the Flower containers run. The one thing the simulator has to supply
+itself is what fl-api injects at submit time on the platform: the ServerApp opens
+`<flip-job-dir>/<checkpoint>`, so `sim-tutorial.sh` passes a `--run-config` pointing
+`flip-job-dir` at `fl-tutorials/data/model_checkpoints` (where `download-spleen-checkpoint`,
+part of `download-spleen-data`, puts `model.pt`) and `checkpoint` at that file. Nothing in
+`app/` knows which runtime it is in. The deployment wiring (the FL images, fl-api submit, SuperNode
+registration) is exercised by `make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower`
+against the dev stack.
+
+A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
+environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
+`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
+a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
+(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
+processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
+adopts whatever already listens on the local Control API port, so the script refuses to hand the
+run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
+of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
+it. See the
+[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ### On the Flower containers, by hand
 
@@ -105,34 +135,6 @@ The dev compose stack (`deploy/compose.development.yml` +
   `/app/src/<model_id>`; the FL API and the SuperLink share the `/app/src`
   volume, and the evaluation ServerApp reads the checkpoint from the path in the
   `flip-job-dir` run-config value the FL API injects at submission time.
-
-### Run on the flwr simulator (no containers)
-
-```bash
-make -C fl-tutorials download-spleen-data          # MSD images + the evaluation checkpoint
-make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower
-```
-
-Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
-with the same `app/` code the compose stack deploys. The one thing the simulator has to supply
-itself is what fl-api injects at submit time on the platform: the ServerApp opens
-`<flip-job-dir>/<checkpoint>`, so `sim-tutorial.sh` passes a `--run-config` pointing
-`flip-job-dir` at `fl-tutorials/data/model_checkpoints` (where `download-spleen-checkpoint`,
-part of `download-spleen-data`, puts `model.pt`) and `checkpoint` at that file. Nothing in
-`app/` knows which runtime it is in. The deployment wiring (the FL images, fl-api submit, SuperNode
-registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
-
-A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
-environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
-`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
-(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
-processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
-adopts whatever already listens on the local Control API port, so the script refuses to hand the
-run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
-of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
-it. See the
-[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Data Location
 

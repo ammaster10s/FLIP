@@ -59,11 +59,36 @@ the upload flow is unaffected.
 
 ## Running this tutorial
 
-> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=<this tutorial> FL_BACKEND=flower`
-> runs it on the flwr simulator (below), as NVFLARE's tutorials do — what the release check runs.
-> To run it on the Flower containers by hand, use `fl-services/flower` as shown here. The
+> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower`
+> runs it on the flwr simulator (first below), as NVFLARE's tutorials do — what the release check
+> runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
 > deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
-> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Avoid a raw `flwr run`.
+> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Use the make target
+> rather than invoking `flwr run` directly.
+
+### Run on the flwr simulator (`make run-tutorial`)
+
+```bash
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
+```
+
+Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
+with the same `app/` code the Flower containers run: site identity comes from
+`context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
+accepts via `--node-config`. The deployment wiring (the FL images, fl-api submit, SuperNode
+registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
+
+A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
+environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
+`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
+a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
+(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
+processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
+adopts whatever already listens on the local Control API port, so the script refuses to hand the
+run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
+of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
+it. See the
+[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ### On the Flower containers, by hand
 
@@ -81,19 +106,20 @@ Then submit the run against the `fl-api` control plane:
 make submit APP=xray_classification    # from fl-services/flower/
 ```
 
-The dev compose stack (`deploy/compose.development.yml` +
-`deploy/compose.development.flower.yml`) wires everything correctly:
+`fl-services/flower/compose.dev.yml` wires the containers:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.development` (read by Docker Compose as the
-  `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
-  into the SuperNode and SuperLink containers — one source of truth for paths.
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR` and `WORKING_DIR` come from your shell (Docker
+  Compose's `${VAR}` substitutions in each service's `volumes:` block; unset, they
+  fall back to empty placeholders under `/tmp`). Export them to this tutorial's data
+  under `fl-tutorials/data/` before `make up`; they are bind-mounted into the
+  SuperNode and SuperLink containers.
 - Inside the containers the mounts always land at stable locations
   (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
   the `environment:` blocks point the app at those paths, so relative paths in
   tutorial code resolve consistently regardless of your host layout.
-- The SuperLink's `--insecure` mode and health server are set by `command:`,
-  not by your shell — nothing to re-export between runs.
+- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
+  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+  `make provision`.
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
 column shape `query.sql` returns from the trust mock OMOP DB (concept ids
@@ -104,30 +130,6 @@ the local-sim path, and the recorded CSV omits it. DICOMs land in
 `DEV_IMAGES_DIR` keyed by accession number —
 `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads
 them directly when `LOCAL_DEV=true`.
-
-### Run on the flwr simulator (no containers)
-
-```bash
-make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
-```
-
-Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
-with the same `app/` code the compose stack deploys: site identity comes from
-`context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
-accepts via `--node-config`. The deployment wiring (the FL images, fl-api submit, SuperNode
-registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
-
-A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
-environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
-`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
-(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
-processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
-adopts whatever already listens on the local Control API port, so the script refuses to hand the
-run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
-of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
-it. See the
-[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
 
 ## Hyperparameters
 

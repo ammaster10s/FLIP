@@ -34,51 +34,17 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 
 ## Running this tutorial
 
-> **Two paths.** `make run-tutorial` (alias `sim-tutorial`) runs the flwr simulator with no
-> containers at all, as NVFLARE's tutorials do — what the release check runs. `fl-services/flower`
-> runs the Flower containers by hand. The deployment wiring (the FL images, fl-api submit,
-> SuperNode registration) is exercised by `make e2e_smoke FL_BACKEND=flower` and
-> `make -C flip-api e2e_smoke_spleen` against the dev stack (FLIP#1435). The app code is identical
-> in both, and both give each site a disjoint slice of the cohort.
+> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower`
+> (alias `sim-tutorial`) runs the flwr simulator with no containers at all, as NVFLARE's tutorials
+> do — what the release check runs. `fl-services/flower` runs the Flower containers by hand. The
+> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised by
+> `make -C flip-api e2e_smoke_spleen FL_BACKEND=flower` against the dev stack (FLIP#1435). The app
+> code is identical in both, and both give each site a disjoint slice of the cohort.
 
-### On the Flower containers, by hand
-
-From the Flower service directory:
+### Run on the flwr simulator (`make run-tutorial`)
 
 ```bash
-cd fl-services/flower
-make build                # build the fl-base / superlink / supernode images
-make up                   # start fl-api, superlink, supernode-1, supernode-2
-```
-
-Then submit the run against the `fl-api` control plane:
-
-```bash
-make submit APP=3d_spleen_segmentation    # from fl-services/flower/
-```
-
-The default stack publishes no host ports; `make submit` execs into the fl-api
-container. To POST from the host instead, publish the fl-api port by editing
-the compose file and re-running `make up`.
-
-The dev compose stack (`deploy/compose.development.yml` +
-`deploy/compose.development.flower.yml`) wires everything correctly:
-
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.development` (read by Docker Compose as the
-  `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
-  into the SuperNode and SuperLink containers — one source of truth for paths.
-- Inside the containers the mounts always land at stable locations
-  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
-  the `environment:` blocks point the app at those paths, so relative paths in
-  tutorial code resolve consistently regardless of your host layout.
-- The SuperLink's `--insecure` mode and health server are set by `command:`,
-  not by your shell — nothing to re-export between runs.
-
-### Fast local iteration: the flwr simulator (`make sim-tutorial`)
-
-```bash
-make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
+make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 ```
 
 Runs every ClientApp in-process — **no SuperLink container, no SuperNodes, no fl-api, no
@@ -109,13 +75,13 @@ command — `sim-tutorial.sh` handles all five:
    (`127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}`) and never checks who started it. A
    SuperLink another checkout left running captures the run, and the app then executes in *that*
    checkout's environment — its `flip` package, its Python, its numpy — with nothing in the output
-   saying so but the venv paths in a traceback. Because the stale-process cleanup above
+   saying so but the venv paths in a traceback. Because the stale-process cleanup in point 1
    deliberately spares other checkouts' processes, the script refuses to start when the port is
    still taken after its own cleanup, naming the pid and command line where `ss` can see them.
 5. **`flwr run --stream` returns 0 once the log stream closes, whatever became of the run.** A
    simulation that dies mid-round still hands back success. The script reads the run id off the
    stream, asks the SuperLink for the run's terminal status (`flwr ls`) and exits non-zero unless
-   it is `finished:completed` — so a shell loop over `make sim-tutorial` really does stop at the
+   it is `finished:completed` — so a shell loop over `make run-tutorial` really does stop at the
    first failure.
 
 FLIP's `DevSettings` singleton is pinned at import time, so the data and `WORKING_DIR` settings
@@ -131,6 +97,41 @@ cohort. See that function's docstring for how the buckets are chosen.
 The first run is slow: `flwr run` builds a per-run environment under `~/.flwr/runtime-envs/` and
 installs the app's dependencies (MONAI, torch) into it. The environment is deleted when the run
 ends, but uv's cache keeps the downloaded wheels, so later runs start faster.
+
+### On the Flower containers, by hand
+
+From the Flower service directory:
+
+```bash
+cd fl-services/flower
+make build                # build the fl-base / superlink / supernode images
+make up                   # start fl-api, superlink, supernode-1, supernode-2
+```
+
+Then submit the run against the `fl-api` control plane:
+
+```bash
+make submit APP=3d_spleen_segmentation    # from fl-services/flower/
+```
+
+The default stack publishes no host ports; `make submit` execs into the fl-api
+container. To POST from the host instead, publish the fl-api port by editing
+the compose file and re-running `make up`.
+
+`fl-services/flower/compose.dev.yml` wires the containers:
+
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR` and `WORKING_DIR` come from your shell (Docker
+  Compose's `${VAR}` substitutions in each service's `volumes:` block; unset, they
+  fall back to empty placeholders under `/tmp`). Export them to this tutorial's data
+  under `fl-tutorials/data/` before `make up`; they are bind-mounted into the
+  SuperNode and SuperLink containers.
+- Inside the containers the mounts always land at stable locations
+  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
+  the `environment:` blocks point the app at those paths, so relative paths in
+  tutorial code resolve consistently regardless of your host layout.
+- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
+  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+  `make provision`.
 
 ## Best-model selection
 
