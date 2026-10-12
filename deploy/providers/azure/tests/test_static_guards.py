@@ -100,7 +100,9 @@ def test_no_real_guids_in_tracked_files():
 
 
 def test_every_az_call_names_the_subscription():
-    lines = [line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage|aks)\b", line)]
+    lines = [
+        line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage|aks)\b", line)
+    ]
     assert lines, "the Makefile drives az; the guard must see its calls"
     for line in lines:
         assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
@@ -217,8 +219,10 @@ def _target(name: str) -> str:
 
 def test_aks_apply_asks_first_and_refuses_while_the_vm_holds_the_outbound_ip():
     body = _target("aks-apply")
-    assert "show aks.tfplan" in body and 'read -r -p "Apply this plan?' in body
-    assert "az group exists" in body and "$(NODE_RG)" in body, "the VM's NIC holds the bootstrap IP"
+    assert "show aks.tfplan" in body
+    assert 'read -r -p "Apply this plan?' in body
+    assert "az group exists" in body, "the VM's NIC holds the bootstrap IP"
+    assert "$(NODE_RG)" in body, "the VM's NIC holds the bootstrap IP"
 
 
 def test_aks_plan_and_destroy_admit_only_the_operator():
