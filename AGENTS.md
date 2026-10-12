@@ -80,7 +80,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 ### Running Services
 
 ```bash
-make up                    # Start all services — pulls images from GHCR; needs no AWS (run `make -C trust prepare-artifacts` once first for the trusts' XNAT plugins)
+make up                    # Start all services — pulls images from GHCR; needs no AWS (run `make -C trust prepare-artifacts` first for the trusts' XNAT plugins, and again after a pull that changes `trust/xnat/artifacts.manifest`)
 make up BUILD=true         # Same, but rebuild repo-built services from local source instead of pulling
 make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only

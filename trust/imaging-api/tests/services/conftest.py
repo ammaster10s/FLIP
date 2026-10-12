@@ -34,7 +34,7 @@ def sent_xnat_requests() -> Iterator[list[requests.PreparedRequest]]:
         response = requests.Response()
         response.status_code = 404 if request.method == "GET" and urlsplit(request.url).query == "inbody=true" else 200
         response._content = b"{}"
-        response._content_consumed = True  # type: ignore[attr-defined]
+        setattr(response, "_content_consumed", True)  # private requests field, absent from the stubs
         response.request = request
         return response
 
