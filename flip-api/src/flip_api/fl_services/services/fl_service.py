@@ -12,10 +12,12 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -376,6 +378,33 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
+_URL = re.compile(r"https?://[^\s'\"]+")
+
+
+def _fl_api_refusal_reason(error: httpx.HTTPStatusError) -> str | None:
+    """The FL API's own reason for refusing a job, for the model log, or None if it gave none (FLIP#70).
+
+    The FL API answers a job it will not run, such as a meta.json key it does not accept or an invalid
+    config.json value, with a 4xx and a ``detail``. httpx's error names only the status and URL, so the
+    researcher saw "400 Bad Request" and not which file to fix. URLs are redacted: a bundle URL is presigned.
+
+    Args:
+        error (httpx.HTTPStatusError): the FL API's error response.
+
+    Returns:
+        str | None: the reason, or None for a server error or a reply without a readable ``detail``.
+    """
+    if not error.response.is_client_error:
+        return None
+    try:
+        detail = error.response.json().get("detail")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(detail, str) or not detail.strip():
+        return None
+    return _URL.sub("<url>", detail.strip())
+
+
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -390,6 +419,10 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
 
     Returns:
         Any: The response from the server after uploading the application.
+
+    Raises:
+        ValueError: if the FL API refused the job with a reason, carrying that reason for the model log.
+        httpx.HTTPStatusError: for any other error response.
     """
     url = f"{endpoint}/upload_app/{model_id}"
     # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
@@ -399,7 +432,13 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
     # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
     # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
     # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
-    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
+    try:
+        response = http_post(url=url, data=training_details.model_dump(), timeout=900)
+    except httpx.HTTPStatusError as e:
+        reason = _fl_api_refusal_reason(e)
+        if reason is None:
+            raise
+        raise ValueError(f"The FL API refused the job: {reason}") from e
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response

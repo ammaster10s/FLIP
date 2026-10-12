@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
@@ -112,6 +113,52 @@ def test_upload_app_calls_http_post(mock_post, model_id):
     mock_post.return_value = {"status": "ok"}
     result = fl_service.upload_app(model_id, body, "endpoint")
     assert result == {"status": "ok"}
+
+
+def _refusal(status_code: int, body) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://fl-api-net-1:8000/upload_app/m")
+    response = httpx.Response(status_code, request=request, json=body)
+    return httpx.HTTPStatusError(f"Client error '{status_code}'", request=request, response=response)
+
+
+def _upload_body() -> IStartTrainingBody:
+    return IStartTrainingBody(project_id="proj", cohort_query="query", trusts=["client1"], bundle_urls=[])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_passes_the_fl_apis_reason_on_to_the_model_log(mock_post, model_id):
+    """A refused job's model log said only "Client error '400 Bad Request' for url ..." (FLIP#70). The FL API's
+    detail says which meta.json key it refused and why; the researcher needs that, not the status line."""
+    detail = "meta.json has key(s) FLIP does not accept: ['launcher_spec']."
+    mock_post.side_effect = _refusal(400, {"detail": detail})
+
+    with pytest.raises(ValueError, match=r"^The FL API refused the job: meta\.json has key\(s\)") as raised:
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
+
+    assert str(raised.value) == f"The FL API refused the job: {detail}"
+
+
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_redacts_urls_from_the_reason(mock_post, model_id):
+    """A bundle URL is presigned: it must not land in a log every project member can read."""
+    detail = "Bundle URL returned a redirect: 'https://s3/b/f?X-Amz-Signature=abc'."
+    mock_post.side_effect = _refusal(400, {"detail": detail})
+
+    with pytest.raises(ValueError, match="^The FL API refused the job") as raised:
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
+
+    assert "X-Amz-Signature" not in str(raised.value)
+    assert "Bundle URL returned a redirect: '<url>'" in str(raised.value)
+
+
+@pytest.mark.parametrize(("status_code", "body"), [(500, {"detail": "Internal server error: boom"}), (400, ["x"])])
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_leaves_other_failures_as_they_were(mock_post, status_code, body, model_id):
+    """A server error, or a refusal without a readable detail, keeps httpx's own error."""
+    mock_post.side_effect = _refusal(status_code, body)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
 
 
 def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):
