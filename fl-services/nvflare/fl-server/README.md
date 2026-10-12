@@ -48,3 +48,22 @@ scheduler holds a job because a Trust cannot provide the GPUs its `resource_spec
 reporter puts that in the model's activity feed, and on the scheduler's last try it marks the model
 `ERROR` (FLIP#1390). The container refuses to start if the file cannot be written. See
 [GPU requirements and NVFLARE's scheduler](../../../docs/source/components/component-fl-nets.rst).
+
+**Rolling back past this change takes one step first.** `local/` is the kit mount, so the file outlives
+the container. NVFLARE in an fl-server image older than FLIP#1390 still loads it, cannot import the
+`JobSchedulingReporter` it names, and fails while loading its configuration. Delete
+`local/flip__p_resources.json` before starting an older image. On a compose host it is in the mounted kit:
+`/opt/flip/services/fl-server-net-<N>/local/` in production,
+`$FL_PROVISIONED_DIR/net-<N>/services/fl-server-net-<N>/local/` in development. On ECS `local/` is an EFS
+volume, so before `make rollback-centralhub` (in `deploy/providers/AWS`) run the one-shot task Terraform
+runs when the kit changes, which empties `local/` and re-syncs the kit from S3:
+
+```bash
+NET=$(aws ecs describe-services --cluster flip-cluster --services fl-server-net-1 \
+  --query 'services[0].networkConfiguration' --output json)
+aws ecs run-task --cluster flip-cluster --task-definition efs-provision-certs \
+  --launch-type FARGATE --network-configuration "$NET"
+```
+
+The running fl-server has already loaded the file, and a current image rewrites it at every start, so
+rolling forward again needs nothing.
