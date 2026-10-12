@@ -99,11 +99,37 @@ def test_every_az_call_names_the_subscription():
         assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
 
 
-def test_no_inbound_security_rules_anywhere():
+def _security_rules(text: str) -> list[str]:
+    rules, rest = [], text
+    while (block := hcl_block(rest, "security_rule {")) != "":
+        rules.append(block)
+        rest = rest[rest.find(block) + len(block) :]
+    return rules
+
+
+def test_no_inbound_allow_rule_anywhere():
     for path in AZURE_DIR.rglob("*.tf"):
         text = path.read_text()
-        assert "azurerm_network_security_rule" not in text, f"{path} adds an NSG rule"
-        assert not re.search(r'direction\s*=\s*"Inbound"', text), f"{path} adds an inbound rule"
+        assert "azurerm_network_security_rule" not in text, f"{path} adds a standalone NSG rule"
+        for rule in _security_rules(text):
+            if re.search(r'direction\s*=\s*"Inbound"', rule):
+                assert re.search(r'access\s*=\s*"Deny"', rule), f"{path} allows inbound traffic:\n{rule}"
+
+
+def test_the_nic_nsg_denies_all_inbound_above_azures_defaults():
+    """A rule-less NSG still lets the VNet in (AllowVnetInBound, priority 65000)."""
+    main = (AZURE_DIR / "vm" / "main.tf").read_text()
+    rules = _security_rules(hcl_block(main, 'resource "azurerm_network_security_group" "nic"'))
+    assert len(rules) == 1, rules
+    for setting in (
+        'direction                  = "Inbound"',
+        'access                     = "Deny"',
+        "priority                   = 4096",
+        'source_address_prefix      = "*"',
+        'destination_port_range     = "*"',
+        'protocol                   = "*"',
+    ):
+        assert setting in rules[0], f"the NIC's deny rule lacks {setting!r}"
 
 
 def test_the_nic_is_always_behind_its_own_nsg():

@@ -65,16 +65,28 @@ resource "azurerm_network_interface" "node" {
   }
 }
 
-# The NIC's own NSG, rule-less on purpose and present in every mode. Azure lets inbound
-# traffic through only if both the subnet's NSG and this one allow it, so even a site subnet
-# (existing_subnet_id) with a permissive NSG cannot expose the node. Azure's default rules
-# deny inbound from the internet.
+# The NIC's own NSG, present in every mode. Azure lets inbound traffic through only if both the
+# subnet's NSG and this one allow it, so this one decides even on a site subnet
+# (existing_subnet_id) with a permissive NSG. Azure's default rules deny the internet but still
+# allow the VNet (AllowVnetInBound) and its load balancer, so one rule denies all inbound above
+# them. Run Command reaches the node through the guest agent's outbound channel and needs none.
 resource "azurerm_network_security_group" "nic" {
   name                = "${var.name_prefix}-node-nic-nsg"
   location            = var.location
   resource_group_name = azurerm_resource_group.node.name
-  security_rule       = []
   tags                = local.tags
+
+  security_rule {
+    name                       = "DenyAllInbound"
+    priority                   = 4096
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
 }
 
 resource "azurerm_network_interface_security_group_association" "nic" {

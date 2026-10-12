@@ -124,15 +124,19 @@ run "auto_shutdown_can_be_turned_off" {
   }
 }
 
-# Inbound needs both the subnet's NSG and the NIC's NSG to allow it. The NIC gets its own
-# rule-less NSG in every mode, so a site subnet (existing_subnet_id) with a permissive NSG
-# still cannot expose the node.
-run "nic_has_its_own_nsg_with_no_rules" {
+# Inbound needs both the subnet's NSG and the NIC's NSG to allow it. The NIC gets its own NSG in
+# every mode, denying all inbound above Azure's defaults (which allow the VNet), so a site subnet
+# (existing_subnet_id) with a permissive NSG still cannot expose the node.
+run "nic_nsg_denies_all_inbound" {
   command = plan
 
   assert {
-    condition     = length(azurerm_network_security_group.nic.security_rule) == 0
-    error_message = "The NIC's NSG must have no rules (Azure's defaults deny internet inbound)."
+    condition = length(azurerm_network_security_group.nic.security_rule) == 1 && alltrue([
+      for r in azurerm_network_security_group.nic.security_rule :
+      r.direction == "Inbound" && r.access == "Deny" && r.priority == 4096 && r.protocol == "*" &&
+      r.source_address_prefix == "*" && r.destination_port_range == "*"
+    ])
+    error_message = "The NIC's NSG must hold exactly one rule, denying all inbound at priority 4096."
   }
 }
 
@@ -146,8 +150,10 @@ run "nic_nsg_also_guards_a_site_subnet" {
   }
 
   assert {
-    condition     = azurerm_network_security_group.nic.name == "flipaz-node-nic-nsg" && length(azurerm_network_security_group.nic.security_rule) == 0
-    error_message = "With a site subnet the NIC still carries its own rule-less NSG."
+    condition = azurerm_network_security_group.nic.name == "flipaz-node-nic-nsg" && alltrue([
+      for r in azurerm_network_security_group.nic.security_rule : r.direction == "Inbound" && r.access == "Deny"
+    ])
+    error_message = "With a site subnet the NIC still carries its own deny-all-inbound NSG."
   }
 }
 

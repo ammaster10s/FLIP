@@ -23,7 +23,7 @@ Architecture
 
         Operator's machine                       Azure subscription
    ┌─────────────────────────┐        ┌──────────────────────────────────────────┐
-   │ make plan / apply       │──ARM──▶│ VNet (no inbound rules) ── VM ── data disk │
+   │ make plan / apply       │──ARM──▶│ VNet (inbound denied) ── VM ── data disk   │
    │ make kit-upload         │──Entra▶│ kit drop (private container, 1-day blobs) │
    │ make selftest / join    │──Run──▶│   ▲ read with the VM's managed identity   │
    └─────────────────────────┘ Command└──┼───────────────────────────────────────┘
@@ -40,9 +40,9 @@ survives the node being destroyed and rebuilt.
 | Bootstrap (once)          | Terraform state storage (Entra access only), a budget alert, |
 |                           | the static outbound IP                                       |
 +---------------------------+--------------------------------------------------------------+
-| Node (per session)        | VNet and subnet with no inbound rules, an Ubuntu 24.04 VM    |
-|                           | (Trusted Launch), a data disk for ``/opt/flip``, a daily     |
-|                           | auto-shutdown                                                |
+| Node (per session)        | VNet and subnet, all inbound denied at the VM's NIC, an      |
+|                           | Ubuntu 24.04 VM (Trusted Launch), a data disk for            |
+|                           | ``/opt/flip``, a daily auto-shutdown                         |
 +---------------------------+--------------------------------------------------------------+
 | Kit drop (with the node)  | A storage account with shared keys off and a private         |
 |                           | container. Its firewall admits only the node subnet and the  |

@@ -24,7 +24,7 @@ the AKS half comes later.
 | Layer | Directory | What it creates | Lifetime |
 |---|---|---|---|
 | Bootstrap | `bootstrap/` | Resource group, Terraform state storage (Entra ID access only), a budget alert, the node's static outbound IP | Created once, kept across node rebuilds |
-| Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs with no inbound rules, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
+| Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs, all inbound denied at the VM's NIC, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
 | Kit drop | `modules/kit_drop/` (on by default in `vm/`) | A storage account with shared keys off and a private `kits` container. Its firewall admits only the node's subnet and your IP; every blob is deleted a day after upload. The node can read the container, you can write to it | With the node |
 
 At first boot cloud-init installs `flip-node` (`vm/templates/flip-node.sh`). It mounts the data
@@ -125,5 +125,5 @@ make lint   # terraform fmt and tflint with the azurerm ruleset
 
 CI runs both in `validate_terraform.yml`. The static guards (`tests/test_static_guards.py`)
 enforce the cost and safety rules: nothing skips Terraform's confirmation, every provider and `az` call names the
-subscription, no real subscription IDs in tracked files, no inbound NSG rules, and the VM's
-NIC always behind its own NSG.
+subscription, no real subscription IDs in tracked files, no NSG rule that allows inbound traffic, and the
+VM's NIC always behind its own NSG, which denies all inbound.
