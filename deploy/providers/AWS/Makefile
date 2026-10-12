@@ -28,11 +28,14 @@ endif
 ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
 include ../../env_mode.mk
 
-# Goals that read no env file and call no AWS API. When every goal on the command line is one of
+# Goals that need no env file and call no AWS API. When every goal on the command line is one of
 # these, the parse-time env guards below stand aside, so a contributor without the gitignored
 # deploy env files can run them. Any other goal, alone or beside these, keeps every guard (FLIP#1440).
-STATIC_GOALS := lint fmt-check tflint-lint checkov-lint help
-STATIC_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes))
+# `override`, and trusting MAKECMDGOALS only when make set it, keep the switch out of reach of the
+# command line, MAKEFLAGS and the environment: one variable must not turn off the account guard.
+override STATIC_GOALS := lint fmt-check tflint-lint checkov-lint help
+_GOALS_FROM_OUTSIDE := $(or $(findstring environment,$(origin MAKECMDGOALS)),$(findstring command,$(origin MAKECMDGOALS)),$(findstring override,$(origin MAKECMDGOALS)))
+override STATIC_ONLY := $(if $(_GOALS_FROM_OUTSIDE),,$(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes)))
 MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
@@ -82,9 +85,9 @@ STAG_AWS_PROFILE ?= stag
 LZA_AWS_PROFILE ?= lza-prod
 LZA_STAG_AWS_PROFILE ?= lza-stag
 
-# Refuse to operate against an unintended AWS account. Profile name is the safety
-# guard because Make has no easy way to read the account ID without an `aws` call.
-# One knob per environment, looked up by ENV.
+# The AWS profile each environment expects, checked by the account guard in the env guards
+# below. Profile name is the safety guard because Make has no easy way to read the account ID
+# without an `aws` call. One knob per environment, looked up by ENV.
 _AWS_PROFILE_KNOB_production := PROD_AWS_PROFILE
 _AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
@@ -328,9 +331,9 @@ prettier: ## Format Terraform files. YAML files are formatted by the prettier pr
 	terraform fmt -recursive
 
 .PHONY: lint fmt-check tflint-lint
-lint: fmt-check tflint-lint checkov-lint ## The three static checks validate_terraform.yml runs over this tree — no env file or credentials needed (FLIP#1440)
+lint: fmt-check tflint-lint checkov-lint ## terraform fmt, TFLint and Checkov, as validate_terraform.yml runs them — no env file or credentials needed (FLIP#1440)
 
-fmt-check: ## terraform fmt -check over this tree, as CI runs it
+fmt-check: ## terraform fmt -check over this tree (CI's fmt step)
 	terraform fmt -check -recursive
 
 tflint-lint: ## Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — no credentials needed

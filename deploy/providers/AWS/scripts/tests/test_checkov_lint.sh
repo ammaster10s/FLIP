@@ -217,8 +217,8 @@ run_case "real-scan failure propagates" MOCK_SCAN_RC=1
 check_refuses "canary passed first" "Canary OK"
 check_refuses "run is red on the scan's findings" "Failed checks: 1"
 
-# TF_VAR_* never reach checkov: it resolves variables from them, and the AWS Makefile exports
-# them (empty strings without an env file), which CI never sets.
+# TF_VAR_* never reach checkov: it resolves variables from them, the AWS Makefile exports them,
+# and CI sets none.
 run_case "TF_VAR_* are cleared before checkov runs" TF_VAR_FL_SERVER_PORT= TF_VAR_bucket=x
 check_passes "the scan still runs" "Passed checks: 113"
 if [[ "${LAST_OUT}" != *TF_VAR_LEAK* ]]; then

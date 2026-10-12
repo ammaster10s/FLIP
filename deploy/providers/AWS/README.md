@@ -1417,13 +1417,10 @@ CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FL
   rationale; classes deliberately *not* promoted are recorded in the script.
 
 ```bash
-make checkov-lint                          # from the REPO ROOT (env-free)
+make checkov-lint                          # here or from the repo root; no env file needed
+make lint                                  # here: terraform fmt, tflint and checkov together
 bash scripts/checkov_lint.sh               # or directly, from this directory
 ```
-
-(The `checkov-lint` target in *this* directory's Makefile works too, but only with a populated deploy env
-file — the Makefile's parse-time `FL_KIT_DATE` guard fires before any target runs. The repo-root target and
-the direct script invocation need nothing.)
 
 Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
 globally — add inside the flagged resource/data block:
@@ -1456,7 +1453,7 @@ in the `TFLint` job of `validate_terraform.yml`; the configuration is [`.tflint.
 `terraform` ruleset with the recommended preset, plus the pinned AWS ruleset).
 
 ```bash
-make tflint-lint                           # from the REPO ROOT (env-free)
+make tflint-lint                           # here or from the repo root; no env file needed
 bash scripts/tflint_lint.sh                # or directly, from this directory
 ```
 

@@ -147,8 +147,8 @@ run_case "finding in a module fails the run" MOCK_FAIL_DIR=/modules/a
 has "tflint found issues"; check "says so" $?
 grep -qx "${FAKE_AWS_ROOT}" "${LINTED}"; check "still lints the other directories" $?
 
-# TF_VAR_* never reach tflint: it resolves variables from them, and the AWS Makefile exports
-# them (empty strings without an env file), which CI never sets.
+# TF_VAR_* never reach tflint: it resolves variables from them, the AWS Makefile exports them,
+# and CI sets none.
 run_case "TF_VAR_* are cleared before tflint runs" TF_VAR_FL_SERVER_PORT= TF_VAR_bucket=x
 check "exits 0" "${LAST_RC}"
 ! grep -q TF_VAR_LEAK "${LINTED}"; check "tflint saw no TF_VAR_*" $?

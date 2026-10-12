@@ -445,8 +445,8 @@ restrictable data-access action, data exfiltration or privilege-escalation shape
 infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
 No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make checkov-lint` from the repo root, or `make -C deploy/providers/AWS lint`, which runs it with terraform fmt
-and tflint. Neither needs the gitignored deploy env files.
+`make checkov-lint`, from the repo root or `-C deploy/providers/AWS`, or with `make -C deploy/providers/AWS lint`,
+which also runs terraform fmt and tflint (both must be installed). None needs the gitignored deploy env files.
 
 Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
@@ -462,9 +462,10 @@ run by the same workflow's `Deploy script tests` job.
 (recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
 `terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
 argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
-a module is checked even where no root calls it. Run it locally with `make tflint-lint` from the repo root (or `make -C deploy/providers/AWS lint`); it
-needs tflint at the version pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on
-GitHub — Homebrew no longer packages it) and downloads the pinned AWS ruleset plugin on first run.
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` (repo root or
+`-C deploy/providers/AWS`, or as part of `make -C deploy/providers/AWS lint`); it needs tflint at the version
+pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on GitHub — Homebrew no longer
+packages it) and downloads the pinned AWS ruleset plugin on first run.
 
 A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
 flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other

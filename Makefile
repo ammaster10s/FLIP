@@ -397,8 +397,7 @@ checkov-lint:
 # Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
 # version constraints, AWS argument values the API would reject. Credential-free;
 # needs tflint at the version pinned in the script, and downloads the pinned AWS
-# ruleset plugin on first run. Runs the script directly for the same reason as
-# checkov-lint.
+# ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
 # Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
@@ -409,7 +408,8 @@ tflint-lint:
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
-# rather than via deploy/providers/AWS/Makefile for the same credential-free reason as checkov-lint.
+# rather than via deploy/providers/AWS/Makefile, whose env guards need the gitignored deploy env
+# file for any goal but its static lint ones.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
 	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
