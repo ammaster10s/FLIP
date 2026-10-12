@@ -716,8 +716,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
-		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. It guards the"; \
-		echo "    AWS-backed targets — deploy/providers/AWS, FL kit uploads, the trusts' artifact fetches.)"; \
+		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
+		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

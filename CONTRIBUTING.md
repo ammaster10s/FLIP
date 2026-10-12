@@ -247,7 +247,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
 | FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
-| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` once before the first `make up`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
+| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
