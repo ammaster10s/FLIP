@@ -39,6 +39,9 @@
     # per-net images bind sources (the Flower client runs as a different UID from
     # imaging-api). `make provision-local-trust` passes the deployment's
     # FL_BACKEND; a standalone run needs `-e fl_backend=flower` explicitly.
+    # This default is why flip_trust_dirs' `is defined` check never fires here, and
+    # getting it wrong is not fatal: `make -C trust up-trust` runs under sudo on-prem
+    # and its $(ensure_net_dirs) re-applies the right ownership at every bring-up.
     fl_backend: nvflare
     # The operator extracts the kit tarball by hand (package-onprem-trust-kit.sh),
     # so the role lays down the directory tree and nothing wipes it.
