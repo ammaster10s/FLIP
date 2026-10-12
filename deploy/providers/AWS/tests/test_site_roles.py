@@ -53,6 +53,20 @@ def test_ec2_dirs_cover_every_slot_and_the_observability_volumes() -> None:
     assert "/opt/flip/trust" in play_vars["flip_app_dirs"]
 
 
+def test_base_packages_precede_the_unzip_consumers() -> None:
+    # The AWS CLI play no longer installs its own unzip: it relies on flip_base_packages having
+    # run in an earlier trust_ec2 play, or its `unarchive` of the installer zip fails mid-play.
+    plays = yaml.safe_load(SITE.read_text())
+    [base] = [i for i, p in enumerate(plays) if "flip_base_packages" in (p.get("roles") or [])]
+    assert plays[base]["hosts"] == "trust_ec2"
+    consumers = [i for i, p in enumerate(plays) if any("unarchive" in task for task in p.get("tasks") or [])]
+    assert consumers, "no site.yml play unarchives anything — this guard has drifted"
+    assert all(base < i for i in consumers), "flip_base_packages must run before every play that unarchives"
+    role_defaults = REPO_ROOT / "trust/deploy/ansible/roles/flip_base_packages/defaults/main.yml"
+    defaults = yaml.safe_load(role_defaults.read_text())
+    assert "unzip" in defaults["flip_base_packages"], "unarchive needs the unzip binary on the host"
+
+
 def test_galaxy_installs_land_outside_the_checkout() -> None:
     cfg = (AWS_DIR / "ansible.cfg").read_text()
     roles_path = next(line for line in cfg.splitlines() if line.strip().startswith("roles_path"))
