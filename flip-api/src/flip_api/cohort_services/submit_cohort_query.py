@@ -270,7 +270,10 @@ def submit_cohort_query(
         try:
             parsed_query = validate_query(query_row.query)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            # Deliberately user-facing (#906): validate_query composes every ValueError message itself
+            # (the sqlglot parse error is wrapped, never echoed), so str(e) is the hub's own validation
+            # text, which the UI surfaces to the researcher.
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Imaging projects need an accession_id output column (the trusts' accession-ids route
         # selects it by name). Fast feedback only — see projection_lacks_accession_id.
@@ -332,9 +335,7 @@ def submit_cohort_query(
                 # own result entry and the batch keeps queuing the rest. db.add is in-memory, so
                 # there is nothing to roll back here; a failure at db.commit() below is handled by
                 # the outer except (which rolls back the whole submit).
-                logger.error(
-                    f"Unable to queue cohort query task for trust {trust.name}: {str(e)}"
-                )
+                logger.error(f"Unable to queue cohort query task for trust {trust.name}: {str(e)}")
                 result.append(TrustDetails(name=trust.name, statusCode=500, message=str(e)))
 
             logger.info(f"Trust: {trust.name} processed")

@@ -55,9 +55,8 @@ services:
       - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=1
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from provision/workspace-dev/ (gitignored)
@@ -82,6 +81,9 @@ services:
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
       - LOG_LEVEL=${LOG_LEVEL}
+      # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
+      # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
@@ -116,9 +118,8 @@ services:
       - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=1
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
@@ -153,9 +154,8 @@ services:
       - LOGNAME=flip
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
-      - MIN_CLIENTS=1
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      - UPLOADED_FEDERATED_DATA_BUCKET=s3://fake-s3-bucket/results
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}

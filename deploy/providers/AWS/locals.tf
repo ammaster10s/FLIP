@@ -26,11 +26,13 @@ locals {
 
   # Permissions boundary carried by every IAM role in this root (FLIP#962).
   #
-  # Composed rather than looked up: the policy lives in the ci/ root, the two
-  # roots share no state, and a `data "aws_iam_policy"` here would make every
-  # plan fail in an account where ci/ has not been applied yet — including the
-  # `terraform validate` a contributor runs with no credentials at all.
-  # `make -C ci output permissions_boundary_arn` prints the ARN to compare.
+  # Composed rather than looked up: the policy is declared by
+  # modules/terraform_ci_bootstrap, which the platform repositories (or ci/, for
+  # an account you bootstrap yourself) apply with their own state, and a
+  # `data "aws_iam_policy"` here would make every plan fail in an account where
+  # the bootstrap has not been applied yet — including the `terraform validate` a
+  # contributor runs with no credentials at all. The module's
+  # permissions_boundary_arn output is the ARN to compare.
   iam_permissions_boundary_arn = (
     var.iam_permissions_boundary_name == ""
     ? null
@@ -102,7 +104,7 @@ locals {
   # operator (see `var.ENFORCE_MFA` description). Unset → omitted entirely so
   # flip-api's Pydantic Settings default (`ENFORCE_MFA = True`, see
   # `flip-api/src/flip_api/config.py:91`) anchors the secure value. This
-  # matches the design recorded in CLAUDE.md: "the Settings default (`true`)
+  # matches the design recorded in AGENTS.md: "the Settings default (`true`)
   # is the canonical secure anchor". Set ENFORCE_MFA=false in `.env.stag` to
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
@@ -113,6 +115,15 @@ locals {
   # (compose.production.nvflare.yml); fl_server_flower/fl_api_flower are the
   # Flower maps (compose.production.flower.yml). ecs_tasks.tf selects by
   # var.fl_backend (#566).
+  # The regional S3 endpoint host. One value, two consumers that must agree
+  # (FLIP#905): flip-api presigns bundle URLs against it as AWS_ENDPOINT_URL_S3,
+  # and pinning boto3 to a regional endpoint makes those URLs PATH-STYLE — the
+  # bucket in the path, the host exactly this — so it is also the one host the
+  # fl-api's bundle-fetch allow-list (BUNDLE_URL_ALLOWED_ORIGINS) admits. Derived
+  # once so the two cannot drift: a change here moves both, and a change to
+  # either alone would 400 every bundle download.
+  s3_regional_endpoint_host = "s3.${var.AWS_REGION}.amazonaws.com"
+
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
       ENV        = "production"
@@ -121,7 +132,7 @@ locals {
       # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
       # FLIP#24 500s. Same rationale as the matching block in
       # deploy/compose.production.yml; was compose-only until #566.
-      AWS_ENDPOINT_URL_S3       = "https://s3.${var.AWS_REGION}.amazonaws.com"
+      AWS_ENDPOINT_URL_S3       = "https://${local.s3_regional_endpoint_host}"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
       POSTGRES_USER             = var.POSTGRES_USER
@@ -159,7 +170,6 @@ locals {
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
-      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
@@ -189,29 +199,47 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+      # The only origin the server-side bundle fetch may download from: the
+      # presign origin above (FLIP#905). Empty would mean "any public host".
+      # Both names for one release (FLIP#1291): an fl-api image from before the
+      # rename reads only the old one, one from after reads both, and a deploy
+      # that swaps only the image or only this environment must not leave
+      # either with an empty list. Drop BUNDLE_URL_ALLOWED_HOSTS in the release
+      # after every environment runs a post-#1291 fl-api.
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
     # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
-    fl_server_flower = {
+    fl_server_flower = merge({
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
-      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
-    }
+      }, var.lza_managed_network ? {
+      # Sealed egress (FLIP#749): the SuperLink's per-run `uv sync` cannot reach any
+      # package index, so the ServerApp runs in the image's preinstalled environment
+      # instead — Flower's documented restricted-network mode (exit-code 608 docs).
+      # Researcher package additions ship via image rebuild, not pyproject.
+      FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
+    } : {})
     # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
     fl_api_flower = {
       # Same reload-gating rationale as the NVFLARE map (FLIP#593 pt.1).
       ENV                         = "production"
-      SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:9093"
+      SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:8000"
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
+      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905), both names
+      # for one release (FLIP#1291) for the same reason.
+      BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
   }
 }

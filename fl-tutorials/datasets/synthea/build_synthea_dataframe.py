@@ -137,9 +137,7 @@ def derive_features(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
         .rename("dx_date")
     )
 
-    frame = person[["person_id", "gender_concept_id", "year_of_birth"]].merge(
-        first_dx, on="person_id", how="left"
-    )
+    frame = person[["person_id", "gender_concept_id", "year_of_birth"]].merge(first_dx, on="person_id", how="left")
     frame["label_t2dm"] = frame["dx_date"].notna().astype(int)
     frame["age"] = AGE_REFERENCE_YEAR - frame["year_of_birth"]
     frame["is_female"] = (frame["gender_concept_id"] == FEMALE_GENDER_CONCEPT_ID).astype(int)
@@ -160,9 +158,7 @@ def derive_features(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     visits = visits.merge(first_dx, on="person_id", how="left")
     pre_dx_visits = visits[visits["dx_date"].isna() | (visits["visit_start_date"] < visits["dx_date"])]
-    frame["n_prior_visits"] = (
-        frame["person_id"].map(pre_dx_visits.groupby("person_id").size()).fillna(0).astype(int)
-    )
+    frame["n_prior_visits"] = frame["person_id"].map(pre_dx_visits.groupby("person_id").size()).fillna(0).astype(int)
 
     # Scope the cohort to persons with at least one recorded condition — the same inclusion
     # criterion query.sql applies (WHERE EXISTS (condition_occurrence)). On a real trust this is
@@ -171,14 +167,8 @@ def derive_features(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     # this only ever drops history-free negatives.
     frame = frame[frame["person_id"].isin(conditions["person_id"])]
 
-    # accession_id: this cohort fetches no imaging, but the FLIP dev client requires the
-    # column (flip-utils FLIPStandardDev.get_dataframe) — the app ignores it. Same aliasing
-    # as query.sql; do not remove it or `make run-tutorial` breaks.
-    frame["accession_id"] = frame["person_id"].astype(str)
-
     columns = [
         "person_id",
-        "accession_id",
         "age",
         "is_female",
         *CONDITION_FLAGS,

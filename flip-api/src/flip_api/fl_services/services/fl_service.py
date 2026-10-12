@@ -37,7 +37,7 @@ from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import PresignAudience, S3Client
 
 
 class UnknownJobTypeError(Exception):
@@ -109,7 +109,7 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #
 # There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
 # dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# CLAUDE.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
+# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
 # than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
 # keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
 # both halves have to change together: add the lockfile here and stop excluding it there, and the
@@ -1201,9 +1201,10 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    # Generate presigned URLs for each object to be downloaded
+    # Generate presigned URLs for each object to be downloaded. The fl-api fetches them over the
+    # docker network, so they are signed for the internal endpoint, not the browser-facing one.
     try:
-        urls = [s3.get_presigned_url(f) for f in files]
+        urls = [s3.get_presigned_url(f, audience=PresignAudience.INTERNAL) for f in files]
         return urls
     except Exception as e:
         error_msg = f"Failed to generate presigned URLs: {e}"
@@ -1330,8 +1331,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
-            f"already stopped — nothing to abort."
+            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
         )
         return
 

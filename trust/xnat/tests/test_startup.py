@@ -14,137 +14,18 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
-ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
-PLUGIN_PREFIX = "xnat-1.10.0/plugins"
-REQUIRED_PLUGIN_NAMES = (
-    "batch-launch-test.jar",
-    "container-service-test.jar",
-    "dicom-query-retrieve-test.jar",
-)
 
 
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body)
     path.chmod(0o755)
-
-
-def _write_jar(path: Path) -> Path:
-    """Write a minimal but genuinely valid zip, standing in for a plugin jar.
-
-    The cache check validates archive structure, so a zero-byte file no longer counts as a present
-    plugin — which is the whole point of the guard these fixtures exercise.
-    """
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-    return path
-
-
-def _aws_stub_writing_jars(template: Path, names: tuple[str, ...]) -> str:
-    """Shell body for a fake `aws` that populates the sync destination with valid jars."""
-    copies = "; ".join(f'cp "{template}" "$dest/{name}"' for name in names)
-    return f'dest="$4"; mkdir -p "$dest"; {copies}'
-
-
-def _plugin_env(tmp_path: Path, aws_body: str) -> dict[str, str]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "aws", f"#!/bin/sh\nset -eu\n{aws_body}\n")
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-
-
-def _run_plugin_check(plugin_dir: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(ENSURE_PLUGINS), str(plugin_dir), "test-artifacts", PLUGIN_PREFIX],
-        check=False,
-        capture_output=True,
-        env=env,
-        text=True,
-    )
-
-
-def test_plugin_check_skips_aws_for_matching_complete_cache(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in REQUIRED_PLUGIN_NAMES:
-        _write_jar(plugin_dir / name)
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    env = _plugin_env(tmp_path, 'echo "AWS must not be called" >&2; exit 99')
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert "Skipping S3 sync" in result.stdout
-
-
-def test_plugin_check_downloads_and_validates_fresh_cache(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert (plugin_dir / ".s3-prefix").read_text().strip() == PLUGIN_PREFIX
-
-
-def test_plugin_check_propagates_sync_failure(tmp_path: Path) -> None:
-    result = _run_plugin_check(tmp_path / "plugins", _plugin_env(tmp_path, "exit 42"))
-
-    assert result.returncode == 42
-
-
-def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(
-        tmp_path,
-        _aws_stub_writing_jars(template, ("batch-launch-test.jar", "container-service-test.jar")),
-    )
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode != 0
-    assert "dicom-query-retrieve-" in result.stdout
-
-
-def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
-    """A zero-byte jar satisfies a filename check but boots an XNAT with no plugin routes.
-
-    Dev bind-mounts this directory into the running container, so accepting it would surface much
-    later as a readiness timeout blamed on the DQR plugin.
-    """
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in REQUIRED_PLUGIN_NAMES:
-        _write_jar(plugin_dir / name)
-    (plugin_dir / REQUIRED_PLUGIN_NAMES[1]).write_bytes(b"")
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert "Skipping S3 sync" not in result.stdout, "a corrupt cached jar was accepted as present"
-
-
-def test_plugin_check_rejects_a_corrupt_download(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    corrupt = 'dest="$4"; mkdir -p "$dest"; ' + "; ".join(
-        f': > "$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES
-    )
-
-    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, corrupt))
-
-    assert result.returncode != 0
 
 
 def _readiness_env(
@@ -214,9 +95,7 @@ def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> 
 def test_readiness_probe_authenticates_against_the_plugin_route(tmp_path: Path) -> None:
     """The gate is only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
     argv_log = tmp_path / "curl-argv"
-    result = _run_readiness(
-        _readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"')
-    )
+    result = _run_readiness(_readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"'))
 
     assert result.returncode == 0, result.stderr
     recorded = argv_log.read_text()
@@ -256,12 +135,16 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     """
     argv_log = tmp_path / "curl-argv"
     curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; '
-        'case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
+        f'printf "%s\\n" "$*" >> "{argv_log}"; case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
     )
 
     result = _run_readiness(
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -286,7 +169,12 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     )
 
     result = _run_readiness(
-        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+        _readiness_env(
+            tmp_path,
+            curl_body,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -310,8 +198,8 @@ def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
             timeout="0",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -327,8 +215,8 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
             tmp_path,
             f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
             timeout="900",
-            initial_password="initial",
-            rotated_password="rotated",
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
@@ -360,8 +248,8 @@ def test_dev_up_xnat_validates_the_plugin_cache_before_tearing_xnat_down() -> No
     """A failed download must not leave the trust with a torn-down XNAT and no replacement."""
     stdout = _dry_run_up_xnat().stdout
 
-    assert "ensure_plugins.sh" in stdout
-    assert stdout.index("ensure_plugins.sh") < stdout.index("xnat-reset")
+    assert "xnat_artifacts.sh check plugin" in stdout
+    assert stdout.index("xnat_artifacts.sh check plugin") < stdout.index("xnat-reset")
 
 
 @pytest.mark.parametrize(
@@ -429,181 +317,12 @@ def test_an_empty_resolve_image_override_cannot_swallow_the_next_flag() -> None:
 def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     """Only the development stack bind-mounts plugins; elsewhere they are baked into the image.
 
-    Running the download unconditionally broke the documented on-prem bring-up, which has neither
-    FLIP_ARTIFACTS_BUCKET_NAME nor any need for the cache.
+    An on-prem or EC2 trust host never prepares the dev cache, so checking it there would fail a
+    bring-up that has no use for it.
     """
     for prod in ("true", "stag"):
         stdout = _dry_run_up_xnat(PROD=prod).stdout
-        assert "ensure_plugins.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
-
-
-@pytest.mark.parametrize(
-    "bucket",
-    [
-        pytest.param("", id="unset"),
-        # .env.development.example ships this value, so a fresh clone reaches the download with it
-        # still in place. It is non-empty, so an emptiness check passes it through to `aws s3 sync`,
-        # which fails on bucket-name validation instead of naming the variable to set.
-        pytest.param("<your-xnat-artifacts-bucket-name>", id="placeholder"),
-    ],
-)
-def test_plugin_download_names_the_variable_it_needs(bucket: str) -> None:
-    result = subprocess.run(
-        ["make", "xnat-plugins-download", f"FLIP_ARTIFACTS_BUCKET_NAME={bucket}"],
-        cwd=XNAT_DIR,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    assert result.returncode != 0
-    assert "FLIP_ARTIFACTS_BUCKET_NAME" in result.stdout
-    assert ".env.development" in result.stdout, "should say where to set it"
-    assert "Usage:" not in result.stdout, "leaked the script's usage line instead of naming the var"
-    assert "aws" not in result.stderr.lower(), "reached the S3 sync instead of failing at the guard"
-
-
-def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> None:
-    """`make -C trust up-trust` reaches up-xnat, which in development needs this in its env.
-
-    The bucket name is seeded as a *makefile* variable rather than on the command line, because
-    make auto-exports command-line variables — that route would pass whether or not the export
-    directive exists, so it would prove nothing. ``trust/Makefile`` gets its real value from an
-    ``-include``d env file, which is likewise not auto-exported.
-
-    The assertion is on *presence*, not on the seeded value. Asserting the value fails on any
-    checkout with a populated ``.env.development``, because the real bucket name from that file
-    wins over the seed — so the test used to pass in CI (clean checkout, no env file) and fail on
-    a configured developer machine, which is exactly backwards (FLIP#970).
-
-    Presence alone is still a real assertion. Verified against GNU Make: neither an ``-include``d
-    nor an ``--eval``'d variable is exported on its own, so *whichever* value arrives, it can only
-    have got there through the ``export`` directive under test::
-
-        -include'd + export  -> from-env-file      -include'd, no export  -> NOT-EXPORTED
-        wrapper'd  + export  -> probe-bucket       wrapper'd,  no export  -> NOT-EXPORTED
-
-    The seed and the probe target are delivered as a wrapper makefile on stdin (``-f -``)
-    rather than through ``--eval``, which GNU Make only grew in 3.82: macOS ships 3.81, where
-    ``--eval`` is rejected as an unrecognized option and the probe prints nothing — the test
-    then failed on every Mac while passing in CI. An ``-f``'d assignment is no more auto-exported
-    than an ``--eval``'d one, so the value can still only reach the sub-make environment through
-    the ``export`` directive under test.
-
-    **The ``-f`` order is load-bearing.** ``trust/Makefile`` derives
-    ``MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))`` and resolves
-    ``FL_PROVISIONED_DIR`` against it. Make materialises a stdin makefile as a temp file, so
-    passing the wrapper first (``-f -`` alone, with the real makefile pulled in by an ``include``)
-    puts ``/tmp/GmXXXXXX`` at the head of ``MAKEFILE_LIST``; ``MAKEFILE_DIR`` becomes ``/tmp/`` and
-    ``FL_PROVISIONED_DIR`` resolves against ``/`` — measured as
-    ``/fl-services/nvflare/provision/workspace-dev``. ``--eval`` left ``MAKEFILE_LIST`` untouched,
-    so this is the one axis on which the two are *not* equivalent, and the harness was parsing
-    ``trust/Makefile`` in a state no real invocation produces. Passing the real makefile first and
-    the wrapper second keeps ``$(firstword …)`` as ``Makefile`` and ``MAKEFILE_DIR`` correct. The
-    wrapper must then NOT ``include Makefile`` itself, or make reads it twice and emits an
-    "overriding recipe for target" warning per duplicated rule (29 of them, measured).
-
-    Reading the wrapper second also flips which assignment wins: its seed is parsed after the
-    ``-include``d env file, so ``probe-bucket`` now wins on a configured checkout too. The
-    assertion stays on *presence* rather than the value, so it proves the same thing either way.
-    """
-    probe_makefile = (
-        # Seeds a value for the CI case, where no env file supplies one. Read after the real
-        # makefile, so this seed wins; presence is what is asserted, so either value proves it.
-        "FLIP_ARTIFACTS_BUCKET_NAME = probe-bucket\n"
-        "__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED\n"
-    )
-    result = subprocess.run(
-        [
-            "make",
-            "-C",
-            "trust",
-            # Real makefile first so MAKEFILE_DIR points at trust/; wrapper second so its seed
-            # still wins. See the docstring — the order is not cosmetic.
-            "-f",
-            "Makefile",
-            "-f",
-            "-",
-            # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
-            # .env.development to supply one.
-            "FL_BACKEND=nvflare",
-            "__probe",
-        ],
-        cwd=REPO_ROOT,
-        input=probe_makefile,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    combined = result.stdout + result.stderr
-    assert "NOT-EXPORTED" not in result.stdout, (
-        "FLIP_ARTIFACTS_BUCKET_NAME did not reach the sub-make environment — the "
-        "`export FLIP_ARTIFACTS_BUCKET_NAME` directive in trust/Makefile is missing. Without it "
-        f"the dev XNAT plugin download runs against a bucket-less S3 URI.\n{combined}"
-    )
-    # Guards the guard: a make failure that printed neither the value nor NOT-EXPORTED would
-    # otherwise satisfy the assertion above by saying nothing at all.
-    assert result.stdout.strip(), f"the probe target produced no output at all\n{combined}"
-
-
-def _aws_export_probe(**caller_env: str) -> str:
-    """Runs a probe target under ``trust/Makefile`` and reports the child's AWS environment.
-
-    Args:
-        **caller_env: Variables to set in make's own environment, as an operator's shell would.
-            Both AWS names are stripped first so the host's real values cannot mask the result.
-
-    Returns:
-        str: The probe target's stdout.
-    """
-    probe_makefile = "__probe: ; @env | grep -E '^AWS_(PROFILE|REGION)=' || echo NONE-EXPORTED\n"
-    env = {k: v for k, v in os.environ.items() if k not in ("AWS_PROFILE", "AWS_REGION")}
-    env.update(caller_env)
-    result = subprocess.run(
-        ["make", "-C", "trust", "-f", "Makefile", "-f", "-", "FL_BACKEND=nvflare", "__probe"],
-        cwd=REPO_ROOT,
-        input=probe_makefile,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=env,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result.stdout
-
-
-def test_undefined_aws_names_are_not_exported_as_empty() -> None:
-    """A bare ``export`` on an undefined name defines it empty and exports ``AWS_PROFILE=``.
-
-    ``-include ../$(MAIN_ENV_FILE)`` silently skips a missing file, and a developer may comment
-    either key out to fall through to the default profile or to ambient SSO credentials — so both
-    are routinely undefined here. Empty is worse than absent for the AWS CLI, and the two fail
-    differently: ``AWS_PROFILE=`` gives "The config profile () could not be found" instead of
-    falling back to the default credential chain, and ``AWS_REGION=`` shadows the region the
-    profile defines in ``~/.aws/config``, giving "Invalid endpoint: https://s3..amazonaws.com".
-    Both land on the ``make -C trust up-trust`` path this export exists to repair.
-    """
-    assert "NONE-EXPORTED" in _aws_export_probe(), (
-        "an undefined AWS_PROFILE/AWS_REGION reached the sub-make environment as an empty value — "
-        "the ifdef guards in trust/Makefile are missing, and a bare `export` DEFINES an undefined "
-        "name as empty (origin=file) rather than passing a value through"
-    )
-
-
-def test_defined_aws_names_still_reach_the_sub_make() -> None:
-    """The ifdef guards must not cost the pass-through the export exists for.
-
-    Without these in the child environment the artifacts bucket NAME reaches the XNAT sub-make but
-    the credentials to read it do not, and the dev plugin sync dies on "Unable to locate
-    credentials".
-    """
-    out = _aws_export_probe(AWS_PROFILE="probe-profile", AWS_REGION="eu-west-2")
-    assert "AWS_PROFILE=probe-profile" in out, f"AWS_PROFILE did not reach the sub-make\n{out}"
-    assert "AWS_REGION=eu-west-2" in out, f"AWS_REGION did not reach the sub-make\n{out}"
+        assert "xnat_artifacts.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
@@ -612,7 +331,7 @@ def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
             "make",
             "-n",
             "e2e_smoke",
-            "MODEL_FILES_DIR=fl-tutorials/example/app_files",
+            "MODEL_FILES_DIR=fl-tutorials/example/app_files",  # pragma: allowlist secret
             "QUERY_FILE=fl-tutorials/example/query.sql",
         ],
         cwd=REPO_ROOT,
@@ -635,7 +354,7 @@ def _kit_tree(tmp_path: Path) -> Path:
     here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    for fragment in ("fl_backend.mk", "instance.mk"):
+    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk"):
         shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)
@@ -702,9 +421,7 @@ def test_up_loops_succeed_when_every_trust_starts(tmp_path: Path) -> None:
     """Positive control: the abort assertion only means something if the loop can pass."""
     trust_dir = _kit_tree(tmp_path)
 
-    status, calls = _run_up_loop(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", tmp_path, child_exit=0
-    )
+    status, calls = _run_up_loop(REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", tmp_path, child_exit=0)
 
     assert status == 0
     assert calls == 2, "both fixture kits should have been started"
@@ -803,9 +520,7 @@ def _docker_stub(
     return _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FLIP_INSTANCE": ""})
 
 
-def _run_kit_target(
-    makefile: Path, target: str, cwd: Path, env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _run_kit_target(makefile: Path, target: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run one KIT-selected target against the fixture tree, with docker stubbed out."""
     return subprocess.run(
         ["make", "-f", str(makefile), target, "KIT=AAA", "FL_BACKEND=nvflare"],
@@ -819,9 +534,7 @@ def _run_kit_target(
 
 
 @pytest.mark.parametrize("target", SLOT_GUARDED_TARGETS)
-def test_slot_guard_refuses_every_kit_target_when_another_kit_holds_the_project(
-    tmp_path: Path, target: str
-) -> None:
+def test_slot_guard_refuses_every_kit_target_when_another_kit_holds_the_project(tmp_path: Path, target: str) -> None:
     """A slot held by a different kit must stop every target that drives that compose project.
 
     Guarding only `up-trust` left `restart-trust` (which reaches `down-trust` first) able to run
@@ -850,9 +563,7 @@ def test_slot_guard_allows_the_same_kit_from_another_checkout(tmp_path: Path) ->
     to keep working, which is why the comparison is by kit-file basename.
     """
     trust_dir = _kit_tree(tmp_path)
-    env = _docker_stub(
-        tmp_path, container_ids="c0ffeec0ffee", environment_file=SAME_KIT_OTHER_CHECKOUT
-    )
+    env = _docker_stub(tmp_path, container_ids="c0ffeec0ffee", environment_file=SAME_KIT_OTHER_CHECKOUT)
 
     result = _run_kit_target(REPO_ROOT / "trust" / "Makefile", "down-fl-clients-kit", trust_dir, env)
 
@@ -932,9 +643,7 @@ def test_xnat_network_guard_refuses_a_trust_on_a_different_instance(tmp_path: Pa
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode != 0, f"XNAT attached to a network the trust is not on\n{combined}"
@@ -958,9 +667,7 @@ def test_xnat_network_guard_ignores_another_instances_trust(tmp_path: Path) -> N
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode == 0, f"guard judged instance b against the default instance\n{combined}"
@@ -977,9 +684,7 @@ def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_pat
     )
     env["FLIP_INSTANCE"] = "b"
 
-    result = _run_kit_target(
-        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
-    )
+    result = _run_kit_target(REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env)
 
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
@@ -995,9 +700,7 @@ def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_pat
         ("/opt/kits/../kits", "/opt/kits"),
     ],
 )
-def test_abs_or_relative_to_only_joins_relative_values(
-    tmp_path: Path, value: str, expected: str
-) -> None:
+def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: str, expected: str) -> None:
     """An already-absolute path must pass through, not be welded onto the base.
 
     `$(abspath)` only normalises the string it is handed, so joining unconditionally turned

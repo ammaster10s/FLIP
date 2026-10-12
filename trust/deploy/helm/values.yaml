@@ -12,6 +12,17 @@
 # ---------------------------------------------------------------------------
 # Global trust-wide configuration
 # ---------------------------------------------------------------------------
+global:
+  image:
+    # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
+    # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
+    # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
+    # upstream versions of their own and never follow it. omop-db, orthanc and the XNAT trio can
+    # be held back from it with their `image.pin` (the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG).
+    tag: ""
+
 trustName: "Trust_1"
 trustNumber: 1
 environment: production
@@ -19,30 +30,124 @@ logLevel: INFO
 
 # AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
 # vocabulary load — which read from S3 with the operator credentials mounted at
-# omopDb.initJob.hostAwsMount / orthanc.initJob.hostAwsMount. Not used by the FL client:
+# omopDb.vocabLoad.hostAwsMount. Not used by the FL client:
 # it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
-# S3 bucket for uploaded federated data (mounted by FL client)
+# S3 bucket for uploaded federated data (s3://…). Leave empty to omit the variable
+# from the FL client (flip-utils then uses its default); an empty string is rejected.
 uploadedFederatedDataBucket: ""
 
 # FL backend selection — switches image, command, volumes, env for the FL client
 # Supported values: "nvflare" | "flower"
 flBackend: "nvflare"
 
-# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face), restored by the
-# OMOP and Orthanc init jobs when no S3 bucket is configured. One value covers both: a data
-# version is a git TAG on that dataset (FLIP pins it in trust/.data_version) and every archive is
-# fetched at that tag from an unversioned path. Also the version suffix of the default S3 archive
-# names below, which is where a version still has to live in a filename.
+# ---------------------------------------------------------------------------
+# Trust governance policy (FLIP#1259)
+# ---------------------------------------------------------------------------
+# This trust's own governance document, carried here as the TOML *document itself* (not a
+# path — a path on the deploy host means nothing inside a pod). data-access-api reads its
+# [disclosure] and [access] sections; on NVFLARE the fl-client's governance-extract init
+# container hands the client its [fl_privacy.nvflare] section and nothing else (researcher
+# code runs in the client). Flower reads no site privacy section, so there the document
+# reaches data-access-api only, and a document carrying one is refused by sync-kit.
 #
-# BREAKING (FLIP#1100): replaces omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION becomes TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
+# Setting it is OPT-IN. Empty — the default — means the platform defaults apply exactly as
+# before (COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* only): no ConfigMap, no volume, no
+# mount, no env var, no checksum annotation.
+#
+# Operator-owned: the hub can neither set nor read it. A policy can only TIGHTEN what the
+# platform allows — a document that lowers the cohort floor, names an unknown section/key,
+# or describes an invalid filter stops the service at startup rather than being ignored.
+#
+# Set it through the kit, not by hand: point ACCESS_POLICY_FILE at the document in
+# trust/.env.<CODE>.<env>, validate it, and deploy —
+#   make -C trust check-governance KIT=<CODE> PROD=<env>
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>   (or upgrade-trust-k8s)
+# Both targets regenerate k8s-trust-<CODE>.yaml from the kit first (sync-kit), which embeds
+# the document, validates both halves with the services' own loaders, and writes
+# flPrivacyChecksum. A document passed with `helm upgrade --set-file governance.document=…`
+# is NOT kept: the next deploy-trust-k8s / upgrade-trust-k8s passes the -f files without
+# --reuse-values and the policy silently disappears.
+#
+# Rolling: data-access-api rolls on any edit (checksum of the whole document). The NVFLARE
+# fl-client rolls only when its [fl_privacy.nvflare] section changes — flPrivacyChecksum —
+# and rolling it interrupts any job it is running, so apply such edits between runs.
+governance:
+  document: ""
+  # sha256 of the fl-client's extracted section, written by sync-kit. Empty = the whole
+  # document's checksum stands in (rolls the client on every edit, never misses one).
+  flPrivacyChecksum: ""
+
+# Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face). One value
+# covers both stores: a data version is a git TAG on that dataset (FLIP pins it in
+# trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
+# and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
+#
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
+# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260901"
+  version: "20260917"
   hfRepo: "aicentreflip/trust-data"
+  # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
+  # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
+  # and — when `orthanc` is on — the matching studies into Orthanc over its REST API. It
+  # replaced the pgdata / Orthanc volume snapshots (the former omopDb.initJob / orthanc.initJob):
+  # both stores start on empty PVCs and are filled here. Idempotent on every upgrade: only the
+  # listed projects' rows are replaced, the vocabulary load skips itself when present, Orthanc
+  # dedupes on SOPInstanceUID. The licensed core vocabulary is still omopDb.vocabLoad.
+  seed:
+    enabled: true
+    omop: true
+    # Off by default: the default project is ~2 GB of DICOM per trust, posted instance by
+    # instance (minutes, once — the PVC persists). Enable for a trust whose PACS must hold the
+    # mock studies (an imaging pull needs them); CI and API-only clusters leave it off.
+    orthanc: false
+    # One list feeds both halves, so it holds only projects the dataset publishes tables AND a
+    # DICOM set for. Since FLIP#1221 that is cxr_project: spleen and brain_mri publish tables
+    # only and regenerate their DICOMs locally, which no in-cluster hook can do.
+    projects: "cxr_project"
+    # The dataset partition (source_trust) this trust receives; defaults to trustNumber. The
+    # two are separate axes — see trust/README.md "Which partition a trust is seeded with".
+    sourceTrust: ""
+    numTrusts: 2
+    # The FLIP git ref the seed tools (trust/omop-db's omop_db_tools, trust/orthanc/
+    # seed_orthanc.py) are installed from at run time — the chart ships no copy and no
+    # image of them. Use the ref your service images were built from: `main` for :prod
+    # tags, `develop` for :stag, a sha for a pinned deploy.
+    sourceRef: "develop"
+    # uv's official image (python + uv, Debian slim). GHCR carries floating tags only, so the
+    # digest is what pins it: with `digest` set the image is `<repository>@<digest>` and `tag`
+    # is documentation. Refresh with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<tag>`.
+    image:
+      repository: ghcr.io/astral-sh/uv
+      tag: "python3.12-bookworm-slim"
+      digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
+      pullPolicy: IfNotPresent
+    # The Apache-licensed DICOM vocabulary bundle on the dataset (omop-vocab/<name>.zip), loaded
+    # before the rows so their imaging concepts resolve even without the core vocabulary.
+    dicomVocabBundle: "vocab_dicom_paulnagy_20260109"
+    # Recovery only. The vocabulary load skips itself when its scaffolding concept is present,
+    # and that concept is committed before the concepts and relationships it precedes — so a Job
+    # killed between them leaves a database that reports itself loaded while holding an
+    # incomplete vocabulary, which every later upgrade then skips. Set true for one upgrade to
+    # reload over it (it duplicates concept_relationship rows, which has no unique key), then
+    # put it back.
+    forceDicomVocab: false
+    # Scratch for the fetched tables, the vocabulary zip and — with `orthanc` on — the DICOM
+    # sets and their extraction (~2 GB + ~2 GB for the two default projects).
+    workDirSize: 8Gi
+    resources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+        ephemeral-storage: 1Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+        ephemeral-storage: 10Gi
 
 # Global image pull secrets (optional — for private registries)
 imagePullSecrets: []
@@ -235,6 +340,9 @@ imagingApi:
 # ---------------------------------------------------------------------------
 dataAccessApi:
   enabled: true
+  # The trust's minimum-cohort disclosure floor (COHORT_QUERY_THRESHOLD). sync-kit writes the
+  # kit's value here; the governance document may raise it but never lower it.
+  cohortQueryThreshold: 10
   image:
     repository: ghcr.io/londonaicentre/data-access-api
     tag: stag
@@ -331,7 +439,7 @@ flClient:
   #
   # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
   # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
-  # in CLAUDE.md — "FL clients intentionally have no Central Hub credentials"), and the
+  # in AGENTS.md — "FL clients intentionally have no Central Hub credentials"), and the
   # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
   # on the node before the workload starts, which is also what a real trust does — so
   # what is deployed here is what is deployed in production.
@@ -349,6 +457,12 @@ flClient:
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
+    # Beats global.image.tag for the FL client alone — the compose stack's DOCKER_FL_TAG.
+    # sync-kit fills it from the kit only when DOCKER_FL_TAG names an immutable image
+    # (vX.Y.Z / sha-…); a dev kit's local `dev` or the floating `stag` leaves the client
+    # on the release pin. The FL images' builds are path-filtered like orthanc's, so a
+    # sha- move usually needs it (`make upgrade-trust-k8s … FL_TAG=`); a release never does.
+    pin: ""
     pullPolicy: Always
   nvflare:
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
@@ -420,6 +534,9 @@ omopDb:
     # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
     # (vocab-free, FLIP#842) images.
     tag: stag
+    # Beats global.image.tag for this one image (the kit's OMOP_DB_TAG): omop-db only
+    # rebuilds when trust/omop-db/** changes, so most sha- tags carry no omop-db image.
+    pin: ""
     pullPolicy: Always
   persistence:
     enabled: true
@@ -459,7 +576,7 @@ omopDb:
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
-  # licences — see trust/omop-db/README.md), so unlike initJob there is no
+  # licences — see trust/omop-db/README.md), so unlike the mock-data seed there is no
   # credential-free fallback. The Job therefore runs only when s3Bucket names a
   # bucket this cluster can read; left empty, the release installs cleanly with
   # NO vocabulary loaded.
@@ -475,11 +592,12 @@ omopDb:
   # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
   # bucket).
   #
-  # AWS *credentials* are deliberately shared with initJob (initJob.awsProfile /
-  # initJob.hostAwsMount) — one place to configure auth, not two. Note the
-  # AWS_PROFILE/region env vars only reach this Job when initJob.hostAwsMount is
-  # enabled; on EKS it relies on IRSA. The bucket itself is a separate key per
-  # job, and sync-kit sets only this one.
+  # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
+  # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
+  # that the snapshot init Jobs are retired (FLIP#1187) — the trust-seed hook
+  # fetches the mock data anonymously. Note the AWS_PROFILE/region env vars only
+  # reach this Job when vocabLoad.hostAwsMount is enabled; on EKS it relies on
+  # the node role.
   #
   # enabled: false is only for keeping an in-cluster omop-db while loading the
   # vocabulary by hand — an external database (omopDb.enabled: false) already
@@ -538,29 +656,17 @@ omopDb:
         cpu: "500m"
         memory: 512Mi
         ephemeral-storage: 12Gi
-  initJob:
-    enabled: true
-    s3Bucket: ""
-    # S3 archive file name. When empty, derived from trust name + trustData.version:
-    #   {trustName}_pgdata_{trustData.version}.tar.gz
-    # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_pgdata_20260729.tar.gz"
-    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_pgdata.tar
-    # at the trustData.version tag.)
-    archiveName: ""
-    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    # AWS credentials for the bundle fetch on clusters whose node holds the operator's
+    # SSO session (k3s, minikube's `none` driver); IRSA on EKS. The profile only reaches
+    # the Job when hostAwsMount is enabled.
     awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication.
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
-    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
-    # shipped value is one developer's home directory and silently wrong on every
-    # other machine. Set it explicitly when enabling, e.g.
-    #   --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws
-    # Left empty while enabled, rendering fails with a named error rather than
-    # mounting a path that does not exist on this node.
-    # On kind the node is a container and your ~/.aws is not in it: add an
-    # extraMounts entry to the kind config and point hostPath at the node-side
-    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
+    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any shipped
+    # value is one developer's home directory and silently wrong on every other machine.
+    # Set it explicitly when enabling, e.g. --set omopDb.vocabLoad.hostAwsMount.hostPath=$HOME/.aws
+    # Left empty while enabled, rendering fails with a named error rather than mounting a
+    # path that does not exist on this node. On kind the node is a container and your
+    # ~/.aws is not in it: add an extraMounts entry to the kind config and point hostPath
+    # at the node-side path (README, "Local clusters (kind)"), or pre-seed and leave this off.
     hostAwsMount:
       enabled: false
       hostPath: ""
@@ -578,6 +684,9 @@ orthanc:
   image:
     repository: ghcr.io/londonaicentre/orthanc
     tag: stag
+    # Beats global.image.tag for this one image (the kit's ORTHANC_TAG): orthanc only
+    # rebuilds when trust/orthanc/** changes, so most sha- tags carry no orthanc image.
+    pin: ""
     pullPolicy: Always
   replicas: 1
   service:
@@ -604,38 +713,15 @@ orthanc:
     limits:
       memory: "1Gi"
       cpu: "500m"
-  initJob:
-    enabled: false
-    s3Bucket: ""
-    # S3 archive file name. When empty, derived from trust name + trustData.version:
-    #   {trustName}_orthanc_data_{trustData.version}.tar.gz
-    # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_orthanc_data_20260729.tar.gz"
-    # (Only the S3 path uses it; the Hugging Face fallback fetches trust<N>_orthanc_data.tar
-    # at the trustData.version tag.)
-    archiveName: ""
-    # AWS profile to use for S3 authentication (uses SSO cached credentials)
-    awsProfile: "default"
-    # Mount host's ~/.aws directory for SSO-based S3 authentication.
-    # Enabled for local K8s clusters; disable for EKS (use IRSA instead).
-    # hostPath has NO default: it is the ~/.aws of whoever runs the *node*, so any
-    # shipped value is one developer's home directory and silently wrong on every
-    # other machine. Set it explicitly when enabling, e.g.
-    #   --set orthanc.initJob.hostAwsMount.hostPath=$HOME/.aws
-    # Left empty while enabled, rendering fails with a named error rather than
-    # mounting a path that does not exist on this node.
-    # On kind the node is a container and your ~/.aws is not in it: add an
-    # extraMounts entry to the kind config and point hostPath at the node-side
-    # path (README, "Local clusters (kind)"), or pre-seed and leave this off.
-    hostAwsMount:
-      enabled: false
-      hostPath: ""
-
 # ---------------------------------------------------------------------------
 # XNAT — Neuroimaging platform (multi-component)
 # ---------------------------------------------------------------------------
 xnat:
   enabled: true
+  image:
+    # Beats global.image.tag for xnat-web, xnat-db and xnat-nginx together (the kit's
+    # XNAT_TAG, the same role it plays for the compose stack in trust/xnat/Makefile).
+    pin: ""
   initJob:
     enabled: true
   web:
@@ -648,17 +734,30 @@ xnat:
     # that leg (FLIP#993).
     dicomAet: XNAT
     dicomPort: 8104
-    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
-    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
-    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
-    # Orthanc, which reaches the receiver over the cluster network.
+    # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
+    # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association
+    # back to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the
+    # mocked Orthanc, which reaches the receiver over the cluster network.
     # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
     # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
     dicomNodePort: ""
+    # The DICOM SCP gets its own Service, separate from the web-UI `service` below — so exposing it
+    # externally (NodePort or LoadBalancer) never also exposes the Tomcat/web console. ClusterIP
+    # (default) is only valid for the mocked Orthanc PACS (see validatePacsReachable); a real PACS
+    # needs NodePort (with dicomNodePort set, subject to the node-port-range constraint above) or
+    # LoadBalancer — the only two options that reach a PACS outside the cluster.
+    dicomService:
+      type: ClusterIP
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
+    # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
+    # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
+    # field used to be the one that exposed DICOM, so an upgrade of an install that set it to
+    # NodePort for that reason would otherwise put the admin console on a node address instead.
+    # Reach the console with `kubectl port-forward`.
     service:
       port: 8080
       type: ClusterIP
@@ -688,19 +787,27 @@ xnat:
       image: python:3.12-slim
       # These URLs are the single source of the plugin roster: the download
       # init-container derives each jar's filename from the URL, so a version
-      # bump is a one-line change here. Keep them in step with the Swarm roster
-      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # bump is a one-line change here. Keep them identical to the plugin lines of
+      # trust/xnat/artifacts.manifest, which the Swarm image is built from (pinned by
+      # trust/xnat/tests/test_artifacts.py) — the chart mounts an emptyDir over
       # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
       # rather than adding to them, and the XNAT_VERSION compatibility matrices
       # apply to whatever is listed here.
       # XNAT 1.10.0 requires DQR 3.0.0 and Container Service 3.8.x:
       #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
       #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
+      # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
+      #   https://wiki.xnat.org/xnat-ohif-viewer
+      # Convention, relied on by `make status`: each key is the jar's basename up to the
+      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
+      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
+      # deploys fine, but a version skew under it reports as a missing download rather
+      # than a stale jar, sending the operator to init-container logs that are clean.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
-        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
+        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
     env:
       XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"
@@ -874,7 +981,10 @@ networkPolicies:
   # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
   # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
   # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
-  # Scope this to the PACS itself, not the whole trust network.
+  # Scope this to the PACS itself, not the whole trust network. validatePacsReachable fails the
+  # render if it sees the literal 0.0.0.0/0 here — a tripwire, not a CIDR validator: Helm cannot
+  # evaluate a CIDR, so 0.0.0.0/1, ::/0 and anything else that still reaches the PACS pass it, and
+  # the rule in this comment is what forbids them.
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
   allowedIngressCIDRsWithPorts: []
   # - cidrs:

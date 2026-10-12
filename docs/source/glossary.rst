@@ -28,6 +28,12 @@ Glossary
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
 
+    **Landing Zone Accelerator (LZA)**
+      AWS's reference implementation of a multi-account estate with centrally managed network,
+      guardrails and logging. FLIP's Central Hub can be deployed onto such an estate as its
+      platform-managed mode (``PROD=lza``), where the workload account discovers the network it is
+      given and ingress arrives through the estate's edge. See :ref:`deploy-central-hub-aws-lza`.
+
     **MAP**
       MONAI Application Package. An OCI container that wraps a trained model as a DICOM-in,
       DICOM-out inference pipeline, built with the MONAI Deploy App SDK. It is the packaging format
@@ -79,6 +85,9 @@ Glossary
       approved subset of a Trust's data. FLIP can be deployed inside one as an alternative to the
       on-premise model, in which case cohort queries operate on the pre-loaded subset rather than the
       full Trust population. See :ref:`tre-deployment`.
+
+    **Trust Admin**
+      A FLIP user who approves or declines projects on behalf of one participating Trust, and otherwise has ``researcher`` access. While a Trust has a Trust Admin, only its Trust Admins decide its projects; a Trust without one is decided by a Central Hub administrator. See :ref:`trust-admin-guide`.
 
     **XNAT**
       XNAT is an open-source imaging informatics platform used in FLIP to store, manage and access imaging data for research workflows. For more information on XNAT, please see the `documentation <https://wiki.xnat.org/documentation>`_.

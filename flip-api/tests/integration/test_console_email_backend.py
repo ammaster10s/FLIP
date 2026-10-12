@@ -34,24 +34,24 @@ from flip_api.db.models.user_models import AccessRequest
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.utils.constants import (
     ACCESS_REQUEST_TEMPLATE_NAME,
-    IMAGING_CREDENTIALS_TEMPLATE_NAME,
+    IMAGING_INVITE_TEMPLATE_NAME,
     IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
 )
-from flip_api.utils.encryption import XNAT_PASSWORD_CONTEXT, encrypt
+from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 
-XNAT_PASSWORD = "hunter2-the-password"  # pragma: allowlist secret
+# The invite link PT-079 sends in place of a password: an XNAT alias-token path, whose
+# a=/s= pair is a bearer capability to set that user's password.
+XNAT_SETUP_PATH = "/app/template/XDATScreen_UpdateUser.vm?a=alias123&s=tok3nva1ue"  # pragma: allowlist secret
 
 
 @pytest.fixture(autouse=True)
 def console_backend(monkeypatch):
     """Pin the console backend for this module, mirroring ``ses_send_email_recorder``.
 
-    ``DevSettings`` already defaults to ``console`` (asserted on the field
-    itself in ``tests/unit/test_config.py``), but a developer may set
-    ``EMAIL_BACKEND=ses`` in ``.env.development`` — the config comment
-    explicitly invites that — which would otherwise turn this whole module red
-    and attempt real SES calls. Pin the code path under test rather than
-    depending on ambient config.
+    ``DevSettings`` pins ``console`` (asserted on the field itself in
+    ``tests/unit/test_config.py``), but the SES round trips in this suite set
+    ``EMAIL_BACKEND=ses`` on the shared settings singleton, so this module pins
+    the code path under test rather than depending on ambient state.
     """
     monkeypatch.setattr(get_settings(), "EMAIL_BACKEND", "console")
 
@@ -78,10 +78,10 @@ def test_request_access_succeeds_and_logs_instead_of_sending(client: TestClient,
     assert persisted.email_notified is True
 
 
-def test_imaging_notifications_log_both_templates_without_leaking_the_password(
+def test_imaging_notifications_log_both_templates_without_leaking_the_invite_link(
     session, trust_factory, project_factory, caplog
 ):
-    """Both XNAT emails are logged, and the decrypted password never is."""
+    """Both XNAT emails are logged, and the decrypted invite link never is."""
     trust = trust_factory()
     project = project_factory()
     session.add(trust)
@@ -103,7 +103,7 @@ def test_imaging_notifications_log_both_templates_without_leaking_the_password(
                 "created_users": [
                     {
                         "username": "newbie@example.com",
-                        "encrypted_password": encrypt(XNAT_PASSWORD, context=XNAT_PASSWORD_CONTEXT),
+                        "encrypted_setup_path": encrypt(XNAT_SETUP_PATH, context=XNAT_SETUP_PATH_CONTEXT),
                         "email": "newbie@example.com",
                     }
                 ],
@@ -117,8 +117,9 @@ def test_imaging_notifications_log_both_templates_without_leaking_the_password(
     with caplog.at_level(logging.INFO, logger="uvicorn"):
         handle_imaging_task_completed(task, session)
 
-    assert IMAGING_CREDENTIALS_TEMPLATE_NAME in caplog.text
+    assert IMAGING_INVITE_TEMPLATE_NAME in caplog.text
     assert IMAGING_PROJECT_ACCESS_TEMPLATE_NAME in caplog.text
-    # The credentials template carries the user's decrypted XNAT password.
-    # Logging it would turn a dev convenience into a credential leak.
-    assert XNAT_PASSWORD not in caplog.text
+    # The invite template carries the user's decrypted alias-token path, which is a
+    # bearer capability to set their password. Logging it would turn a dev convenience
+    # into a credential leak, exactly as an emailed password would have.
+    assert XNAT_SETUP_PATH not in caplog.text

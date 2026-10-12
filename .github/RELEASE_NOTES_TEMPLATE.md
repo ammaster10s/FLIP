@@ -15,38 +15,63 @@
 
 ## :sparkles: Highlights
 
-- **FL frameworks move to current GA releases** — NVFLARE 2.8.0 → 2.9.0 (#1174, via the 2.8.1 interim in #1046) and Flower → 1.36.0 (#1175).
-- **Real Trust PACS support** (#994) — XNAT's DICOM receiver and web UI get separate host ports (`XNAT_PORT` / `XNAT_WEB_PORT`), the upstream PACS is configured per trust (`PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT`, retrieval throttle, extended-negotiation flag), and imaging-api reads the PACS id from XNAT instead of assuming 1.
-- **Trust data: one copy, versions as tags** (#1101) — `aicentreflip/trust-data` holds every artefact once at an unversioned path; a data version is a git tag pinned by the single `trust/.data_version`. The new seed pipeline (`make -C trust seed-trusts PROJECTS=…`) loads any published project into a running trust by `source_trust`. OMOP mock-data generation is reproducible in-tree and gated against the published export (#1097), with the dataset tooling consolidated under `fl-tutorials/datasets/` (#1070).
-- **Terraform runs in CI** (#1082) — OIDC-authenticated plan on every PR touching `deploy/providers/AWS/**`, apply on merge (`develop` → stag, `main` → prod), nightly drift detection, plus a checkov security lint (#1057) and LZA-aligned CloudWatch retention (#1156).
-- **Per-trust FL privacy policy** (#853) — each trust enforces its own NVFLARE site-side `privacy.json`.
-- **Tabular-only projects** (#1129) — a project can opt out of the imaging stage (`has_imaging`), so EHR-only cohorts skip XNAT entirely.
-- **UI** — one Models page with a project filter and unified tables (#1014); consistent per-trust colours and sorted metrics plots (#1012); dependency scoping enforced in CI and Mirage no longer shipped (#1061).
-- **Dev experience** — a second dev hub on one host via `FLIP_INSTANCE` (#958); 13 local-setup blockers fixed across macOS, non-interactive runs and the K8s trust chart (#1010); the published FL images run with any host UID (#1172); SES is out of dev deployments (#1083).
+- **A trust can write its own access rules** (#1297) — an optional governance document, one TOML file per trust (`trust/governance.<CODE>.toml`, worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit. `[disclosure]` can raise the trust's cohort floor above `COHORT_QUERY_THRESHOLD` (never lower it); `[access]` permits or denies an operation per project; `[fl_privacy.nvflare]` sets the NVFLARE client's site privacy filter. The document is operator-owned and mounted read-only: the Central Hub cannot set, read or override it. With no document, nothing changes.
+- **Site upgrades say when a newer release exists** (#1332) — the upgrade verbs name a more recent platform release and its date. If the Central Hub already runs it, the operator can stop and move to it; if not, the verb only warns, because a site must not run ahead of the Central Hub.
 
 ## :warning: Breaking Changes
 
-- **Merging to `main` now applies production infrastructure** (#1082). The previous "don't `make apply` for prod" rule is superseded; the FL quiesce gate holds any apply that would replace `fl-server-net-1` / `fl-api-net-1` until re-dispatched with `fl_quiesced: true`.
-- **Trust-data layout** (#1101): the per-service `trust/omop-db/.data_version` and `trust/orthanc/.data_version` pins are replaced by one `trust/.data_version`, and the versioned filenames (`trust<N>_pgdata_<v>.tar`, `omop-csv/<v>/`) are no longer read — every consumer fetches `resolve/<tag>/<unversioned path>`. Trust hosts must run this release's scripts before the legacy files are removed from the dataset.
-- **XNAT ports** (#994): `XNAT_PORT` is now the DICOM SCP receiver port only; the host-published web UI port is the new `XNAT_WEB_PORT`, and the two must differ. Trust kit files need both.
-- **Flower apps require `config.json`** (#991, #1056): the hub no longer guesses a job type; a missing `config.json` fails loudly instead of defaulting to `standard`. Flower also needs `.toml` in `ALLOWED_MODEL_FILE_EXTENSIONS`.
-- **FL client image scope** (#954): each fl-client mounts only its own net's slice of the images tree; training code paths are unchanged, but host directories must be pre-created writable per net.
-- **NVFLARE 2.9.0** (#1174) carries upstream breaking changes for custom jobs; see the tutorial and template updates in that PR.
-- **Database migration** (#1129): flip-api adds the `has_imaging` column via Alembic; it runs at boot.
+None. A trust without a governance document behaves as on v0.10.0, and nothing in this release changes the hub↔site contract.
+
+## :arrows_counterclockwise: Site upgrade
+
+<!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
+     release their hub runs; this section is how they learn what this release asks of them. -->
+
+<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
+     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
+     Deployment-Mode window, and a site left behind fails every task until it moves. -->
+
+- **Required:** no, if you are on v0.7.0 or later. Upgrade to adopt a governance document (#1297). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
+- **Ordering:** sites at their own pace, before or after the hub — the Central Hub is unchanged in this release. From v0.6.x, hub and sites move together in one Deployment-Mode window.
+- **Refreshed kit needed:** no — the Hub-shared block is unchanged.
+- **Adopting a governance document** (optional, after the upgrade): write `trust/governance.<CODE>.toml`, set `ACCESS_POLICY_FILE` in the kit, check it with `make -C trust check-governance KIT=<CODE>`, and apply it with `make -C trust reload-governance KIT=<CODE>` — never `up-trust` / `restart-trust`, which are first-install verbs. `[fl_privacy.nvflare]` and `FL_SITE_PRIVACY_*` together are refused: use one. On Kubernetes, `sync-kit` validates the document and embeds it in the release (`trust/deploy/helm/README.md`). An EC2 trust driven over a remote Docker endpoint refuses a document in this release.
+- **Operator command**, on the trust host, from your FLIP checkout:
+  ```bash
+  git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
+  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  ```
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites on v0.7.0 or earlier do not have the command until they check out the tag.
 
 ## :seedling: New Features
 
-- Real Trust PACS configuration and DQR (#994); tabular-only projects (#1129); per-trust FL privacy policy (#853).
-- Seed pipeline and tag-versioned trust data (#1101); reproducible OMOP mock-data provenance (#1097); shared `fl-tutorials/datasets/` tree (#1070).
-- One Models page (#1014); torch.jit-free MAP bundle form (#1020); second dev hub (#958); SES removed from dev (#1083); CloudWatch retention aligned with the LZA baseline (#1156).
-- Terraform plan/apply/drift in CI (#1082) with checkov lint (#1057).
+- The trust governance document (#1297): `[disclosure] min_cohort_size`, `[access]` permit/deny rules over project (UUID) and operation — any matching deny denies, otherwise the strictest matching permit applies, and an action the document names but no rule matches is denied — and `[fl_privacy.nvflare]` for the NVFLARE site privacy filter. A denial is answered like a below-threshold cohort, so it reveals nothing about the policy; the rule id goes to the trust's own log. Invalid documents stop the service at startup. `[fl_privacy.flower]` is refused, since nothing enforces it on Flower yet.
+- `make -C trust check-governance` validates a document with the same loader the service uses, and `make -C trust reload-governance` applies an edited one to a live trust without touching its data; data-access-api logs one `[governance] … sha256=…` line at startup, which the reload checks (#1297).
+- The site-upgrade verbs name a newer platform release and its date, and offer it when the Central Hub already runs it. GitHub is advisory: a host that cannot reach it prints one line and carries on (#1332).
 
 ## :bug: Bug Fixes
 
-- **Security**: any authenticated user could read any user's full profile (#943); `callback_urls` is the live CORS allowlist and prod included localhost (#1088); cloud trust EC2 kit fetch — KMS grant, silent no-op and cross-trust key exposure (#1009); the app bundle is now an allowlist, shipping only the app folders plus the backend's root file (#1008).
-- **Trust / imaging**: cohort downloads cached server-side and each FL client scoped to its own net (#954); XNAT dcm2niix pinned to a stale build that silently dropped slices (#981); imaging import status going stale after a failed refresh (#1023); dcm2niix command mismatch mis-reported as a missing plugin (#1094); XNAT bind mounts provisioned as the container uid (#1096); fl-client kit volume ignoring `flBackend` (#1000); soft-deleting a project no longer tries to delete trust imaging (#964).
-- **FL / images**: published NVFLARE images crash-looped unless the host UID was 1000 (#1172); `FLIP_Session` narrowing its NVFLARE base signature (#1034); single-trust hang and job-type guessing (#991); spleen downloader picking cases lexicographically (#1062); spleen enrichment no longer depends on a private repo (#955); `.data_version` path after the datasets move (#1103).
-- **Hub / UI**: first login after MFA enrolment failing for up to 60 s (#1016); metrics plot colours (#1012); flip-ui dependency scoping (#1061) and the typecheck regression (#1076); trust-api `.dockerignore` (#1004); local dev setup blockers (#1010); Ark+ demo re-capture (#1029).
+<!-- Update this section if a fix lands before the cut. -->
+
+- The Helm chart ships only the chart. It had no `.helmignore`, so each release record carried the chart's tests, scripts and any local caches, and a stray cache could push the record past the 1 MiB Secret limit (`Too long`) and fail the upgrade (#1339).
+
+## :white_check_mark: Release checks
+
+<!-- The gates that cannot run in CI: no GitHub-hosted runner has a GPU, and both the suite and the smoke test need real hardware and a full stack. Tick these on the release branch before the tag is cut — this section is the record that the published examples and the platform path were run, and it is shared by both release trains. See *Pre-release checklist* in CONTRIBUTING.md. -->
+
+Tutorial suite, on a GPU host:
+
+- [ ] NVFLARE — `make -C fl-tutorials run-all-tutorials`
+- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
+- [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
+
+Not run for v0.11.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
+
+Full-platform smoke test, against a running deployment:
+
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
+
+Both passed on 29 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-968a60d`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded. Flower reused the NVFLARE run's project.
 
 ## :file_folder: PRs merged in this release
 

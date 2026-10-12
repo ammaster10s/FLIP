@@ -1,9 +1,14 @@
 # Dev-account Terraform root
 
-This directory holds the Terraform stack for the **dev AWS account**. It deploys only the services that cannot reasonably run on a developer workstation:
+This directory holds the Terraform stack for the **dev AWS account**. It deploys only the services that do not run on a developer workstation:
 
 - **Cognito** — user pool, hosted-UI domain, app client, seed admin/researcher users
 - **S3** — the three FLIP application buckets (model-file uploads, FL results, app bundles)
+
+> **This root is optional** (FLIP#919). Local development signs in through a Keycloak container and nothing
+> else (flip-api's `DevSettings` pins it), so nothing here is needed to authenticate — the Cognito pool this
+> root creates is not used by the compose stack. Apply it only for the dev S3 buckets, what `make up` still
+> needs AWS for.
 
 Everything else (VPC, EC2, RDS, ALB, NLB, Route53, ACM, IAM, CloudWatch) is intentionally **not** part of this stack; local development runs those services via Docker Compose in this repository's `deploy/` root compose files. SES is not part of it either, and is not run locally at all — see below. The prod/stag stack at `deploy/providers/AWS/` is the source of truth for every non-dev environment.
 
@@ -57,6 +62,44 @@ make apply           # deploy
 make status          # terraform state list
 make destroy         # refused while prevent_destroy is set
 ```
+
+### Browser-usable UI ports
+
+**Not used by the compose stack** (FLIP#919): development signs in through Keycloak only, and the dev realm
+(`deploy/keycloak/flip-realm.json`) registers whatever `UI_PORT` the env file sets, so any free port works
+there. This section matters only for a client pointed at the dev pool outside the compose stack.
+
+flip-api derives its CORS allowlist from the app client's callback URLs, and Cognito matches those
+exactly (no wildcard, no range), so a UI port is usable in a browser only if it is registered here.
+Rather than an apply per port, `var.dev_ui_ports` (default 44350–44359) is expanded into one
+`http://localhost:<port>` origin each and added to both the callback list and the buckets' CORS
+origins — the same list for both, rather than an S3 wildcard, so a bucket is never reachable from an
+origin the API would refuse (FLIP#1227). Pick a port from the list as `UI_PORT` and nothing here
+needs to change.
+
+Do not reach for the other registered entry, `https://localhost:443`. It matches only a UI actually
+served over TLS, and the dev container is not: `npm run dev` is `vite --host 0.0.0.0 --port 443`
+with no `server.https` and no cert material, so a browser on the repo's default `UI_PORT` sends
+`Origin: http://localhost:443`, which nothing registers.
+
+The generated entries are origins, not live redirect targets. `modules/cognito` leaves
+`allowed_oauth_flows_user_pool_client` unset (provider default false), so the hosted UI cannot
+redirect to any of them and flip-api reads the list purely as origins (`flip_api/utils/cors.py`).
+Enabling that client flag on the dev pool means revisiting this list first — the module's `implicit`
+flow would otherwise hand tokens to whichever local process won the race for one of these ports.
+
+On the shared dev host the ports are taken by convention, one per developer. This table is the
+canonical claim list: anything else describing the convention — including the `CONTRIBUTING.md`
+"Shared dev host" section FLIP#1227 asks for — links here rather than restating it.
+
+| Port | Developer |
+| --- | --- |
+| 44357 | yl |
+| 44356 | at24 |
+| 44355 | next |
+
+A port outside the list, or a host other than `localhost`, needs an apply — see "Changing the
+browser CORS allowlist" in [`../README.md`](../README.md).
 
 ## First-time setup
 

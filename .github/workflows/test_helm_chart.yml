@@ -20,15 +20,27 @@ on:
       - "trust/deploy/helm/**"
       # Read by the chart's pytest suite, so a change there can break it too.
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
+      # asserts the Job's env against it.
+      - "trust/seed_trust.sh"
+      # The seed tools that same hook installs from that ref and runs (TOOLS_SPEC's
+      # `#subdirectory=trust/omop-db`), so a change here can break the kind E2E job.
+      - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
+      # The Makefile derives the kit env token from PROD through it.
+      - "deploy/env_mode.mk"
   push:
     branches: [develop, main]
     paths:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/seed_trust.sh"
+      - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
+      # The Makefile derives the kit env token from PROD through it.
+      - "deploy/env_mode.mk"
   workflow_dispatch:
 
 jobs:
@@ -49,7 +61,8 @@ jobs:
 
       - name: Run sync-kit unit tests
         working-directory: trust/deploy/helm
-        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
+        # tests/templates renders with helm, pinned in the helm-template job below.
+        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v --ignore=tests/templates
 
   helm-lint:
     name: Helm Lint
@@ -82,6 +95,13 @@ jobs:
       # system python is not guaranteed to carry it.
       - name: Install uv
         run: pip install uv
+
+      - name: Rendered-chart tests (tests/templates/)
+        working-directory: trust/deploy/helm
+        # Everything under tests/templates asserts `helm template` output rather than template
+        # text: image-tag precedence (test_helpers.py) and the web/DICOM Service split parsed per
+        # rendered Service document (test_dicom_service_render.py, FLIP#993).
+        run: uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/templates -v
 
       - name: Render template (default/nvflare)
         run: helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /dev/null
@@ -156,7 +176,7 @@ jobs:
         run: |
           helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set xnat.web.service.type=NodePort \
+            --set xnat.web.dicomService.type=NodePort \
             --set xnat.web.dicomNodePort=8104 \
             --set xnat.web.dicomAet=FLIPXNAT \
             --set pacs.host=10.0.0.10 \
@@ -258,20 +278,43 @@ jobs:
             echo "::error::a real PACS on ClusterIP rendered successfully with networkPolicies.enabled=false — the reachability guard is gated on NetworkPolicy again"
             exit 1
           fi
-          if ! grep -q "xnat.web.service.type is ClusterIP" /tmp/nopolicy.err; then
+          if ! grep -q "xnat.web.dicomService.type is ClusterIP" /tmp/nopolicy.err; then
             echo "::error::render failed for some other reason than the ClusterIP reachability guard:"
             cat /tmp/nopolicy.err
             exit 1
           fi
           # And the LoadBalancer allowance must keep rendering, or on-prem MetalLB trusts break.
+          # Asserted per Service rather than grepped: the whole-document grep this used to be
+          # (output to /dev/null, in fact) could not tell a LoadBalancer on the DICOM Service from
+          # one on the web console. tests/templates/test_dicom_service_render.py carries the
+          # exhaustive per-document version; this keeps the shape assertion beside the render.
           helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-            --set xnat.web.service.type=LoadBalancer \
+            --set xnat.web.dicomService.type=LoadBalancer \
             --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
             --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
-            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /tmp/lb-pacs.yaml
+          uv run --no-project --with "pyyaml==6.0.3" python - /tmp/lb-pacs.yaml <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1]))
+                  if isinstance(d, dict) and d.get("kind") == "Service"]
+          svcs = {d["metadata"]["name"]: d["spec"] for d in docs}
+          dicom, web = svcs.get("xnat-web-dicom"), svcs.get("xnat-web")
+          if dicom is None or web is None:
+              sys.exit(f"::error::expected both xnat-web and xnat-web-dicom, got {sorted(svcs)}")
+          if dicom["type"] != "LoadBalancer":
+              sys.exit(f"::error::xnat-web-dicom is {dicom['type']}, not LoadBalancer")
+          if dicom.get("externalTrafficPolicy") != "Local":
+              sys.exit("::error::the LoadBalancer DICOM Service lost externalTrafficPolicy: Local — "
+                       "kube-proxy will SNAT the PACS's address and the ingress CIDR cannot match")
+          if web["type"] != "ClusterIP":
+              sys.exit(f"::error::the web console rendered as {web['type']} — exposing DICOM must "
+                       "never expose the console with it")
+          if any(p.get("name") == "dicom-scp" for p in web.get("ports", [])):
+              sys.exit("::error::the web console Service carries the dicom-scp port")
+          PY
 
       # The other half of the conjunction xnat-web.yaml gates the NodePort pin and
       # externalTrafficPolicy on. NodePort with dicomNodePort left at its empty default satisfies
@@ -283,7 +326,7 @@ jobs:
         run: |
           if helm template trust-release trust/deploy/helm/ \
             --set flClient.kitHostPath=/opt/flip/fl-kit \
-               --set xnat.web.service.type=NodePort \
+               --set xnat.web.dicomService.type=NodePort \
                --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
                --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
@@ -299,6 +342,37 @@ jobs:
             cat /tmp/nonodeport.err
             exit 1
           fi
+
+      # A real trust was found running its DICOM ingress NetworkPolicy scoped to 0.0.0.0/0 (the
+      # whole internet) rather than the PACS itself, because there was previously no chart-native
+      # LoadBalancer path and no guard against this specific mistake. Assert both the refusal and
+      # its message, and that a properly-scoped CIDR keeps rendering — this must be a render-time
+      # failure, not a runtime one, or the same mistake ships again silently.
+      - name: Render template (real PACS with a wide-open ingress CIDR is refused)
+        run: |
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+               --set xnat.web.dicomService.type=LoadBalancer \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=0.0.0.0/0' \
+               --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+               --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null 2> /tmp/wideopen.err; then
+            echo "::error::a real PACS with allowedIngressCIDRsWithPorts=0.0.0.0/0 rendered successfully — the whole internet can reach the DICOM port"
+            exit 1
+          fi
+          if ! grep -q "contains 0.0.0.0/0" /tmp/wideopen.err; then
+            echo "::error::render failed for some other reason than the wide-open-CIDR guard:"
+            cat /tmp/wideopen.err
+            exit 1
+          fi
+          # And a properly-scoped CIDR on the same LoadBalancer configuration must keep rendering.
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set xnat.web.dicomService.type=LoadBalancer \
+            --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /dev/null
 
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.
@@ -321,6 +395,44 @@ jobs:
             --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
           if ! grep -q "omop-vocab-load" /tmp/vocab.yaml; then
             echo "::error::the vocab-load Job did not render with s3Bucket set — its body is now untested in CI"
+            exit 1
+          fi
+
+      # The trust-seed hook is how a Kubernetes trust gets its mock data at all since the
+      # volume snapshots were retired (FLIP#1187). It renders by default with the OMOP half on
+      # and the Orthanc half off; nothing may untar a trust<N>_*.tar snapshot any more.
+      - name: Trust-seed hook renders, snapshots do not
+        run: |
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/seed-default.yaml
+          for want in 'name: trust-release-flip-trust-trust-seed' '/trust/seed_trust.sh' 'exec bash /work/seed_trust.sh'; do
+            if ! grep -qF -e "${want}" /tmp/seed-default.yaml; then
+              echo "::error::the trust-seed hook did not render (missing: ${want})"
+              exit 1
+            fi
+          done
+          for bad in 'restore-data' 'seed-data' '_pgdata' '_orthanc_data'; do
+            if grep -qF -e "${bad}" /tmp/seed-default.yaml; then
+              echo "::error::a volume-snapshot restore rendered (found: ${bad}) — the snapshots were retired in FLIP#1187"
+              exit 1
+            fi
+          done
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --show-only templates/trust-seed-job.yaml > /tmp/seedjob.yaml
+          if ! grep -A1 'name: SEED_ORTHANC' /tmp/seedjob.yaml | grep -q '"false"'; then
+            echo "::error::the Orthanc half must default OFF (2 GB of DICOM per trust)"
+            exit 1
+          fi
+          # The env ENTRY, not the name: the script body mentions the variable in both renders.
+          if grep -q -- '- name: ORTHANC_REGISTERED_USERS' /tmp/seedjob.yaml; then
+            echo "::error::the Orthanc credentials must not be mounted when the Orthanc half is off"
+            exit 1
+          fi
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set trustData.seed.orthanc=true --show-only templates/trust-seed-job.yaml | grep -q -- '- name: ORTHANC_REGISTERED_USERS' \
+            || { echo "::error::with trustData.seed.orthanc=true the Job must carry the Orthanc credentials"; exit 1; }
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set trustData.seed.enabled=false | grep -q 'trust-release-flip-trust-trust-seed'; then
+            echo "::error::trustData.seed.enabled=false must render no seed Job"
             exit 1
           fi
 
@@ -413,6 +525,27 @@ jobs:
           fi
           if grep -q "omop-vocab-load" /tmp/novocab.yaml; then
             echo "::error::the vocab-load Job rendered with no s3Bucket set — a failed hook fails the WHOLE Helm release"
+            exit 1
+          fi
+
+      # FLIP#904: the omop-db postStart hook provisions data_analyst_reader from the SQL the image
+      # ships — the same file the Compose trust runs at first initdb — rather than an inline copy.
+      # The inline copy it replaced granted pg_read_all_data (SELECT on every schema, present and
+      # future) where Compose grants USAGE on omop alone, and the render looked identical either
+      # way. Asserted on the RENDERED manifest, not the template: a `{{- if }}` around the hook
+      # would pass a text check while leaving the role unprovisioned on a restored PVC. Comment
+      # lines are dropped first — the hook's own comments name the old grant. Explicit `if` rather
+      # than `! grep -q`, and a positive control, for the reasons given on the vocab-load step.
+      - name: omop-db hook provisions the reader from the image's SQL, never pg_read_all_data (FLIP#904)
+        run: |
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --show-only templates/omop-db.yaml | grep -vE '^\s*#' > /tmp/omop-db.rendered.yaml
+          if ! grep -qF '\i /flip/omop/create_readonly_users.sql' /tmp/omop-db.rendered.yaml; then
+            echo "::error::the omop-db postStart hook no longer runs /flip/omop/create_readonly_users.sql — the reader's grants are defined twice again"
+            exit 1
+          fi
+          if grep -nE '\bGRANT\s+pg_read_all_data\b' /tmp/omop-db.rendered.yaml; then
+            echo "::error::the rendered omop-db manifest grants pg_read_all_data — SELECT on every schema, not just omop"
             exit 1
           fi
 
@@ -517,7 +650,7 @@ jobs:
               if any(m.get("name") == KIT for m in init.get("volumeMounts", [])):
                   die(f"initContainer {init['name']!r} mounts {KIT} — it would write over the staged kit")
 
-          # And the pod holds no FLIP AWS credentials: a trust never does (CLAUDE.md, "FL
+          # And the pod holds no FLIP AWS credentials: a trust never does (AGENTS.md, "FL
           # clients intentionally have no Central Hub credentials"), which is why the chart
           # cannot fetch the kit in the first place. This is the pod that runs
           # researcher-submitted training code.
@@ -558,13 +691,21 @@ jobs:
             --overwrite
           kubectl apply -f trust/deploy/helm/ci/test-secret.yaml
 
+      # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
+      # source archive), so the install must point it at the commit under test — the chart
+      # default, `develop`, would seed with whatever loaders develop has, not this PR's. A fork's
+      # head sha is not in this repository's archives, so a fork PR falls back to develop.
       - name: Install chart
+        env:
+          SEED_REF: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
         run: |
+          echo "trust-seed loaders from FLIP@${SEED_REF}"
           helm install trust-release trust/deploy/helm/ \
             --namespace flip-trust \
             -f trust/deploy/helm/ci/test-values.yaml \
             --set secrets.existingName=flip-trust-secrets \
-            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api
+            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api \
+            --set trustData.seed.sourceRef="${SEED_REF}"
 
       - name: Check pod status
         run: |
@@ -584,3 +725,5 @@ jobs:
         run: |
           kubectl describe pods -n flip-trust
           kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api --tail=50
+          # A failed trust-seed hook keeps its Job (only a succeeded one is deleted).
+          kubectl logs -n flip-trust job/trust-release-flip-trust-trust-seed --tail=100 || true

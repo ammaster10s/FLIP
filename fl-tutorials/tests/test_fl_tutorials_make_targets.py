@@ -28,7 +28,7 @@ import pytest
 FL_TUTORIALS = Path(__file__).resolve().parents[1]
 REPO_ROOT = FL_TUTORIALS.parent
 DOC_SOURCES = [
-    REPO_ROOT / "CLAUDE.md",
+    REPO_ROOT / "AGENTS.md",
     *FL_TUTORIALS.rglob("README.md"),
 ]
 _DOCUMENTED = re.compile(r"make -C fl-tutorials ([a-z][a-z0-9-]*)")
@@ -48,7 +48,5 @@ def _documented_root_targets() -> list[str]:
 def test_documented_root_target_resolves(target: str):
     # -n prints recipes instead of running them; a missing target still fails at rule lookup.
     # Recursive $(MAKE) lines run under -n too, so a forwarded name is checked in its owner.
-    result = subprocess.run(
-        ["make", "-n", "-C", str(FL_TUTORIALS), target], capture_output=True, text=True, timeout=60
-    )
+    result = subprocess.run(["make", "-n", "-C", str(FL_TUTORIALS), target], capture_output=True, text=True, timeout=60)
     assert "No rule to make target" not in result.stderr, result.stderr

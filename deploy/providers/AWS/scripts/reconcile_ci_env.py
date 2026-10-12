@@ -119,6 +119,27 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
+    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict:
+        """Attributes of a managed resource inside a specific module instance.
+
+        `attrs` ignores the module an address sits in, which is fine while the
+        type/name pair is unique. It is not here: every caller of
+        `modules/flip_s3_bucket` contributes an `aws_s3_bucket.this`, so reading
+        the demo-assets bucket by type/name alone would hand back whichever of
+        the four buckets state happens to list first. The module is the only
+        thing that distinguishes them, so it is matched — on a module boundary,
+        exactly as `has_module_resource` does.
+        """
+        for r in self.doc.get("resources", []):
+            if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
+                continue
+            module = r.get("module") or ""
+            if module == module_prefix or module.startswith((f"{module_prefix}[", f"{module_prefix}.")):
+                instances = r.get("instances") or []
+                if instances:
+                    return instances[0].get("attributes") or {}
+        return {}
+
     def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
         """Whether a managed resource of this type/name exists inside a module.
 
@@ -173,12 +194,23 @@ def first_port(container: dict) -> str:
 
 
 def split_image(image: str) -> tuple[str, str]:
-    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag'). Digest refs yield no tag."""
-    if not image or "@" in image:
+    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag').
+
+    A release apply pins `ghcr.io/org/name:v<X.Y.Z>@sha256:…` (FLIP#1283): the
+    tag part comes back whole, digest included, because that whole string is what
+    Terraform must re-emit to keep the pin. A digest-ONLY reference has no tag to
+    report and yields none.
+    """
+    if not image:
         return "", ""
-    repo, _, tag = image.rpartition(":")
+    name, _, digest = image.partition("@")
+    if digest and ":" not in name.rsplit("/", 1)[-1]:
+        return "", ""
+    repo, sep, tag = name.rpartition(":")
+    if not sep or "/" in tag:
+        return "", ""
     prefix = repo.rsplit("/", 1)[0] + "/" if "/" in repo else ""
-    return prefix, tag
+    return prefix, f"{tag}@{digest}" if digest else tag
 
 
 def live_image_tag(service: str, container: str, cluster: str, profile: str, region: str) -> str:
@@ -191,27 +223,55 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     reading state here would hand CI the mutable tag and undo the FLIP#751 pin.
     """
     task_def = aws(
-        ["ecs", "describe-services", "--cluster", cluster, "--services", service,
-         "--query", "services[0].taskDefinition", "--output", "text"],
-        profile, region,
+        [
+            "ecs",
+            "describe-services",
+            "--cluster",
+            cluster,
+            "--services",
+            service,
+            "--query",
+            "services[0].taskDefinition",
+            "--output",
+            "text",
+        ],
+        profile,
+        region,
     )
     if not task_def or task_def == "None":
         return ""
     image = aws(
-        ["ecs", "describe-task-definition", "--task-definition", task_def,
-         "--query", f"taskDefinition.containerDefinitions[?name=='{container}'].image | [0]",
-         "--output", "text"],
-        profile, region,
+        [
+            "ecs",
+            "describe-task-definition",
+            "--task-definition",
+            task_def,
+            "--query",
+            f"taskDefinition.containerDefinitions[?name=='{container}'].image | [0]",
+            "--output",
+            "text",
+        ],
+        profile,
+        region,
     )
-    return split_image(image)[1] if image and image != "None" else ""
+    tag = split_image(image)[1] if image and image != "None" else ""
+    # Strip any digest: `v<X.Y.Z>@sha256:…` is the pin a release APPLY writes
+    # into a task definition (FLIP#1283), but this value goes into the operator
+    # env file, where the Makefile reuses DOCKER_TAG for the three TRUST_IMAGES
+    # and for `-e omop_db_tag` (the omop-db and orthanc images). Those are
+    # different repositories, so flip-api's digest makes every one of them
+    # unpullable — `make deploy-trust` reports them all missing and
+    # seed-trust-data / ansible-init fail. The tag alone is the right record
+    # here; CI re-resolves the digest pin from live ECS on every run.
+    return tag.partition("@")[0]
 
 
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
     """Return (values, sources) for every key the CI env file needs."""
     raw = subprocess.run(
-        ["aws", "s3", "cp", f"s3://{bucket}/flip/terraform.tfstate", "-",
-         "--profile", profile, "--region", region],
-        capture_output=True, text=True,
+        ["aws", "s3", "cp", f"s3://{bucket}/flip/terraform.tfstate", "-", "--profile", profile, "--region", region],
+        capture_output=True,
+        text=True,
     )
     if raw.returncode != 0:
         die(f"could not read s3://{bucket}/flip/terraform.tfstate — {raw.stderr.strip().splitlines()[-1:] or ''}")
@@ -220,7 +280,7 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     api = st.container("flip_api", "flip-api")
     fl_api = st.container("fl_api_net_1", "fl-api-net-1")
     fl_server = st.container("fl_server_net_1", "fl-server-net-1")
-    api_env, fl_api_env, fl_server_env = env_of(api), env_of(fl_api), env_of(fl_server)
+    api_env, fl_api_env = env_of(api), env_of(fl_api)
     registry = split_image(api.get("image", ""))[0]
 
     # The EFS provisioning task syncs the participant kit from a dated S3 prefix;
@@ -236,15 +296,31 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         return st.attrs("aws_ssm_parameter", ssm_name).get("value", "").removeprefix("s3://").split("/")[0]
 
     secret = json.loads(
-        aws(["secretsmanager", "get-secret-value", "--secret-id", "FLIP_API",
-             "--query", "SecretString", "--output", "text"], profile, region) or "{}"
+        aws(
+            [
+                "secretsmanager",
+                "get-secret-value",
+                "--secret-id",
+                "FLIP_API",
+                "--query",
+                "SecretString",
+                "--output",
+                "text",
+            ],
+            profile,
+            region,
+        )
+        or "{}"
     )
 
     # Live, not state: the kit-slot list is grown by `make apply-fl-kit-slots`,
     # which is a targeted apply — state and the parameter can legitimately differ
     # between full applies.
-    slots = aws(["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names",
-                 "--query", "Parameter.Value", "--output", "text"], profile, region)
+    slots = aws(
+        ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
+        profile,
+        region,
+    )
 
     trust_ips = st.instance_keys("aws_security_group_rule", "local_trust_fl_server_nlb")
     k8s_ips = st.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb")
@@ -253,12 +329,20 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
-        "VPC_NAME": st.attrs("aws_vpc", "this").get("tags", {}).get("Name", ""),
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
-        # Read from the *data* source: the demo bucket is not Terraform-managed
-        # (objects are staged by hand), so only the lookup records its name.
-        "DEMO_ASSETS_BUCKET_NAME": st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", ""),
+        # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
+        # not Terraform-managed (objects are staged by hand), so the `data`
+        # lookup is the only record of the name that was passed in. On an LZA
+        # estate Terraform creates it, and the name lives on the managed
+        # resource inside module.flip_demo_assets_bucket. Exactly one of the two
+        # exists in any given state, so the fallback cannot pick the wrong one —
+        # and reading only the data source would have recovered "" on LZA, which
+        # keys_expected_empty() treats as a failed recovery on prod.
+        "DEMO_ASSETS_BUCKET_NAME": (
+            st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", "")
+            or st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get("bucket", "")
+        ),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
@@ -267,19 +351,11 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
-        "DB_PORT": api_env.get("DB_PORT", ""),
-        # Not deployed anywhere — no resource in this root references UI_PORT.
-        # It still has to be present and numeric: the Makefile exports it
-        # unconditionally and Terraform rejects "" for a number variable.
-        "UI_PORT": "443",
-        "API_PORT": first_port(api),
-        "FL_API_PORT": first_port(fl_api),
         "FL_SERVER_PORT": first_port(fl_server),
         "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),
         "FL_BACKEND": api_env.get("FL_BACKEND", ""),
         "FL_ADMIN_DIRECTORY": fl_api_env.get("FL_ADMIN_DIRECTORY", ""),
-        "MIN_CLIENTS": fl_server_env.get("MIN_CLIENTS", ""),
         "FLARE_KIT_DATE": kit_date("flare"),
         "FLOWER_KIT_DATE": kit_date("flower"),
         "DOCKER_REGISTRY": registry,
@@ -323,8 +399,11 @@ def keys_expected_empty(env: str) -> set[str]:
     ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
     destructive rather than merely wrong. Empty is correct on **stag**, which
     hosts no public Ark+ demo. On **prod** it gates four live resources plus the
-    ``/ark_demo/*`` CloudFront behaviour (``demo_assets_enabled =
-    var.DEMO_ASSETS_BUCKET_NAME != ""``), so an empty recovered value there means
+    ``/ark_demo/*`` CloudFront behaviour on a legacy estate, and the bucket
+    itself on an LZA one (``module.flip_demo_assets_bucket``, FLIP#1199) — where
+    an empty value plans a destroy that ``prevent_destroy`` turns into a failed
+    apply. Either way the gate is ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an
+    empty recovered value on prod means
     the lookup failed, not that there is no demo — and seeding the GitHub
     environment from it would destroy the demo on the next apply. Treated as
     not-recovered on prod, and omitted from ``--out`` rather than written blank,
@@ -393,9 +472,7 @@ def main() -> None:
     if args.compare:
         existing = read_env_file(args.compare)
         drift = [
-            (k, existing.get(k), values[k])
-            for k in sorted(values)
-            if values[k] and existing.get(k, "") != values[k]
+            (k, existing.get(k), values[k]) for k in sorted(values) if values[k] and existing.get(k, "") != values[k]
         ]
         print(f"\n📋 Compared against {args.compare}: {len(drift)} difference(s)")
         for k, was, now in drift:
