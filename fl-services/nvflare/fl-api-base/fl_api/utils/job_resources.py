@@ -10,72 +10,139 @@
 # limitations under the License.
 #
 
-"""What a job needs at each site, and how it becomes NVFLARE's ``resource_spec`` (FLIP#70).
+"""What a job needs at each site, from its own ``meta.json`` (FLIP#70).
 
 NVFLARE splits the question in two. The job states what it needs (``meta.json`` ``resource_spec``),
 each site's resource manager states what it has (``local/resources.json``, from the kit's
 ``NUM_AVAILABLE_GPUS``), and the server's scheduler holds a job until every site can provide its
-share. FLIP keeps that split: this module only decides *which* statement of need applies, and
-writes it in NVFLARE's terms. It never compares a request with a site's capacity, and never lowers
-one to fit.
+share. FLIP keeps that split: the researcher's ``meta.json`` is the job's statement, as it would be
+for ``nvflare job submit``. This module checks it, settles the GPU count and writes the result. It
+never compares a request with a site's capacity, and never lowers one to fit.
 
-Which statement applies, first match wins:
+What a researcher's ``meta.json`` may hold:
+
+- ``resource_spec``: only NVFLARE's portable ``@default`` block (``num_of_gpus``, ``num_of_cpus``,
+  ``memory``), which applies at every site. A researcher cannot know the trusts' site names, so a
+  per-site block is refused.
+- ``custom_props``: kept, except ``model_id``. The app's ``config.json`` carries FLIP's model id
+  now, so a placeholder left by a recipe export is dropped rather than shadowing it.
+- ``name``, ``deploy_map``, ``min_clients``, ``mandatory_clients``: replaced from the run. A recipe
+  export always writes them.
+- Anything else, such as ``launcher_spec``, ``study`` or ``scope``, is refused. Those choose how a
+  site runs the job, which is the site's decision.
+
+The GPU count, first match wins:
 
 1. an override the researcher gave when submitting training (``UploadAppRequest.resources``);
-2. the job's own ``config.json`` ``RESOURCE_SPEC``, in NVFLARE's names;
-3. the fl-api default, ``JOB_RESOURCE_SPEC_NUM_GPUS`` / ``JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB``.
+2. the job's ``meta.json`` ``resource_spec["@default"]["num_of_gpus"]``;
+3. the fl-api default, ``JOB_RESOURCE_SPEC_NUM_GPUS``.
+
+CPUs and memory come only from the job. Only a container launcher (Docker, Kubernetes) reads them,
+and the override and the default are about GPUs.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from fl_api.config import get_settings
-from fl_api.utils.schemas import JobResources
+from fl_api.utils.schemas import MAX_GPUS_PER_SITE, JobResources
 
-# config.json RESOURCE_SPEC key -> JobResources field. NVFLARE's names, so a researcher writes what
-# NVFLARE's docs show.
-_NVFLARE_TO_CONTRACT = {"num_of_gpus": "num_gpus", "mem_per_gpu_in_GiB": "mem_per_gpu_gib"}
+PORTABLE_DEFAULT_KEY = "@default"
+# Written by FLIP from the run, whatever the researcher's file says.
+FLIP_OWNED_META_KEYS = frozenset({"name", "deploy_map", "min_clients", "mandatory_clients"})
+# Taken from the researcher's file.
+RESEARCHER_META_KEYS = frozenset({"resource_spec", "custom_props"})
+# The custom_props key FLIP published its model id under before it moved to config.json.
+LEGACY_MODEL_ID_PROP = "model_id"
 
 
 class ResourceSource(StrEnum):
-    """Where the request that applies to a job came from."""
+    """Where the GPU count that applies to a job came from."""
 
     SUBMISSION = "submission"
-    CONFIG = "config.json"
+    META = "meta.json"
     DEFAULT = "default"
 
 
-def parse_resource_spec(raw: Any) -> JobResources:
-    """Read a ``config.json`` ``RESOURCE_SPEC``, written in NVFLARE's names.
+class PortableResources(BaseModel):
+    """NVFLARE's portable ``resource_spec["@default"]`` block, with its validity rules and FLIP's GPU cap."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_of_gpus: StrictInt | None = Field(default=None, ge=0, le=MAX_GPUS_PER_SITE)
+    num_of_cpus: StrictInt | None = Field(default=None, ge=1)
+    # NVFLARE's own pattern (nvflare.utils.job_launcher_utils), e.g. "16Gi".
+    memory: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]*(Mi|Gi|Ti)$")
+
+
+@dataclass(frozen=True)
+class JobMeta:
+    """The parts of a researcher's ``meta.json`` that FLIP keeps."""
+
+    resources: PortableResources = field(default_factory=PortableResources)
+    custom_props: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def declared_gpus(self) -> int | None:
+        """The job's GPU count, or None when it states none (an empty ``resource_spec`` is not zero)."""
+        return self.resources.num_of_gpus
+
+
+def parse_job_meta(raw: Any) -> JobMeta:
+    """Check a researcher's ``meta.json`` and keep the parts FLIP takes from it.
 
     Args:
-        raw (Any): the value of ``RESOURCE_SPEC``, e.g. ``{"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}``.
+        raw (Any): the parsed ``meta.json``.
 
     Returns:
-        JobResources: the request.
+        JobMeta: the job's portable resources and its ``custom_props``, without FLIP's legacy ``model_id``.
 
     Raises:
-        ValueError: if it is not an object of known keys with valid values.
+        ValueError: naming the key, if the file holds something FLIP refuses (see the module docstring).
     """
     if not isinstance(raw, dict):
-        raise ValueError('RESOURCE_SPEC must be an object such as {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}')
-    unknown = sorted(set(raw) - set(_NVFLARE_TO_CONTRACT))
-    if unknown:
-        raise ValueError(f"RESOURCE_SPEC has unknown key(s) {unknown}; allowed: {sorted(_NVFLARE_TO_CONTRACT)}")
-    if "num_of_gpus" not in raw:
-        raise ValueError("RESOURCE_SPEC must set num_of_gpus")
+        raise ValueError("meta.json must be a JSON object")
+    refused = sorted(set(raw) - FLIP_OWNED_META_KEYS - RESEARCHER_META_KEYS)
+    if refused:
+        raise ValueError(
+            f"meta.json has key(s) FLIP does not accept: {refused}. A job's meta.json may declare resource_spec "
+            f"and custom_props; FLIP writes {sorted(FLIP_OWNED_META_KEYS)} from the run, and how a trust runs the "
+            "job is the trust's choice."
+        )
+
+    # None is how NVFLARE spells "nothing" too; an empty list or string is a mistake, not nothing.
+    resource_spec = {} if raw.get("resource_spec") is None else raw["resource_spec"]
+    if not isinstance(resource_spec, dict):
+        raise ValueError('meta.json resource_spec must be an object such as {"@default": {"num_of_gpus": 1}}')
+    per_site = sorted(set(resource_spec) - {PORTABLE_DEFAULT_KEY})
+    if per_site:
+        raise ValueError(
+            f"meta.json resource_spec has per-site block(s) {per_site}. Declare what the job needs at every trust "
+            f'under "{PORTABLE_DEFAULT_KEY}" instead: a job cannot know the trusts\' site names.'
+        )
+    default_block = {} if resource_spec.get(PORTABLE_DEFAULT_KEY) is None else resource_spec[PORTABLE_DEFAULT_KEY]
+    if not isinstance(default_block, dict):
+        raise ValueError(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] must be an object')
     try:
-        return JobResources(**{_NVFLARE_TO_CONTRACT[key]: value for key, value in raw.items()})
+        resources = PortableResources(**default_block)
     except ValidationError as e:
         problems = "; ".join(f"{'.'.join(map(str, err['loc'])) or 'value'}: {err['msg']}" for err in e.errors())
-        raise ValueError(f"RESOURCE_SPEC is invalid: {problems}") from e
+        raise ValueError(f'meta.json resource_spec["{PORTABLE_DEFAULT_KEY}"] is invalid: {problems}') from e
+
+    custom_props = {} if raw.get("custom_props") is None else raw["custom_props"]
+    if not isinstance(custom_props, dict):
+        raise ValueError("meta.json custom_props must be an object")
+    custom_props = {key: value for key, value in custom_props.items() if key != LEGACY_MODEL_ID_PROP}
+
+    return JobMeta(resources=resources, custom_props=custom_props)
 
 
 def default_job_resources() -> JobResources:
-    """The request for a job that declares none: ``JOB_RESOURCE_SPEC_NUM_GPUS`` / ``…_MEM_PER_GPU_IN_GIB``.
+    """The GPU count for a job that declares none: ``JOB_RESOURCE_SPEC_NUM_GPUS``.
 
     The fl-api checks it at start-up (``create_fl_session``), so a value the request contract refuses
     stops the service instead of failing every upload that falls back to it.
@@ -84,31 +151,25 @@ def default_job_resources() -> JobResources:
         JobResources: the default request.
 
     Raises:
-        ValueError: if the two settings do not make a valid request, e.g. memory with no GPUs (deleting only
-            ``JOB_RESOURCE_SPEC_NUM_GPUS`` does that) or a value above the sanity caps.
+        ValueError: if the setting is above the sanity cap.
     """
-    settings = get_settings()
+    num_gpus = get_settings().JOB_RESOURCE_SPEC_NUM_GPUS
     try:
-        return JobResources(
-            num_gpus=settings.JOB_RESOURCE_SPEC_NUM_GPUS,
-            mem_per_gpu_gib=settings.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB,
-        )
+        return JobResources(num_gpus=num_gpus)
     except ValidationError as e:
         raise ValueError(
-            f"JOB_RESOURCE_SPEC_NUM_GPUS={settings.JOB_RESOURCE_SPEC_NUM_GPUS} and "
-            f"JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB={settings.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB} are not a valid "
-            f"default GPU request: {e.errors()[0]['msg']}. Set both, or set both to 0."
+            f"JOB_RESOURCE_SPEC_NUM_GPUS={num_gpus} is not a valid default GPU count: {e.errors()[0]['msg']}"
         ) from e
 
 
 def resolve_job_resources(
-    override: JobResources | None, declared: JobResources | None, default: Callable[[], JobResources]
+    override: JobResources | None, declared_gpus: int | None, default: Callable[[], JobResources]
 ) -> tuple[JobResources, ResourceSource]:
-    """Pick the request that applies to a job.
+    """Pick the GPU count that applies to a job.
 
     Args:
         override (JobResources | None): what the researcher set at submission, if anything.
-        declared (JobResources | None): the job's ``config.json`` ``RESOURCE_SPEC``, if any.
+        declared_gpus (int | None): the job's ``meta.json`` GPU count, if it states one.
         default (Callable[[], JobResources]): the fl-api default, read only when neither of the others is set.
 
     Returns:
@@ -116,27 +177,27 @@ def resolve_job_resources(
     """
     if override is not None:
         return override, ResourceSource.SUBMISSION
-    if declared is not None:
-        return declared, ResourceSource.CONFIG
+    if declared_gpus is not None:
+        return JobResources(num_gpus=declared_gpus), ResourceSource.META
     return default(), ResourceSource.DEFAULT
 
 
-def nvflare_resource_spec(resources: JobResources, sites: list[str]) -> dict[str, dict[str, int]]:
-    """Write a request as ``meta.json`` ``resource_spec``.
+def nvflare_resource_spec(resources: JobResources, declared: PortableResources) -> dict[str, dict[str, int | str]]:
+    """Write the job's ``meta.json`` ``resource_spec``: one portable ``@default`` block every site reads.
 
-    One flat entry per site rather than NVFLARE 2.9's portable ``@default``, which refuses
-    ``mem_per_gpu_in_GiB``. A flat entry still counts as portable, so a Docker or Kubernetes job
-    launcher would turn ``num_of_gpus`` into a device request. No GPUs writes ``{}``, as before.
+    NVFLARE gives each site's resource manager the ``num_of_gpus`` (``num_of_gpus`` is
+    GPUResourceManager's ``num_gpu_key``), and a Docker or Kubernetes launcher turns all three fields
+    into the job's container request. Zero GPUs leaves the count out; a job that asks for nothing
+    gets ``{}``, as before.
 
     Args:
-        resources (JobResources): the request.
-        sites (list[str]): the job's sites, by FL client name.
+        resources (JobResources): the GPU count that won.
+        declared (PortableResources): the job's own block, for its CPUs and memory.
 
     Returns:
-        dict[str, dict[str, int]]: the ``resource_spec``.
+        dict[str, dict[str, int | str]]: the ``resource_spec``.
     """
+    block = declared.model_dump(exclude_none=True) | {"num_of_gpus": resources.num_gpus}
     if not resources.num_gpus:
-        return {}
-    # "num_of_gpus" is GPUResourceManager's num_gpu_key: a requirement without it makes the manager raise.
-    entry = {"num_of_gpus": resources.num_gpus, "mem_per_gpu_in_GiB": resources.mem_per_gpu_gib}
-    return {site: dict(entry) for site in sites}
+        del block["num_of_gpus"]
+    return {PORTABLE_DEFAULT_KEY: block} if block else {}

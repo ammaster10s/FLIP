@@ -89,8 +89,8 @@ make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
                                                               # a registered-but-offline trust does not block the run
-make e2e_smoke EXTRA_ARGS="--gpus 0"                          # the run's GPU request per trust (N or N:GIB, FLIP#70);
-                                                              # omitted, config.json RESOURCE_SPEC or the FL API default
+make e2e_smoke EXTRA_ARGS="--gpus 0"                          # the run's GPUs per trust (FLIP#70); omitted, the
+                                                              # job's meta.json resource_spec or the FL API default
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an

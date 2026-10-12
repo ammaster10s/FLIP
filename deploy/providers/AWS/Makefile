@@ -180,18 +180,14 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
-# The GPU request fl-api on ECS writes into a job that declares none (mirrors
-# compose). Default 0 in variables.tf, and keep it there: jobs declare their own in
-# config.json RESOURCE_SPEC (FLIP#70), and a non-zero default keeps every job off a
-# CPU-only trust.
+# The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
+# Default 0 in variables.tf, and keep it there: jobs declare their own in their
+# meta.json (FLIP#70), and a non-zero default keeps every job off a CPU-only trust.
 # Export only when set: an unconditional export turns a missing env key into
 # TF_VAR_…="" and Terraform rejects the empty string for a number variable
 # instead of falling back to the variables.tf default.
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
-endif
-ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
-export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true

@@ -670,12 +670,12 @@ def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None
     job = session.get(FLJob, fl_job_id)
     if job is None or job.num_gpus is None:
         return None
-    return IJobResources(num_gpus=job.num_gpus, mem_per_gpu_gib=job.mem_per_gpu_gib or 0)
+    return IJobResources(num_gpus=job.num_gpus)
 
 
 _RESOURCE_SOURCES = {
     "submission": "set for this run",
-    "config.json": "from the job's config.json",
+    "meta.json": "from the job's meta.json",
     "default": "the platform default",
 }
 
@@ -1451,7 +1451,6 @@ def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session, resources:
         model_id=model_id,
         trusts=trusts,
         num_gpus=resources.num_gpus if resources else None,
-        mem_per_gpu_gib=resources.mem_per_gpu_gib if resources else None,
     )
 
     try:

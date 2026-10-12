@@ -529,12 +529,12 @@ def _minimal_upload(model_id, mock_requests_get, **extra):
 def test_upload_app_records_a_gpu_request_and_says_flower_does_not_enforce_it(client, upload_dir, mock_requests_get):
     """Flower's deployment runtime places no job by GPU, so the request is echoed as recorded, not applied."""
     model_id = str(uuid4())
-    body = _minimal_upload(model_id, mock_requests_get, resources={"num_gpus": 1, "mem_per_gpu_gib": 7})
+    body = _minimal_upload(model_id, mock_requests_get, resources={"num_gpus": 1})
 
     response = client.post(f"/upload_app/{model_id}", json=body)
 
     assert response.status_code == 200
-    assert response.json()["resources"] == {"num_gpus": 1, "mem_per_gpu_gib": 7}
+    assert response.json()["resources"] == {"num_gpus": 1}
     assert response.json()["resources_enforced"] is False
 
 
@@ -558,7 +558,10 @@ def test_upload_app_leaves_config_toml_without_a_gpu_key(client, upload_dir, moc
     assert "gpu" not in (upload_dir / model_id / "app" / "config.toml").read_text().lower()
 
 
-@pytest.mark.parametrize("resources", [{"num_gpus": -1}, {"num_gpus": "1"}, {"num_gpus": 1, "num_cpus": 2}])
+@pytest.mark.parametrize(
+    "resources",
+    [{"num_gpus": -1}, {"num_gpus": "1"}, {"num_gpus": 1, "num_cpus": 2}, {"num_gpus": 1, "mem_per_gpu_gib": 7}],
+)
 def test_upload_app_rejects_a_malformed_gpu_request(client, upload_dir, mock_requests_get, resources):
     model_id = str(uuid4())
 

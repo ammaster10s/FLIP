@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
-"""fl_job GPU request override
+"""fl_job GPU count override
 
-Revision ID: f5ad2a562fad
+Revision ID: 161d07d3d134
 Revises: e8c4a2f71b36
-Create Date: 2026-10-10 18:00:00.000000
+Create Date: 2026-10-12 21:00:00.000000
 
 """
 from collections.abc import Sequence
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'f5ad2a562fad'
+revision: str = '161d07d3d134'
 down_revision: str | None = 'e8c4a2f71b36'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -33,11 +33,11 @@ def upgrade() -> None:
     """Apply this revision."""
     # The researcher's GPU override for a run, per trust (FLIP#70). Nullable with no backfill: NULL means
     # no override, so every existing row keeps meaning what it meant (the job's own request or the default).
+    # Replaces an unreleased revision, f5ad2a562fad, that also stored memory per GPU. A database stamped with it
+    # fails `alembic upgrade` on the unknown revision rather than silently keeping a column the code dropped.
     op.add_column('fl_job', sa.Column('num_gpus', sa.Integer(), nullable=True))
-    op.add_column('fl_job', sa.Column('mem_per_gpu_gib', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
     """Revert this revision."""
-    op.drop_column('fl_job', 'mem_per_gpu_gib')
     op.drop_column('fl_job', 'num_gpus')

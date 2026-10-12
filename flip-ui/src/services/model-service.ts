@@ -32,15 +32,13 @@ export interface IModelMetricData {
     }[]
 }
 
-// Sanity caps on a run's GPU request, matching the hub and both FL APIs (FLIP#70). Not capacity
-// checks: whether a trust can provide the request is decided by the FL server's scheduler.
+// Sanity cap on a run's GPU count, matching the hub and both FL APIs (FLIP#70). Not a capacity
+// check: whether a trust can provide the request is decided by the FL server's scheduler.
 export const MAX_GPUS_PER_SITE = 8;
-export const MAX_MEM_PER_GPU_GIB = 192;
 
-// What a run needs at each selected trust; overrides the job's config.json RESOURCE_SPEC.
+// The GPUs a run needs at each selected trust; overrides the job's meta.json resource_spec.
 export interface IJobResources {
     num_gpus: number;
-    mem_per_gpu_gib: number;
 }
 
 export interface IInitTraining {

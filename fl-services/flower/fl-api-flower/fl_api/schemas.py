@@ -13,7 +13,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from fl_api.utils.logger import logger
 
@@ -51,13 +51,12 @@ class NodeRegistrationRequest(BaseModel):
     node_id: str
 
 
-# Sanity caps on a job's GPU request — the same contract as the NVFLARE fl-api's (FLIP#70).
+# Sanity cap on a job's GPU count — the same contract as the NVFLARE fl-api's (FLIP#70).
 MAX_GPUS_PER_SITE = 8
-MAX_MEM_PER_GPU_GIB = 192
 
 
 class JobResources(BaseModel):
-    """What a job needs at each participating site — the hub contract shared with the NVFLARE fl-api (FLIP#70).
+    """The GPUs a job needs at each participating site — the hub contract shared with the NVFLARE fl-api (FLIP#70).
 
     Flower's deployment runtime (SuperLink and SuperNodes) places no job by GPU — ``num-gpus`` is a
     simulation-backend option only — so this adapter records the request and reports it as not enforced
@@ -67,13 +66,6 @@ class JobResources(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
-    mem_per_gpu_gib: StrictInt = Field(default=0, ge=0, le=MAX_MEM_PER_GPU_GIB)
-
-    @model_validator(mode="after")
-    def _memory_needs_gpus(self) -> "JobResources":
-        if self.mem_per_gpu_gib and not self.num_gpus:
-            raise ValueError("mem_per_gpu_gib needs num_gpus > 0: memory per GPU means nothing without a GPU")
-        return self
 
 
 class UploadAppRequest(BaseModel):

@@ -26,17 +26,18 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
-from fl_api.utils.job_resources import default_job_resources, resolve_job_resources
+from fl_api.utils.job_resources import JobMeta, default_job_resources, parse_job_meta, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
     configure_client,
     configure_config,
     configure_environment,
+    configure_flip_model_id,
     configure_meta,
     configure_server,
     validate_config,
 )
-from fl_api.utils.schemas import FLAggregators, IOverridableConfig, JobResources, TrainingRound, UploadAppRequest
+from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
 # De-bundled evaluation checkpoints are large (hundreds of MB); allow far more time than the
@@ -141,24 +142,6 @@ def _relative_dir_for_download(model_id: str, s3_file_dir: str, file_name: str) 
     return app_folder_name, "app/custom"
 
 
-def _declared_resources(configs: dict[str, IOverridableConfig]) -> JobResources | None:
-    """The GPU request the job's config.json files declare, if any (FLIP#70).
-
-    Args:
-        configs (dict[str, IOverridableConfig]): each app folder's validated config.json.
-
-    Returns:
-        JobResources | None: the one request the folders declare, or None when none does.
-
-    Raises:
-        ValueError: if folders declare different requests; NVFLARE runs a job under one resource_spec.
-    """
-    declared = {name: config.RESOURCE_SPEC for name, config in configs.items() if config.RESOURCE_SPEC is not None}
-    if len({spec.model_dump_json() for spec in declared.values()}) > 1:
-        raise ValueError(f"App folders declare different RESOURCE_SPEC values, but a job has one: {declared}")
-    return next(iter(declared.values()), None)
-
-
 def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, Any]:
     """Uploads an application to the upload dir folder of the server.
 
@@ -173,8 +156,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         HTTPException: if the application fails to upload, an error is raised.
         FileNotFoundError: if the application path is not found, an error is raised.
     Returns:
-        dict[str, Any]: a success message naming where the application was uploaded, the GPU request written into
-        meta.json (``resources``) and where it came from (``resources_source``: submission, config.json or default;
+        dict[str, Any]: a success message naming where the application was uploaded, the GPU count written into
+        meta.json (``resources``) and where it came from (``resources_source``: submission, meta.json or default;
         FLIP#70).
 
     .. code-block:: text
@@ -183,7 +166,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         └─ <upload_dir>/                    # passed in as upload_dir (session upload dir)
         └─ <model_id>/                      # job_dir
             ├─ meta.json                    # REQUIRED if >1 app folder (app + app_siteX etc)
-            │                               # Written automatically only for the "app" folder.
+            │                               # The job's own (template or researcher), checked, then rewritten
+            │                               # with the run's sites when there is an "app" folder (FLIP#70).
             │                               # If you upload multiple app folders, you must include this at root.
             │
             ├─ app/                         # default application folder (always created)
@@ -305,23 +289,25 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     # We run this configuration script for all of the different app folders.
 
-    # Grab config values from each uploaded config.json first: the GPU request is job-level (meta.json holds one
-    # resource_spec), so it is settled before any folder is configured.
-    configs = {
-        name: validate_config(read_config(safe_join(job_dir, name) / "custom" / "config.json"))
-        for name in sorted(app_folder_names)
-    }
+    # The job's own meta.json: the template's, or the researcher's when they upload one. It is checked before any
+    # folder is configured, and its GPU count settled, because the request is job-level (FLIP#70).
+    meta_json_path = safe_join(job_dir, META)
+    job_meta = parse_job_meta(read_config(meta_json_path)) if meta_json_path.is_file() else JobMeta()
     resources, resources_source = resolve_job_resources(
         override=body.resources,
-        declared=_declared_resources(configs),
+        declared_gpus=job_meta.declared_gpus,
         default=default_job_resources,
     )
-    logger.info(f"GPU request per site: {resources.model_dump()} (from {resources_source})")
+    logger.info(f"GPUs per site: {resources.num_gpus} (from {resources_source})")
 
     for app_folder_name in sorted(app_folder_names):
         logger.info(f"Configuring application folder: {app_folder_name}")
         app_folder_path = safe_join(job_dir, app_folder_name)
-        config = configs[app_folder_name]
+
+        # Grab config values from the uploaded config.json
+        config_path = app_folder_path / "custom" / "config.json"
+        raw_config = read_config(config_path)
+        config = validate_config(raw_config)
 
         # Set defaults for config values if not provided in the uploaded config.json
         local_rounds = config.LOCAL_ROUNDS if config.LOCAL_ROUNDS else TrainingRound.MIN
@@ -364,11 +350,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             # Configure the environment.json file if it exists.
             configure_environment(app_folder_path)
 
-            # FIXME What if it's already there? Do we overwrite? For now, we overwrite without warning, but we could
-            # consider merging if it already exists.
+            # The hub's model id, for FLIP's components on the FL server (FLIP#70).
+            configure_flip_model_id(app_folder_path, model_id)
+
             if app_folder_name == "app":
-                # Write meta.json file
-                configure_meta(job_dir, model_id, body.trusts, resources)
+                # The job's meta.json, with the run's sites and GPU count.
+                configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
 
         except Exception as e:
             logger.error(f"Error occurred while configuring application folder {app_folder_name}: {e}")

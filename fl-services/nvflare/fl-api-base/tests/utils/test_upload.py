@@ -10,13 +10,14 @@
 # limitations under the License.
 #
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 from fastapi import HTTPException
 
-from fl_api.utils.schemas import IOverridableConfig, JobResources, UploadAppRequest
+from fl_api.utils.schemas import JobResources, UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
 TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
@@ -141,8 +142,9 @@ def test_error_requests_get(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_app_success(
     mock_requests_get_success,
     mock_upload_correct_request,
@@ -157,8 +159,9 @@ def test_upload_app_success(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_multiple_apps_success(
     mock_requests_get_success,
     mock_upload_multiple_apps_request,
@@ -183,8 +186,9 @@ def test_upload_multiple_apps_missing_meta_json(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
     """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
     (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the NVFLARE job dir — so it is
@@ -221,8 +225,9 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_clears_stale_server_checkpoints(
     mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
 ):
@@ -390,21 +395,6 @@ def test_validate_config_best_model_metric_defaults_none():
     assert result.BEST_MODEL_METRIC_MINIMIZE is False
 
 
-def test_validate_config_reads_resource_spec_in_nvflares_names():
-    config = validate_config({"RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}})
-
-    assert config.RESOURCE_SPEC == JobResources(num_gpus=1, mem_per_gpu_gib=7)
-
-
-def test_validate_config_resource_spec_defaults_none():
-    assert validate_config({}).RESOURCE_SPEC is None
-
-
-def test_validate_config_rejects_a_malformed_resource_spec():
-    with pytest.raises(ValueError, match="RESOURCE_SPEC"):
-        validate_config({"RESOURCE_SPEC": {"num_of_gpus": "one"}})
-
-
 def test_validate_config_rejects_non_dict_weights():
     with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
         validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
@@ -463,74 +453,110 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
         upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
 
 
-# ── which GPU request reaches meta.json (FLIP#70) ───────────────────────────────────
+# ── the job's meta.json and the model id (FLIP#70) ──────────────────────────────────
 
 
-def _upload_with(request, configs_by_app, monkeypatch, default_gpus=0, default_mem=0):
-    """Run upload_application with each app folder's config.json given by name; return configure_meta's call."""
+def _assemble(tmp_path, monkeypatch, meta=None, resources=None, default_gpus=0):
+    """Run upload_application end to end on real files: a minimal app, plus the job's meta.json if given."""
     import fl_api.utils.upload as upload_module
 
-    monkeypatch.setattr(upload_module, "read_config", lambda path: configs_by_app[path.parent.parent.name])
-    for name in ("configure_environment", "configure_server", "configure_client", "configure_config"):
-        monkeypatch.setattr(upload_module, name, MagicMock())
-    configure_meta = MagicMock()
-    monkeypatch.setattr(upload_module, "configure_meta", configure_meta)
-    settings = MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus, JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=default_mem)
-    monkeypatch.setattr("fl_api.utils.job_resources.get_settings", lambda: settings)
-    response = upload_application(TEST_MODEL_ID, request, TMP_PATH_UPLOAD_DIR)
-    return configure_meta.call_args, response
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+    files = {
+        "app/config/config_fed_server.json": {"workflows": [], "components": []},
+        "app/config/config_fed_client.json": {"executors": []},
+        "app/custom/config.json": {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 2, "FLIP_MODEL_ID": "stale"},
+    }
+    if meta is not None:
+        files["meta.json"] = meta
 
+    def fake_get(url, **_):
+        resp = MagicMock(is_redirect=False, is_permanent_redirect=False)
+        resp.content = json.dumps(files[url.removeprefix(f"{base}/")]).encode()
+        return resp
 
-def test_the_jobs_config_json_request_reaches_meta_json(
-    mock_requests_get_success, mock_upload_correct_request, monkeypatch
-):
-    call, response = _upload_with(
-        mock_upload_correct_request,
-        {"app": {"RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}}},
-        monkeypatch,
+    monkeypatch.setattr(upload_module.requests, "get", fake_get)
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(tmp_path / "server-checkpoints"))
+    monkeypatch.setattr(
+        "fl_api.utils.job_resources.get_settings", lambda: MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus)
     )
+    body = UploadAppRequest(
+        bundle_urls=[f"{base}/{path}" for path in files],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1", "Trust_2"],
+        resources=resources,
+    )
+    response = upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
+    job_dir = tmp_path / "jobs" / TEST_MODEL_ID
+    return response, json.loads((job_dir / "meta.json").read_text()), job_dir
 
-    assert call.args[3] == JobResources(num_gpus=1, mem_per_gpu_gib=7)
-    assert response["resources"] == {"num_gpus": 1, "mem_per_gpu_gib": 7}
-    assert response["resources_source"] == "config.json"
+
+def test_a_researchers_recipe_export_keeps_its_request_and_flip_writes_the_runs_sites(tmp_path, monkeypatch):
+    exported = {
+        "name": "fedavg",
+        "resource_spec": {"@default": {"num_of_gpus": 1, "memory": "16Gi"}},
+        "min_clients": 1,
+        "deploy_map": {"app": ["@ALL"]},
+        "custom_props": {"model_id": "00000000-0000-0000-0000-000000000001", "team": "radiology"},
+    }
+
+    response, meta, _ = _assemble(tmp_path, monkeypatch, meta=exported)
+
+    assert meta == {
+        "name": TEST_MODEL_ID,
+        "resource_spec": {"@default": {"num_of_gpus": 1, "memory": "16Gi"}},
+        "deploy_map": {"app": ["server", "Trust_1", "Trust_2"]},
+        "min_clients": 2,
+        "mandatory_clients": ["Trust_1", "Trust_2"],
+        "custom_props": {"team": "radiology"},
+    }
+    assert response["resources"] == {"num_gpus": 1}
+    assert response["resources_source"] == "meta.json"
 
 
-def test_without_a_declaration_the_default_applies(mock_requests_get_success, mock_upload_correct_request, monkeypatch):
-    call, response = _upload_with(mock_upload_correct_request, {"app": {}}, monkeypatch, default_gpus=1)
+def test_the_model_id_goes_in_the_apps_config_json_not_meta_json(tmp_path, monkeypatch):
+    """Where FLIP's server components read it, as Flower's flip-model-id lives in config.toml."""
+    _, meta, job_dir = _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}})
 
-    assert call.args[3] == JobResources(num_gpus=1)
+    config = json.loads((job_dir / "app" / "custom" / "config.json").read_text())
+    assert config["FLIP_MODEL_ID"] == TEST_MODEL_ID
+    assert "custom_props" not in meta
+
+
+def test_without_a_meta_json_the_default_applies(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(tmp_path, monkeypatch, default_gpus=1)
+
+    assert meta["resource_spec"] == {"@default": {"num_of_gpus": 1}}
     assert response["resources_source"] == "default"
 
 
-def test_a_submission_override_beats_config_json(mock_requests_get_success, mock_upload_correct_request, monkeypatch):
-    request = mock_upload_correct_request.model_copy(update={"resources": JobResources(num_gpus=2)})
+def test_a_templates_empty_resource_spec_leaves_the_default_in_force(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, default_gpus=1)
 
-    call, response = _upload_with(request, {"app": {"RESOURCE_SPEC": {"num_of_gpus": 1}}}, monkeypatch)
+    assert meta["resource_spec"] == {"@default": {"num_of_gpus": 1}}
+    assert response["resources_source"] == "default"
 
-    assert call.args[3] == JobResources(num_gpus=2)
+
+def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(
+        tmp_path,
+        monkeypatch,
+        meta={"resource_spec": {"@default": {"num_of_gpus": 1, "num_of_cpus": 4}}},
+        resources=JobResources(num_gpus=0),
+    )
+
+    assert meta["resource_spec"] == {"@default": {"num_of_cpus": 4}}
+    assert response["resources"] == {"num_gpus": 0}
     assert response["resources_source"] == "submission"
 
 
-def test_app_folders_that_disagree_on_the_request_are_refused(
-    mock_requests_get_success, mock_upload_multiple_apps_request, monkeypatch
-):
-    """The request is job-level: NVFLARE's meta.json holds one resource_spec for the whole job."""
-    configs = {
-        "app": {"RESOURCE_SPEC": {"num_of_gpus": 1}},
-        "app-trust1": {"RESOURCE_SPEC": {"num_of_gpus": 2}},
-        "app-trust2": {},
-    }
-    with pytest.raises(ValueError, match="RESOURCE_SPEC"):
-        _upload_with(mock_upload_multiple_apps_request, configs, monkeypatch)
+def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="launcher_spec"):
+        _assemble(tmp_path, monkeypatch, meta={"launcher_spec": {"default": {"k8s": {"image": "x"}}}})
 
 
-def test_a_run_override_still_uploads_when_the_default_is_misconfigured(
-    mock_requests_get_success, mock_upload_correct_request, monkeypatch
-):
-    """The default is read only when nothing else sets the request, so a bad one cannot block other jobs."""
-    request = mock_upload_correct_request.model_copy(update={"resources": JobResources(num_gpus=1)})
+def test_a_run_override_still_uploads_when_the_default_is_misconfigured(tmp_path, monkeypatch):
+    """The default is read only when nothing else sets the count, so a bad one cannot block other jobs."""
+    response, _, _ = _assemble(tmp_path, monkeypatch, resources=JobResources(num_gpus=1), default_gpus=99)
 
-    call, response = _upload_with(request, {"app": {}}, monkeypatch, default_gpus=0, default_mem=7)
-
-    assert call.args[3] == JobResources(num_gpus=1)
     assert response["resources_source"] == "submission"

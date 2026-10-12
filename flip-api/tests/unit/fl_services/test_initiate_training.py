@@ -20,7 +20,6 @@ from pydantic import ValidationError
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import (
     MAX_GPUS_PER_SITE,
-    MAX_MEM_PER_GPU_GIB,
     IInitiateTrainingInputPayload,
     IJobResources,
 )
@@ -275,10 +274,10 @@ class TestGpuOverride:
     def test_no_override_by_default(self):
         assert IInitiateTrainingInputPayload(trust_ids=[uuid4()]).resources is None
 
-    def test_an_override_is_a_count_and_a_per_gpu_memory(self):
-        payload = IInitiateTrainingInputPayload(trust_ids=[uuid4()], resources={"num_gpus": 1, "mem_per_gpu_gib": 7})
+    def test_an_override_is_a_gpu_count(self):
+        payload = IInitiateTrainingInputPayload(trust_ids=[uuid4()], resources={"num_gpus": 1})
 
-        assert payload.resources == IJobResources(num_gpus=1, mem_per_gpu_gib=7)
+        assert payload.resources == IJobResources(num_gpus=1)
 
     @pytest.mark.parametrize(
         "resources",
@@ -288,8 +287,7 @@ class TestGpuOverride:
             {"num_gpus": 1.5},
             {"num_gpus": "1"},
             {"num_gpus": MAX_GPUS_PER_SITE + 1},
-            {"num_gpus": 1, "mem_per_gpu_gib": MAX_MEM_PER_GPU_GIB + 1},
-            {"num_gpus": 0, "mem_per_gpu_gib": 7},
+            {"num_gpus": 1, "mem_per_gpu_gib": 7},
             {"num_gpus": 1, "num_cpus": 4},
         ],
     )
@@ -309,14 +307,14 @@ class TestGpuOverride:
         mock_add_log,
         mock_log_queue_positions,
     ):
-        resources = IJobResources(num_gpus=2, mem_per_gpu_gib=16)
+        resources = IJobResources(num_gpus=2)
         payload = IInitiateTrainingInputPayload(trust_ids=[client1.id], resources=resources)
 
         initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
 
         assert mock_add_fl_job.call_args.kwargs["resources"] == resources
         logged = [c.args[1] for c in mock_add_log.call_args_list]
-        assert "GPU request per trust set for this run: 2 GPUs with 16 GiB" in logged
+        assert "GPU request per trust set for this run: 2 GPUs" in logged
 
     def test_without_an_override_nothing_extra_is_logged(
         self,

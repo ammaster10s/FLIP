@@ -13,37 +13,29 @@
 import time
 from enum import Enum, IntEnum, StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from fl_api.utils.logger import logger
 
-# Sanity caps on a job's GPU request, for fast feedback on a typo. They are not capacity checks:
+# Sanity cap on a job's GPU count, for fast feedback on a typo. It is not a capacity check:
 # whether a site can provide the request is decided by NVFLARE's scheduler and the site's
 # GPUResourceManager, never here (FLIP#70).
 MAX_GPUS_PER_SITE = 8
-MAX_MEM_PER_GPU_GIB = 192
 
 
 class JobResources(BaseModel):
-    """What a job needs at each participating site (FLIP#70).
+    """The GPUs a job needs at each participating site (FLIP#70).
 
-    The hub contract's backend-neutral shape; the NVFLARE adapter writes it into ``meta.json`` as
-    ``resource_spec`` (``num_of_gpus`` / ``mem_per_gpu_in_GiB``). The same request applies to every
-    selected site. It is never lowered to fit a site: a site that cannot provide it holds the job in
-    NVFLARE's scheduler, which says why.
+    The hub contract's backend-neutral shape, used for the researcher's override at submission and for
+    the fl-api default. The NVFLARE adapter writes the count into ``meta.json`` ``resource_spec`` as the
+    portable ``@default`` ``num_of_gpus``. The same count applies to every selected site. It is never
+    lowered to fit a site: a site that cannot provide it holds the job in NVFLARE's scheduler, which
+    says why.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
-    # The least memory, in GiB, each of those GPUs must have free. 0 = any.
-    mem_per_gpu_gib: StrictInt = Field(default=0, ge=0, le=MAX_MEM_PER_GPU_GIB)
-
-    @model_validator(mode="after")
-    def _memory_needs_gpus(self) -> "JobResources":
-        if self.mem_per_gpu_gib and not self.num_gpus:
-            raise ValueError("mem_per_gpu_gib needs num_gpus > 0: memory per GPU means nothing without a GPU")
-        return self
 
 
 class UploadAppRequest(BaseModel):
@@ -55,8 +47,8 @@ class UploadAppRequest(BaseModel):
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
-    # Set when the researcher overrode the job's GPU request at submission (FLIP#70). None leaves the
-    # job's config.json RESOURCE_SPEC, or the fl-api default, in force.
+    # Set when the researcher overrode the job's GPU count at submission (FLIP#70). None leaves the
+    # job's meta.json resource_spec, or the fl-api default, in force.
     resources: JobResources | None = None
 
 
@@ -181,9 +173,6 @@ class IOverridableConfig(BaseModel):
     BEST_MODEL_METRIC: str | None = None
     # Whether lower metric values are better (loss-like). Negates the selector's key metric.
     BEST_MODEL_METRIC_MINIMIZE: bool = False
-    # What the job needs at each site, from config.json's RESOURCE_SPEC in NVFLARE's own names
-    # (num_of_gpus, mem_per_gpu_in_GiB). Unset = the fl-api default (FLIP#70).
-    RESOURCE_SPEC: JobResources | None = None
 
 
 class JobStatus(StrEnum):

@@ -88,9 +88,8 @@ class FLJob(SQLModel, table=True):
     # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
     # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
-    # config.json RESOURCE_SPEC, or the fl-api default, applies.
+    # meta.json resource_spec, or the fl-api default, applies.
     num_gpus: int | None = None
-    mem_per_gpu_gib: int | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)

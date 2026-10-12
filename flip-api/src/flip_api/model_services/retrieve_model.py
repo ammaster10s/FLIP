@@ -207,12 +207,8 @@ def retrieve_model(
         trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
 
         # The GPU override the run was given at submission, if any (FLIP#70) — same latest job.
-        resources_row = db.exec(
-            select(FLJob.num_gpus, FLJob.mem_per_gpu_gib).where(col(FLJob.id) == latest_job_id)
-        ).first()
-        resources = None
-        if resources_row is not None and resources_row[0] is not None:
-            resources = IJobResources(num_gpus=resources_row[0], mem_per_gpu_gib=resources_row[1] or 0)
+        num_gpus = db.exec(select(FLJob.num_gpus).where(col(FLJob.id) == latest_job_id)).first()
+        resources = IJobResources(num_gpus=num_gpus) if num_gpus is not None else None
 
         # Where this model stands in the FL training queue (1-based; None once
         # its job is picked up or it has none) — same source as the estate list.

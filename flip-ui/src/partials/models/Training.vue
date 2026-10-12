@@ -139,7 +139,6 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import { getStatusEnumValue, IInitTraining, IJobResources, initialiseTraining,
     JobType,
     MAX_GPUS_PER_SITE,
-    MAX_MEM_PER_GPU_GIB,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
@@ -211,23 +210,6 @@ const schema = object().shape({
             .min(0, "The number of GPUs cannot be negative.")
             .max(MAX_GPUS_PER_SITE, `Ask for at most ${MAX_GPUS_PER_SITE} GPUs per trust.`)
             .required("Enter a number of GPUs."),
-        otherwise: (field) => field.strip()
-    }),
-    mem_per_gpu_gib: number().when(["gpu_override", "num_gpus"], {
-        is: (on: unknown) => Boolean(on),
-        then: (field) => field
-            .transform((value, original) => (original === "" ? 0 : value))
-            .typeError("Enter the memory per GPU in GiB.")
-            .integer("The memory per GPU must be a whole number of GiB.")
-            .min(0, "The memory per GPU cannot be negative.")
-            .max(MAX_MEM_PER_GPU_GIB, `Ask for at most ${MAX_MEM_PER_GPU_GIB} GiB per GPU.`)
-            .test(
-                "needs-a-gpu",
-                "Memory per GPU needs at least one GPU.",
-                function memoryNeedsAGpu(value) {
-                    return !value || Number(this.parent.num_gpus) > 0;
-                }
-            ),
         otherwise: (field) => field.strip()
     })
 });
@@ -303,8 +285,7 @@ const initialValues = computed(() => (pending.value
         ...(props.runResources
             ? {
                 gpu_override: "true",
-                num_gpus: props.runResources.num_gpus,
-                mem_per_gpu_gib: props.runResources.mem_per_gpu_gib
+                num_gpus: props.runResources.num_gpus
             }
             : {})
     }));
@@ -320,21 +301,17 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
     formSubmitting.value = true;
 
-    const { trust_ids, gpu_override, num_gpus, mem_per_gpu_gib } = formData as IInitTraining & {
+    const { trust_ids, gpu_override, num_gpus } = formData as IInitTraining & {
         gpu_override?: string;
         num_gpus?: number;
-        mem_per_gpu_gib?: number;
     };
 
     // If it is only one trust, add to an array
     const arr: string[] = [];
     const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
-    // Without the override the job's own config.json RESOURCE_SPEC, or the platform default, applies.
+    // Without the override the job's own meta.json resource_spec, or the platform default, applies.
     if (gpu_override) {
-        requestData.resources = {
-            num_gpus: Number(num_gpus),
-            mem_per_gpu_gib: Number(mem_per_gpu_gib ?? 0)
-        };
+        requestData.resources = { num_gpus: Number(num_gpus) };
     }
 
     try {

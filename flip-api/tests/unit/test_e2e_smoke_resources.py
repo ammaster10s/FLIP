@@ -30,25 +30,25 @@ TRUSTS = [{"id": "id-1", "name": "Azure Trust", "code": "AZ1"}]
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("0", {"num_gpus": 0, "mem_per_gpu_gib": 0}),
-        ("1", {"num_gpus": 1, "mem_per_gpu_gib": 0}),
-        ("2:16", {"num_gpus": 2, "mem_per_gpu_gib": 16}),
+        ("0", {"num_gpus": 0}),
+        ("1", {"num_gpus": 1}),
+        ("2", {"num_gpus": 2}),
     ],
 )
 def test_parse_gpus(value: str, expected: dict[str, int]) -> None:
     assert _parse_gpus(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "one", "1:big", "1.5"])
+@pytest.mark.parametrize("value", ["", "one", "1:16", "1.5"])
 def test_parse_gpus_rejects_malformed(value: str) -> None:
-    with pytest.raises(argparse.ArgumentTypeError, match="expected N or N:GIB"):
+    with pytest.raises(argparse.ArgumentTypeError, match="expected a whole number of GPUs"):
         _parse_gpus(value)
 
 
 def test_gpus_flag_defaults_to_no_override() -> None:
     required = ["--model-files-dir", "app"]
     assert parse_args(required).gpus is None
-    assert parse_args([*required, "--gpus", "1:7"]).gpus == {"num_gpus": 1, "mem_per_gpu_gib": 7}
+    assert parse_args([*required, "--gpus", "1"]).gpus == {"num_gpus": 1}
 
 
 def _initiate(resources: dict[str, int] | None) -> dict[str, Any]:
@@ -59,14 +59,11 @@ def _initiate(resources: dict[str, int] | None) -> dict[str, Any]:
 
 
 def test_initiate_sends_the_override_as_the_runs_resources() -> None:
-    assert _initiate({"num_gpus": 0, "mem_per_gpu_gib": 0}) == {
-        "trust_ids": ["id-1"],
-        "resources": {"num_gpus": 0, "mem_per_gpu_gib": 0},
-    }
+    assert _initiate({"num_gpus": 0}) == {"trust_ids": ["id-1"], "resources": {"num_gpus": 0}}
 
 
 def test_initiate_without_override_leaves_resources_out() -> None:
-    # Absent, not null: the hub then falls back to config.json RESOURCE_SPEC or the FL API default.
+    # Absent, not null: the hub then falls back to the job's meta.json resource_spec or the FL API default.
     assert _initiate(None) == {"trust_ids": ["id-1"]}
 
 

@@ -228,7 +228,7 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
 
         const override = wrapper.get("[data-test=gpu-override-switch]");
         expect(override.attributes("data-name")).toBe("gpu_override");
-        expect(wrapper.text()).toContain("config.json");
+        expect(wrapper.text()).toContain("meta.json");
         expect(wrapper.find("[data-test=gpu-count-input]").exists()).toBe(false);
     });
 

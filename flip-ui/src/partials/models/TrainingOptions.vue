@@ -85,11 +85,11 @@
             </div>
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label for="gpu_override" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
-                    GPU request per trust
+                    GPUs per trust
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
-                        Off, the job's <code>config.json</code> <code>RESOURCE_SPEC</code> applies, or the platform
-                        default. On, this run asks every selected trust for what you set here. A trust that cannot
-                        provide it holds the run until it can; the request is never lowered to fit.
+                        Off, the GPUs in the job's <code>meta.json</code> apply, or the platform default. On, this run
+                        asks every selected trust for the number you set here. A trust that cannot provide it holds
+                        the run until it can; the request is never lowered to fit.
                         <template v-if="isFlower">
                             Flower does not schedule jobs by GPU, so on this net the request is recorded, not
                             enforced.
@@ -115,15 +115,6 @@
                             :initial-value="runResources ? String(runResources.num_gpus) : ''"
                             :input-props="{ min: 0, max: MAX_GPUS_PER_SITE, step: 1, disabled }"
                         />
-                        <AiInput
-                            name="mem_per_gpu_gib"
-                            type="number"
-                            label="Memory per GPU (GiB)"
-                            hint="0 means any"
-                            data-test="gpu-mem-input"
-                            :initial-value="runResources ? String(runResources.mem_per_gpu_gib) : ''"
-                            :input-props="{ min: 0, max: MAX_MEM_PER_GPU_GIB, step: 1, disabled }"
-                        />
                     </div>
                 </div>
             </div>
@@ -138,7 +129,7 @@ import { computed, ComputedRef } from "vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import { projectHasImaging } from "@/partials/projects/projectType";
-import { IJobResources, MAX_GPUS_PER_SITE, MAX_MEM_PER_GPU_GIB } from "@/services/model-service";
+import { IJobResources, MAX_GPUS_PER_SITE } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {

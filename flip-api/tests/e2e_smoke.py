@@ -740,12 +740,11 @@ def wait_for_files_scanned(
 
 
 def _parse_gpus(value: str) -> dict[str, int]:
-    """Parse ``--gpus N[:GIB]`` into the hub's ``{num_gpus, mem_per_gpu_gib}`` request."""
-    count, _, mem = value.partition(":")
+    """Parse ``--gpus N`` into the hub's ``{num_gpus}`` request."""
     try:
-        return {"num_gpus": int(count), "mem_per_gpu_gib": int(mem or 0)}
+        return {"num_gpus": int(value)}
     except ValueError as e:
-        raise argparse.ArgumentTypeError(f"expected N or N:GIB, got {value!r}") from e
+        raise argparse.ArgumentTypeError(f"expected a whole number of GPUs, got {value!r}") from e
 
 
 def initiate_training(
@@ -761,7 +760,7 @@ def initiate_training(
     _log(f"🚀 Initiating training across trusts: {labels}")
     body: dict[str, Any] = {"trust_ids": trust_ids}
     if resources is not None:
-        # The run's GPU override (FLIP#70); omitted, the job's config.json or the fl-api default applies.
+        # The run's GPU override (FLIP#70); omitted, the job's meta.json or the fl-api default applies.
         _log(f"  🎛️  GPU request per trust set for this run: {resources}")
         body["resources"] = resources
     resp = _post(client, f"/fl/initiate/{model_id}", body, headers)
@@ -1038,9 +1037,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--gpus",
         type=_parse_gpus,
         default=None,
-        metavar="N[:GIB]",
-        help="Override the run's GPU request per trust (FLIP#70), e.g. --gpus 0 or --gpus 1:16. "
-        "Omitted, the job's config.json RESOURCE_SPEC or the FL API's default applies.",
+        metavar="N",
+        help="Override the run's GPUs per trust (FLIP#70), e.g. --gpus 0 or --gpus 1. "
+        "Omitted, the job's meta.json resource_spec or the FL API's default applies.",
     )
     parser.add_argument(
         "--abort-midway",

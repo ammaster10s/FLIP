@@ -318,21 +318,6 @@ training settings. Every setting has a default, so an app that declares only ``j
 
    *Default = unset, i.e. only the final model is saved*
 
-**RESOURCE_SPEC**
-   What the job needs at each participating Trust, in NVFLARE's own names:
-   ``{"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}`` asks every Trust for one GPU with at least 7 GiB.
-   The FL API writes it into the job's ``meta.json`` ``resource_spec``, and the FL server's scheduler
-   holds the job until every Trust's resource manager (configured from the kit's
-   ``NUM_AVAILABLE_GPUS``) can provide it. The request is never lowered to fit a Trust. Both values
-   are whole numbers, at most 8 GPUs and 192 GiB, ``mem_per_gpu_in_GiB`` needs ``num_of_gpus`` above
-   0, and any other key fails config validation. If several app folders declare it, they must agree.
-   A researcher can override it for one run when initiating training (see the
-   :doc:`user guide <../user-guides/user-common>`). Flower apps do not use this key: Flower does not
-   schedule jobs by GPU.
-
-   *Default = the platform's* ``JOB_RESOURCE_SPEC_NUM_GPUS`` */* ``JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB``
-   *(0 GPUs unless the deployment changes it)*
-
 Three further keys are read by FLIP's own NVFLARE components rather than by the FL API's validator,
 so they are unvalidated but are not simply passed through either: ``SERVER_CHECKPOINT`` (names a
 model file to stage on the FL server instead of bundling it into the app — a string or a list of
@@ -345,6 +330,53 @@ uploaded code to read at runtime. This is how the tutorials carry app-specific s
 ``LEARNING_RATE`` or ``VAL_SPLIT`` — those are conventions of individual apps, not platform
 settings, and they are neither validated nor defaulted. A misspelled key of this kind is therefore
 silently absent at runtime rather than reported as an error.
+
+One key is written by the platform rather than read: ``FLIP_MODEL_ID``, the hub's id for the model,
+which FLIP's components on the FL server report under. The FL API writes it into every app
+folder's ``config.json`` when training starts, replacing any value you set, as the Flower FL API
+writes ``flip-model-id`` into ``config.toml``.
+
+NVFLARE ``meta.json``
+=====================
+
+An NVFLARE job's ``meta.json`` states what the job needs at each site. FLIP takes the job's own:
+upload a ``meta.json`` with your model files and it replaces the template's. Write it by hand, or
+export it from a recipe or ``FedJob`` (``export_job``), as you would for ``nvflare job submit``. FLIP
+keeps two keys and writes the rest from the run:
+
+**resource_spec**
+   What the job needs at every participating Trust, as NVFLARE's portable ``@default`` block:
+
+   .. code-block:: json
+
+      {"resource_spec": {"@default": {"num_of_gpus": 1}}}
+
+   ``num_of_gpus`` is a whole number from 0 to 8. The FL server's scheduler holds the job until
+   every Trust's resource manager (configured from the kit's ``NUM_AVAILABLE_GPUS``) can provide
+   the GPUs, and the request is never lowered to fit a Trust. ``num_of_cpus`` (a whole number, at
+   least 1) and ``memory`` (such as ``"32Gi"``) are accepted too; only NVFLARE's container job
+   launchers (Docker, Kubernetes) read them, as the job container's request.
+
+   A block naming a site is refused, because a job cannot know the Trusts' site names, and so is
+   ``mem_per_gpu_in_GiB``, which NVFLARE's portable block does not accept. A researcher can
+   override the GPU count for one run when initiating training (see the
+   :doc:`user guide <../user-guides/user-common>`).
+
+   *Default = the platform's* ``JOB_RESOURCE_SPEC_NUM_GPUS`` *(0 GPUs unless the deployment changes
+   it), when the job's* ``resource_spec`` *states no GPU count. FLIP's templates ship an empty one.*
+
+**custom_props**
+   Kept as written, for your own components. FLIP no longer reads a ``model_id`` from it, and drops
+   one if present: the recipes leave a placeholder there for local runs.
+
+**name**, **deploy_map**, **min_clients**, **mandatory_clients**
+   Written by FLIP from the run: the job is named after the model, and every selected Trust must
+   take part.
+
+Any other key fails the job when training starts, ``launcher_spec``, ``study`` and ``scope`` among
+them. Those choose how a Trust runs the job (its container image, its data, its privacy scope),
+which is the Trust's decision. Flower apps have no ``meta.json``: Flower's deployment runtime does
+not schedule jobs by GPU.
 
 Flower run configuration
 ========================
@@ -491,9 +523,9 @@ Semantics — verified against NVFLARE 2.9.0:
   job filters are appended, never substituted. An app that sets ``off: true`` (or ships no filter at all —
   the evaluation templates) disables only its own filter instance; the site filter still runs.
 - **Jobs cannot opt out or pick a weaker scope.** The rendered policy defines exactly one scope
-  (``site_default``) set as ``default_scope``. FLIP's fl-api writes each job's ``meta.json`` itself and never
-  sets a ``scope`` key, so every job lands in the default scope; a job carrying an unknown scope name is
-  rejected at deploy time on that site with ``privacy scope 'X' is not allowed``.
+  (``site_default``) set as ``default_scope``. FLIP's fl-api refuses a job whose ``meta.json`` sets a ``scope``
+  key and never sets one itself, so every job lands in the default scope; a job carrying an unknown scope name
+  is rejected at deploy time on that site with ``privacy scope 'X' is not allowed``.
 - **Ordering changes the percentile maths slightly.** The site filter runs before the job's ``KeepOnlyVars``,
   so it computes its percentile over the *full* result dict — on a frozen-backbone (head-only) finetune that
   vector is dominated by the backbone's all-zero diffs, unlike the app-level filter which deliberately runs

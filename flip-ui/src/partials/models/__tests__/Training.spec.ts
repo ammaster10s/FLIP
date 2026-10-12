@@ -62,7 +62,7 @@ interface MountOpts {
     jobTypesError?: boolean;
     jobTypesLoading?: boolean;
     runTrusts?: string[];
-    runResources?: { num_gpus: number; mem_per_gpu_gib: number } | null;
+    runResources?: { num_gpus: number } | null;
     formValues?: Record<string, unknown>;
 }
 
@@ -461,18 +461,14 @@ describe("Training options show a dispatched run's GPU override", () => {
             status: "RUNNING",
             view: "prepare",
             runTrusts: ["trust-a"],
-            runResources: {
-                num_gpus: 1,
-                mem_per_gpu_gib: 7
-            }
+            runResources: { num_gpus: 1 }
         });
 
         expect(initialValues(wrapper)).toEqual({
             enriched: "true",
             trust_ids: ["trust-a"],
             gpu_override: "true",
-            num_gpus: 1,
-            mem_per_gpu_gib: 7
+            num_gpus: 1
         });
     });
 
@@ -694,36 +690,46 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
         expect(initialiseTraining.mock.calls[0][1]).toEqual({ trust_ids: ["trust-a"] });
     });
 
-    it("sends the GPU count and per-GPU memory when the override is on", async () => {
+    it("sends the GPU count when the override is on", async () => {
         const { wrapper, switches, initialiseTraining } = await readyToSubmit();
 
         await switches[2].trigger("click");
         await flushPromises();
         await wrapper.get("[data-test=gpu-count-input]").setValue("1");
-        await wrapper.get("[data-test=gpu-mem-input]").setValue("7");
         await wrapper.find("form").trigger("submit");
 
         await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
         expect(initialiseTraining.mock.calls[0][1]).toEqual({
             trust_ids: ["trust-a"],
-            resources: {
-                num_gpus: 1,
-                mem_per_gpu_gib: 7
-            }
+            resources: { num_gpus: 1 }
+        });
+    });
+
+    it("sends zero GPUs as an override, not as no override", async () => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue("0");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({
+            trust_ids: ["trust-a"],
+            resources: { num_gpus: 0 }
         });
     });
 
     it.each([
-        ["9", "0", "at most 8"],
-        ["1.5", "0", "whole number"],
-        ["0", "7", "needs at least one GPU"]
-    ])("refuses %s GPUs with %s GiB", async (gpus, mem, message) => {
+        ["9", "at most 8"],
+        ["1.5", "whole number"],
+        ["-1", "cannot be negative"]
+    ])("refuses %s GPUs", async (gpus, message) => {
         const { wrapper, switches, initialiseTraining } = await readyToSubmit();
 
         await switches[2].trigger("click");
         await flushPromises();
         await wrapper.get("[data-test=gpu-count-input]").setValue(gpus);
-        await wrapper.get("[data-test=gpu-mem-input]").setValue(mem);
         await wrapper.find("form").trigger("submit");
 
         await vi.waitFor(() => expect(wrapper.text()).toContain(message));
@@ -767,19 +773,15 @@ describe("Training shows a dispatched run's GPU override in the real form", () =
                 jobType: "standard",
                 view: "prepare" as const,
                 runTrusts: ["trust-a"],
-                runResources: {
-                    num_gpus: 1,
-                    mem_per_gpu_gib: 7
-                }
+                runResources: { num_gpus: 1 }
             }
         });
         await flushPromises();
 
         const gpus = wrapper.get("[data-test=gpu-count-input]").element as HTMLInputElement;
-        const mem = wrapper.get("[data-test=gpu-mem-input]").element as HTMLInputElement;
         expect(gpus.value).toBe("1");
-        expect(mem.value).toBe("7");
         expect(gpus.disabled).toBe(true);
+        expect(wrapper.find("[data-test=gpu-mem-input]").exists()).toBe(false);
     });
 });
 

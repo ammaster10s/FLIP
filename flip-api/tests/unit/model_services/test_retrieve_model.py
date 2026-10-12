@@ -303,7 +303,7 @@ def test_retrieve_model_reports_the_queue_position(
 
 @pytest.mark.parametrize(
     ("row", "expected"),
-    [((1, 7), IJobResources(num_gpus=1, mem_per_gpu_gib=7)), ((None, None), None), (None, None)],
+    [(1, IJobResources(num_gpus=1)), (0, IJobResources(num_gpus=0)), (None, None)],
 )
 def test_retrieve_model_reports_the_runs_gpu_override(
     override_dependencies, mock_can_access_true, mock_load_sql, row, expected

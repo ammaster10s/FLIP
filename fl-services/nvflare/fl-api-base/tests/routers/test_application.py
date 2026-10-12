@@ -77,16 +77,16 @@ def test_upload_app_success(client, override_session):
 def test_upload_app_passes_a_gpu_override_through(client, override_session):
     """The researcher's override at submission reaches upload_application as a JobResources (FLIP#70)."""
     with patch("fl_api.routers.application.upload_application", return_value={"status": "ok"}) as mock_upload:
-        payload = {**make_upload_payload(), "resources": {"num_gpus": 1, "mem_per_gpu_gib": 7}}
+        payload = {**make_upload_payload(), "resources": {"num_gpus": 1}}
         response = client.post(f"/upload_app/{MODEL_ID}", json=payload)
 
         assert response.status_code == status.HTTP_200_OK
-        assert mock_upload.call_args.args[1].resources.model_dump() == {"num_gpus": 1, "mem_per_gpu_gib": 7}
+        assert mock_upload.call_args.args[1].resources.model_dump() == {"num_gpus": 1}
 
 
 @pytest.mark.parametrize(
     "resources",
-    [{"num_gpus": -1}, {"num_gpus": "1"}, {"num_gpus": 1, "num_cpus": 2}, {"num_gpus": 0, "mem_per_gpu_gib": 7}],
+    [{"num_gpus": -1}, {"num_gpus": "1"}, {"num_gpus": 1, "num_cpus": 2}, {"num_gpus": 1, "mem_per_gpu_gib": 7}],
 )
 def test_upload_app_rejects_a_malformed_gpu_override(client, override_session, resources):
     with patch("fl_api.routers.application.upload_application") as mock_upload:

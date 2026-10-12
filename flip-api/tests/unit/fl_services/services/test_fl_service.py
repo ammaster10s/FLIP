@@ -2547,17 +2547,17 @@ class TestRealRequiredFilesManifests:
 
 
 def test_add_fl_job_stores_a_gpu_override(model_id, fake_session):
-    fl_service.add_fl_job(model_id, [], fake_session, resources=IJobResources(num_gpus=1, mem_per_gpu_gib=7))
+    fl_service.add_fl_job(model_id, [], fake_session, resources=IJobResources(num_gpus=1))
 
     job = fake_session.add.call_args.args[0]
-    assert (job.num_gpus, job.mem_per_gpu_gib) == (1, 7)
+    assert job.num_gpus == 1
 
 
-def test_add_fl_job_without_an_override_leaves_the_columns_null(model_id, fake_session):
+def test_add_fl_job_without_an_override_leaves_the_column_null(model_id, fake_session):
     fl_service.add_fl_job(model_id, [], fake_session)
 
     job = fake_session.add.call_args.args[0]
-    assert (job.num_gpus, job.mem_per_gpu_gib) == (None, None)
+    assert job.num_gpus is None
 
 
 def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
@@ -2578,11 +2578,11 @@ def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
 
 
 def test_start_training_sends_the_runs_override_to_the_fl_api(model_id, fl_job_id, fake_session):
-    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=2, mem_per_gpu_gib=16)
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=2)
 
     body, _ = _start(model_id, fl_job_id, fake_session, job)
 
-    assert body.resources == IJobResources(num_gpus=2, mem_per_gpu_gib=16)
+    assert body.resources == IJobResources(num_gpus=2)
 
 
 def test_start_training_without_an_override_sends_none(model_id, fl_job_id, fake_session):
@@ -2592,16 +2592,16 @@ def test_start_training_without_an_override_sends_none(model_id, fl_job_id, fake
 
 
 def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_from(model_id, fl_job_id, fake_session):
-    reply = {"message": "ok", "resources": {"num_gpus": 1, "mem_per_gpu_gib": 7}, "resources_source": "config.json"}
+    reply = {"message": "ok", "resources": {"num_gpus": 1}, "resources_source": "meta.json"}
 
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
-    assert ("GPU request per trust: 1 GPU with 7 GiB (from the job's config.json)", True) in logged
+    assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
 
 
 def test_start_training_says_when_flower_records_but_does_not_enforce_the_request(model_id, fl_job_id, fake_session):
     job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
-    reply = {"message": "ok", "resources": {"num_gpus": 1, "mem_per_gpu_gib": 0}, "resources_enforced": False}
+    reply = {"message": "ok", "resources": {"num_gpus": 1}, "resources_enforced": False}
 
     _, logged = _start(model_id, fl_job_id, fake_session, job, reply)
 
