@@ -88,10 +88,21 @@ class State:
         self.doc = doc
 
     def attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        # `mode` matters: a `data` source and a `managed` resource can share a
-        # type and name (aws_ecs_task_definition.flip_api is both, by design —
-        # see the revision-tracking block in ecs_services.tf). Matching without
-        # it silently returns whichever came first in the file.
+        """Attributes of a managed resource's first instance, by type and name.
+
+        `mode` matters: a `data` source and a `managed` resource can share a
+        type and name (aws_ecs_task_definition.flip_api is both, by design —
+        see the revision-tracking block in ecs_services.tf). Matching without
+        it silently returns whichever came first in the file.
+
+        Args:
+            rtype (str): Terraform resource type, e.g. `aws_ecs_task_definition`.
+            name (str): Resource name, e.g. `flip_api`.
+
+        Returns:
+            dict[str, Any]: The first instance's attributes, or `{}` when the resource
+                is absent from state or has no instances.
+        """
         for r in self.doc.get("resources", []):
             if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
                 instances = r.get("instances") or []
@@ -112,6 +123,14 @@ class State:
         Needed where the deployed value only exists as a lookup: the Ark+ demo
         bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
         the only record of the name that was passed in.
+
+        Args:
+            rtype (str): Terraform data source type, e.g. `aws_s3_bucket`.
+            name (str): Data source name, e.g. `demo_assets`.
+
+        Returns:
+            dict[str, Any]: The first instance's attributes, or `{}` when the data
+                source is absent from state or has no instances.
         """
         for r in self.doc.get("resources", []):
             if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:

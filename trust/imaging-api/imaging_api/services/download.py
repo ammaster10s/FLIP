@@ -62,8 +62,8 @@ async def download_and_unzip_images(
         accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
         net_id (str): The ID of the FL net that will run the training.
         assessor_type (str): The type of assessor to use for the download ("scan" or "assessor").
-        resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
-        allowed if researcher has added their own custom XNAT resource type into scans.
+        resource_type (str): XNAT resource type, one of DICOM, NIFTI, SEG or ALL (the router's ``ResourceType``
+        Literal; custom values are rejected there). ALL will download all resources.
         headers (dict[str, str]): XNAT authentication headers.
         force_refresh (bool): Re-download even when a completed cached copy exists. The sentinel is
         removed before the re-download starts, so a crash mid-refresh can never leave a stale
