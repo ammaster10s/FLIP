@@ -227,10 +227,13 @@ spec:
             - {{ .Values.flClient.flower.supernodeClientAppIoHost | quote }}
             - "--port"
             - {{ .Values.flClient.flower.supernodeClientAppIoPort | quote }}
-            # ClientApp-side per-run dependency install (uv sync with the
-            # image's pinned flip-utils — FLIP#767); required for every
-            # Flower app run, mirroring compose_trust.production.flower.yml.
-            - "--allow-runtime-dependency-installation"
+            # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+            # per-run env after the run id, so every ClientApp launch in a run shares it,
+            # and each launch's exit handler deletes it -- a later round's `uv sync` then
+            # falls through to the base interpreter (Permission denied on setuptools) or
+            # loses its env mid-round. The ClientApp runs in the image's environment,
+            # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+            # every package the template app code imports, and no package index needed at run time.
           {{- else if eq .Values.flBackend "nvflare" }}
           command:
             - /bin/bash
@@ -262,8 +265,12 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-fl-client
           env:
+            {{- with .Values.uploadedFederatedDataBucket }}
+            # Only when set: flip-utils validates it as an s3:// URL, so an empty
+            # value crashes the client at import, while unset takes its default.
             - name: UPLOADED_FEDERATED_DATA_BUCKET
-              value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $governed }}
             # The governance document's [fl_privacy.nvflare] section (FLIP#1259), as extracted
             # by governance-extract. The same filter as FL_SITE_PRIVACY_* below: set it in one

@@ -94,13 +94,15 @@ Note you need Orthanc running in order to startup XNAT and configure it properly
 
 ### Build XNAT Docker images for local development
 
-Build the XNAT Docker images locally (requires AWS CLI access for S3 artifacts):
+Build the XNAT Docker images locally (no AWS access needed; the WAR and plugins are public upstream downloads pinned in
+[`artifacts.manifest`](artifacts.manifest)):
 
 ```sh
 make build
 ```
 
-This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
@@ -160,7 +162,8 @@ Docker Swarm, and automatically configures both XNAT instances (service account,
 registration, dcm2niix command). The repo-root `make up` follows the same path after registering the example Trusts.
 
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
-HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
+HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
+bring-up — the log is written host-side), instead of silently skipping
 that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
@@ -389,7 +392,8 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
   confirmed to be the intended release.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
-  `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
+  `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the bring-up. Once the plugin cache is
+  repaired, rerun the individual Trust with
   `make -C trust/xnat up-xnat KIT=<CODE>`. This target intentionally resets that development XNAT's data. If the
   running instance already has the correct plugins and only configuration needs retrying, use
   `make -C trust/xnat xnat-configure XNAT_PROJECT=xnat<N>` instead.
