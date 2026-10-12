@@ -223,6 +223,15 @@ def test_the_cstore_check_is_the_smokes_verdict_with_its_last_line():
     assert failed.detail == "✗ no receiver-side evidence"
 
 
+def test_an_inconclusive_smoke_fails_the_checklist():
+    # smoke-cstore exits 2 when an arrival-time match is its only evidence (FLIP#1378). That is
+    # a warning for an operator at a terminal, but an acceptance checklist must not pass on it.
+    check = selftest.check_cstore(lambda: (2, "⚠ inconclusive: the only evidence is an arrival time\n", ""))
+
+    assert not check.ok
+    assert check.detail.startswith("⚠ inconclusive")
+
+
 def test_kubectls_stderr_chatter_is_not_mistaken_for_the_verdict():
     """kubectl exec says which container it defaulted to on stderr; the smoke speaks on stdout."""
     noise = 'Defaulted container "tomcat" out of: tomcat, prepare-data-dirs (init)\n'

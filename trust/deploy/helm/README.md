@@ -366,7 +366,7 @@ trust shape shares (the VM's is `scripts/selftest_node.sh`) against the deployed
 | omop seeded | `omop.person` has rows |
 | orthanc seeded | Orthanc holds instances |
 | orthanc requires auth | Orthanc answers 401 without credentials |
-| xnat c-store | `smoke-cstore` passes |
+| xnat c-store | `smoke-cstore` exits 0; its inconclusive exit 2 fails the check |
 | fl client running | the FL client is running, with no restart, at two samples 45 s apart |
 
 It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
