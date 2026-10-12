@@ -94,7 +94,7 @@ Full-platform smoke test, against a running deployment:
 - [x] NVFLARE — `make e2e_smoke`
 - [x] Flower — `make e2e_smoke FL_BACKEND=flower`
 
-Both passed on 12 October 2026 on the dev stack on an RTX 5090 workstation, with the hub, both trusts and the FL images (built locally from the release branch at `8f7242c82`, after #1422) at the release commit: create project, cohort query, trust approval, image pull, training (`xray_classification`, CPU clients), results uploaded and downloaded. Flower ran two rounds past the point where #1418 used to fail, with no per-run dependency install.
+Both passed on 12 October 2026 on the dev stack on an RTX 5090 workstation, with the hub, both trusts and the FL images (built locally from the release branch at `8f7242c82`, after #1422) at the release commit: create project, cohort query, trust approval, image pull, training (`xray_classification`, CPU clients), results uploaded and downloaded. Flower completed every round, past the second-round launch where #1418 used to fail, with no per-run dependency install.
 
 ## :file_folder: PRs merged in this release
 
