@@ -49,15 +49,22 @@
     - flip_fl_kit
     - flip_observability_config
   tasks:
+    # Compares the installed version, not the binary's presence, so a reprovision after a uv_version
+    # bump (or onto an image that ships another uv) installs the pinned one.
     - name: Install uv {{ uv_version }} (seeding and FL kit provisioning run uv on the host)
       ansible.builtin.shell: |
         set -euo pipefail
+        if /usr/local/bin/uv --version 2>/dev/null | grep -qE '^uv {{ uv_version | regex_escape }}( |$)'; then
+          echo "uv {{ uv_version }} already installed"
+          exit 0
+        fi
         curl -LsSf "https://astral.sh/uv/{{ uv_version }}/install.sh" -o /tmp/uv-install.sh
         UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh /tmp/uv-install.sh
         rm -f /tmp/uv-install.sh
       args:
         executable: /bin/bash
-        creates: /usr/local/bin/uv
+      register: uv_install
+      changed_when: "'already installed' not in uv_install.stdout"
 
     - name: Read the Docker swarm state
       ansible.builtin.command: docker info --format "{{ '{{' }} .Swarm.LocalNodeState {{ '}}' }}"

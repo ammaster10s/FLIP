@@ -78,6 +78,16 @@ def test_uv_is_pinned():
     assert any("uv" in n for n in names)
 
 
+def test_uv_install_enforces_the_pin_on_reprovision():
+    """`creates:` would skip the task once any uv exists, so a uv_version bump never landed."""
+    task = next(t for t in _play()["tasks"] if t["name"].startswith("Install uv"))
+    assert "creates" not in task.get("args", {}), "the pin must be checked by version, not by file presence"
+    script = task["ansible.builtin.shell"]
+    assert "/usr/local/bin/uv --version" in script
+    assert "{{ uv_version | regex_escape }}" in script
+    assert task.get("changed_when"), "an already-pinned uv must not report a change"
+
+
 def test_swarm_is_initialised_idempotently():
     tasks = _play()["tasks"]
     swarm = [t for t in tasks if "swarm init" in str(t.get("ansible.builtin.command", t.get("command", "")))]
