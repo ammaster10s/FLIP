@@ -174,13 +174,14 @@ make -C fl-tutorials download-xray-data                  # xray dataset (HF); sp
 make -C fl-tutorials download-arkplus-finetuning-data    # Ark+ TRAIN splits (HF, ~6.3 GB): arkplus_fine_tuning
 make -C fl-tutorials download-arkplus-eval-data          # Ark+ HOLD-OUT splits (HF, ~1.6 GB): the two arkplus evaluation tutorials
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (sim-tutorial is the same)
 make -C fl-tutorials test                                # ruff + both CPU-only pytest suites (tutorial-app + per-dataset)
 ```
 
 `make run` delegates to `make sim` (NVFLARE simulator, needs a GPU; per-tutorial `make export` builds
-the job config without one). `sim-tutorial` means "no containers" on both backends — an alias for
-`run-tutorial` on NVFLARE, a `flwr run` against a SuperLink flwr starts itself on Flower. Mock OMOP
+the job config without one). `run-tutorial` / `run-all-tutorials` run the simulator on both backends,
+and `sim-tutorial` is an alias for `run-tutorial` on both — on Flower, a `flwr run` against a SuperLink
+flwr starts itself. On both backends the FL images and the submit path are exercised by `make e2e_smoke`. Mock OMOP
 data is generated in-tree per dataset under `fl-tutorials/datasets/`. Tutorial layout, the simulator
 paths, the dataset regeneration chains and their verification gate:
 [`fl-tutorials/AGENTS.md`](fl-tutorials/AGENTS.md). FL image building (`make build-fl`, the `:dev`
