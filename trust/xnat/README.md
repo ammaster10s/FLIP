@@ -94,13 +94,15 @@ Note you need Orthanc running in order to startup XNAT and configure it properly
 
 ### Build XNAT Docker images for local development
 
-Build the XNAT Docker images locally (requires AWS CLI access for S3 artifacts):
+Build the XNAT Docker images locally (no AWS access needed; the WAR and plugins are public upstream downloads pinned in
+[`artifacts.manifest`](artifacts.manifest)):
 
 ```sh
 make build
 ```
 
-This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own

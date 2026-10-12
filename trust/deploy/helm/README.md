@@ -295,7 +295,7 @@ neither implies the other.
 
 ```bash
 make -C trust/deploy/helm status         # includes the plugin-roster comparison below
-make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then reads XNAT's receiver log
+make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's prearchive
 ```
 
 `status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
@@ -304,8 +304,26 @@ they disagree. They disagree when the **pod spec** is older than the values — 
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
 means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
 different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS and then greps the receiver's `dicom.log` rather
-than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
+the importer and passes throughout.
+
+`smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
+evidence that the object landed — polled, strongest first: a new prearchive object carrying the
+UID just sent (`SOPInstanceUID`, else `StudyInstanceUID`), else a new line in XNAT's
+`received.log` since the mark taken before the store, else (last resort, reported as such) a new
+prearchive object by arrival time alone. That last reading is a pass only where `received.log`
+does not exist on the receiver; where it exists and gained no line, the run exits **2 —
+inconclusive**, which `make smoke-cstore` surfaces as a loud warning rather than a Make failure
+(exit 1 stays a real failure). The `received.log` line is the normal path here: the
+FLIP receiver runs with `anonymizationEnabled: true` and `anon_script.das` hashes the
+Study/Series/SOP UIDs, so the stored object does not carry the UIDs Orthanc holds and the UID
+match cannot fire. That line means *a new receipt during the window, preferring lines from
+`SENDER_AE` when they are distinguishable* — it does not identify the object, and a concurrent
+import from the same PACS cannot be told apart (proper matching of the stored object is a
+follow-up). It does **not** require `dicom.log` to grow — that is the receiver's *error*
+log, not its receipt log, and this deployment never writes it at all; its growth is reported as
+context and is never a success route. The importer-crash signatures still fail the run, read
+from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
 ### 7. (FL training only) Open the FL-server NLB
@@ -570,7 +588,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):

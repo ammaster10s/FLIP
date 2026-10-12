@@ -130,7 +130,8 @@ only under `LOCAL_DEV`: deployed, each trust's data-access-api already serves th
 cohort. See that function's docstring for how the buckets are chosen.
 
 The first run is slow: `flwr run` builds a per-run environment under `~/.flwr/runtime-envs/` and
-installs the app's dependencies (MONAI, torch) into it. Later runs reuse it.
+installs the app's dependencies (MONAI, torch) into it. The environment is deleted when the run
+ends, but uv's cache keeps the downloaded wheels, so later runs start faster.
 
 ## Best-model selection
 
