@@ -241,7 +241,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave the placeholder for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
 | XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` once before the first `make up`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
@@ -268,6 +268,10 @@ runs. Authorised FLIP developers can use the shared development values for those
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
 #### What still needs AWS in development
+
+The step-by-step local-deployment walkthrough is
+[`docs/source/deploy-flip/deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst); this
+table is the capability matrix behind it.
 
 | Capability | Needs | Without AWS |
 | --- | --- | --- |
