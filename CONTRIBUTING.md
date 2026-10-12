@@ -56,6 +56,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
   a Compose too old to record that label does not lose the protection — the guard fails closed,
   refusing the operation with an explicit "the kit that owns them cannot be identified" stop
+- On a **shared host** (one Docker daemon, several developers) set `FLIP_INSTANCE=<name>` before your
+  first `make up` and give the stack its own host ports (see `FLIP_INSTANCE` in
+  [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables)). Compose project names are
+  daemon-global, so `make up`, `down` and the other hub targets refuse a project whose containers another
+  checkout created (`ALLOW_FOREIGN_PROJECT=1` skips the check)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
