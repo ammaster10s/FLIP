@@ -390,9 +390,8 @@ restart-no-trust: _check-compose-project-owner
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
-# Runs the script directly (not via deploy/providers/AWS/Makefile) so it stays
-# credential-free: that Makefile's parse-time FL_KIT_DATE guard needs the
-# gitignored deploy env files, which contributors don't have.
+# Runs the script directly; `make -C deploy/providers/AWS lint` runs it too, with
+# terraform fmt and tflint. Both are credential-free and need no deploy env file.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
 # Static tflint lint over deploy/providers/AWS: unused declarations, missing provider

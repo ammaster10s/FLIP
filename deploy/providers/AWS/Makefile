@@ -27,6 +27,12 @@ endif
 # overwrite) still maps to staging here.
 ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
 include ../../env_mode.mk
+
+# Goals that read no env file and call no AWS API. When every goal on the command line is one of
+# these, the parse-time env guards below stand aside, so a contributor without the gitignored
+# deploy env files can run them. Any other goal, alone or beside these, keeps every guard (FLIP#1440).
+STATIC_GOALS := lint checkov-lint help
+STATIC_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes))
 MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
@@ -63,7 +69,7 @@ _AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_
 
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
-$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
+$(if $(STATIC_ONLY),,$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND))))
 
 # Logical AWS profile names. Defaults match the short-alias pattern recommended
 # in deploy/providers/AWS/README.md (operators add `[profile prod]` / `[profile stag]`
@@ -85,15 +91,19 @@ _AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-stag   := LZA_STAG_AWS_PROFILE
 EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
+ifeq ($(STATIC_ONLY),)
 ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
 $(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
+endif
 endif
 # The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
 # there is no defaultable name for the staging VPC, so require it explicitly rather
 # than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(STATIC_ONLY),)
 ifeq ($(ENV),lza-stag)
 ifeq ($(LZA_VPC_NAME),)
 $(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
+endif
 endif
 endif
 
@@ -160,12 +170,12 @@ unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),plac
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
 # about where to set the value.
-$(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-$(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-$(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(STATIC_ONLY),,$(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),))
+$(if $(STATIC_ONLY),,$(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),))
+$(if $(STATIC_ONLY),,$(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),))
 # AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
 # default, and it also names the bucket the FL participant-kit targets below read and write.
-$(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(STATIC_ONLY),,$(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),))
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -177,9 +187,9 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
-$(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
-$(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
-$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
+$(if $(STATIC_ONLY),,$(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`)))
+$(if $(STATIC_ONLY),,$(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY)))
+$(if $(STATIC_ONLY),,$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE))))
 # Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
 # 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
 # env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
@@ -313,6 +323,16 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 
 prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
+
+# tflint resolves variables from TF_VAR_*, which this Makefile exports from the env file (empty when
+# there is none): unset them all, so the source is linted as CI lints it, with no values supplied.
+WITHOUT_TF_VARS = env $$(env | sed -n 's/^\(TF_VAR_[A-Za-z0-9_]*\)=.*/-u \1/p')
+
+.PHONY: lint
+lint: ## Static checks over this Terraform tree, as CI runs them: terraform fmt, tflint and checkov — no env file or credentials needed (FLIP#1440)
+	terraform fmt -check -recursive
+	$(WITHOUT_TF_VARS) bash scripts/tflint_lint.sh
+	$(WITHOUT_TF_VARS) bash scripts/checkov_lint.sh
 
 .PHONY: checkov-lint
 checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)

@@ -22,6 +22,7 @@ through ``seed-trust-data`` (which re-seeds OMOP/Orthanc on the host) or
 ``down-trust-ec2`` — those belong to ``deploy-trust``, the first-install verb.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -138,3 +139,62 @@ def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
     (a prerequisite would run against the still-running omop-db — #1190 review).
     """
     assert "seed-trust-data" in _recipe("deploy-trust")
+
+
+# ── Static goals run without the deploy env file (FLIP#1440) ─────────────────────────────────
+
+
+def _make_dry_run(*goals: str, tmp_path: Path) -> subprocess.CompletedProcess:
+    """`make -n <goals>` with no deploy env file and none of its keys in the environment.
+
+    MAIN_ENV_FILE points at a path that does not exist, so a contributor's gitignored
+    .env.stag (if any) cannot make the test pass for the wrong reason.
+    """
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(tmp_path))}
+    return subprocess.run(
+        ["make", "-n", "-s", *goals, f"MAIN_ENV_FILE={tmp_path / 'absent.env'}"],
+        cwd=AWS_PROVIDER_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize("goal", ["lint", "checkov-lint", "help"])
+def test_a_static_goal_needs_no_env_file(goal: str, tmp_path: Path) -> None:
+    result = _make_dry_run(goal, tmp_path=tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_lint_runs_the_three_static_checks_ci_runs(tmp_path: Path) -> None:
+    result = _make_dry_run("lint", tmp_path=tmp_path)
+    assert result.returncode == 0, result.stderr
+    for command in ("terraform fmt -check -recursive", "scripts/tflint_lint.sh", "scripts/checkov_lint.sh"):
+        assert command in result.stdout, f"lint must run {command}"
+
+
+def test_lint_supplies_no_terraform_variable_values(tmp_path: Path) -> None:
+    """This Makefile exports TF_VAR_* (empty without an env file), and tflint resolves variables from them.
+
+    With them, tflint rejected the empty FL_SERVER_PORT and bucket names that CI, which sets none,
+    never sees. The recipe's prefix must leave no TF_VAR_* in the linters' environment.
+    """
+    result = _make_dry_run("lint", tmp_path=tmp_path)
+    for line in (ln for ln in result.stdout.splitlines() if "_lint.sh" in ln):
+        prefix = line.split("bash scripts/", 1)[0]
+        probe = subprocess.run(
+            ["bash", "-c", f"{prefix} env"],
+            env={"PATH": os.environ["PATH"], "TF_VAR_FL_SERVER_PORT": "", "TF_VAR_bucket": "x"},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "TF_VAR_" not in probe.stdout, f"{line!r} leaves TF_VAR_* set"
+
+
+@pytest.mark.parametrize("goals", [("plan",), ("deploy-centralhub",), ("lint", "plan")])
+def test_any_other_goal_keeps_the_env_guards(goals: tuple[str, ...], tmp_path: Path) -> None:
+    """The guards stand aside only when EVERY goal is static: a mixed command line keeps them."""
+    result = _make_dry_run(*goals, tmp_path=tmp_path)
+    assert result.returncode != 0
+    assert "must be set" in result.stderr
