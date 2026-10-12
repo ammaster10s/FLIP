@@ -78,6 +78,22 @@ def test_trust_dirs_role_checks_fl_backend_first() -> None:
     assert "flkit" in (task.get("tags") or []), "the check must run with the flkit-tagged tasks that read fl_backend"
 
 
+@pytest.mark.parametrize(
+    ("role", "path_var"),
+    [("flip_fl_kit", "fl_kit_dir"), ("flip_observability_config", "observability_dest_dir")],
+)
+def test_host_paths_follow_flip_dir(role: str, path_var: str) -> None:
+    """A play that relocates flip_dir must move the kit and config trees with the images and XNAT ones.
+
+    A literal /opt/flip here splits the layout: the host provisions cleanly and the first
+    up-trust mounts an empty directory.
+    """
+    defaults = _load(ROLES_DIR / role / "defaults" / "main.yml") or {}
+    assert defaults.get("flip_dir") == "/opt/flip", f"{role} must default flip_dir like flip_trust_dirs does"
+    path = str(defaults.get(path_var, ""))
+    assert path.startswith("{{ flip_dir }}/"), f"{role}'s {path_var} must derive from flip_dir, not {path!r}"
+
+
 def test_walker_skips_galaxy_roles_installed_beside_the_local_ones(tmp_path, monkeypatch) -> None:
     import test_onprem_playbook as walker
 

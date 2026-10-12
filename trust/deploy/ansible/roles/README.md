@@ -46,7 +46,9 @@ Inputs every play must set: `fl_backend` (`nvflare` | `flower`) and `fl_kit_sour
 first task, so a missing or misspelt value stops the play instead of re-owning the net-N dirs, staging
 the wrong kit, or staging none.
 `flip_owner` / `flip_group` default to `ubuntu` in four roles; set them at play level for any other
-login user (the Azure play does).
+login user (the Azure play does). `flip_dir` (`/opt/flip`) roots every host path in `flip_trust_dirs`,
+`flip_fl_kit` and `flip_observability_config`, so one play-level value moves them all — the kit file's
+`FL_KIT_DIR`, `OBSERVABILITY_CONFIG_DIR` and `BASE_IMAGES_DOWNLOAD_DIR` must then follow it.
 
 Guards over this tree (all static, no host needed): `../tests/test_onprem_playbook.py` walks the
 on-prem play *through* its roles (docker-group grant, per-net dir ownership);
