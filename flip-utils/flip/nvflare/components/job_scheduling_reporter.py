@@ -37,10 +37,10 @@ from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
+from nvflare.apis.job_def import JobMetaKey
 
 from flip import FLIP, FLIPBase
 from flip.constants import ModelStatus
-from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 from flip.schemas import FLLogEvent
 from flip.utils.utils import Utils
 
@@ -49,8 +49,9 @@ NVFLARE_DEFAULT_MAX_SCHEDULE_COUNT = 10
 
 # On the scheduler's last try the model's ERROR is all that frees its net, and NVFLARE does not call the
 # reporter for that job again, so the update is retried until the hub accepts it. Seconds to wait before each
-# retry, about a minute in all: enough for a brief hub outage. The wait holds up the scheduler's pass, which
-# costs nothing here, since the hub gives a net one job at a time and this job is it.
+# retry, about a minute in all: enough for a brief hub outage. The waits run inside the event handler, so they
+# block the scheduler's thread: no other queued job on this server is tried until they end. That costs little
+# while the hub gives a net one job at a time and this job is it, but weigh it before growing the budget.
 FINAL_STATUS_RETRY_DELAYS_SECONDS = (5, 15, 40)
 
 
@@ -76,8 +77,9 @@ def scheduling_shortfall(
         the job will start.
     """
     ok_sites = {site for site, (enough, _token) in (check_results or {}).items() if enough}
-    required = job_meta.get("mandatory_clients") or []
-    min_sites = job_meta.get("min_clients") or 0
+    required = job_meta.get(JobMetaKey.MANDATORY_CLIENTS) or []
+    # NVFLARE's own default (nvflare/apis/job_def.py job_from_meta).
+    min_sites = job_meta.get(JobMetaKey.MIN_CLIENTS, 1)
     if check_results and len(ok_sites) >= min_sites and all(site in ok_sites for site in required):
         return None
     return {site: dict(req or {}) for site, req in resource_reqs.items() if site not in ok_sites}
@@ -108,8 +110,10 @@ class JobSchedulingReporter(FLComponent):
 
     def _report(self, fl_ctx: FLContext) -> None:
         job_meta = fl_ctx.get_prop(FLContextKey.JOB_META) or {}
-        model_id = (job_meta.get(FLIP_CUSTOM_PROPS_KEY) or {}).get(FLIP_MODEL_ID_KEY)
-        if not model_id or not Utils.is_valid_uuid(model_id):
+        # The fl-api names every job it submits after the hub's model id. That is the one place the id sits in
+        # the scheduler's context: the job's config.json is not deployed until the job starts.
+        model_id = job_meta.get(JobMetaKey.JOB_NAME)
+        if not isinstance(model_id, str) or not Utils.is_valid_uuid(model_id):
             return  # not a job FLIP submitted, so there is no model to report to
 
         shortfall = scheduling_shortfall(
@@ -129,6 +133,7 @@ class JobSchedulingReporter(FLComponent):
             f"Job for model {model_id} not scheduled (attempt {attempt} of {max_attempts}): "
             f"sites without the requested resources: {shortfall}",
         )
+        progress = {"attempt": attempt, "max_attempts": max_attempts, "final": final}
         # One row per site, sent as that site: the hub resolves the FL client name to its trust and shows
         # the trust beside the row, which a kit-slot name inside the details could not do.
         for site, requested in shortfall.items():
@@ -137,7 +142,19 @@ class JobSchedulingReporter(FLComponent):
                 event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,
                 global_round=None,
                 client_name=site,
-                details={"attempt": attempt, "max_attempts": max_attempts, "final": final, "requested": requested},
+                details={**progress, "requested": requested},
+                success=not final,
+            )
+        if not shortfall:
+            # Nothing was checked (NVFLARE then logs "resource check results is None or empty"), so no site can
+            # be named. One row against the model still says how far the scheduler got; without "requested" the
+            # hub does not claim that a trust failed to confirm its resources.
+            self.flip.send_event(
+                model_id=model_id,
+                event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,
+                global_round=None,
+                client_name=None,
+                details=progress,
                 success=not final,
             )
         if final:
@@ -158,6 +175,11 @@ class JobSchedulingReporter(FLComponent):
         )
 
     def _max_attempts(self, fl_ctx: FLContext) -> int:
-        scheduler = fl_ctx.get_engine().get_component(self.job_scheduler_id)
+        try:
+            scheduler = fl_ctx.get_engine().get_component(self.job_scheduler_id)
+        except Exception as e:
+            # Raising would skip this pass's report, and on the last try the model's ERROR with it.
+            self.log_warning(fl_ctx, f"Could not read the job scheduler '{self.job_scheduler_id}': {e}")
+            return NVFLARE_DEFAULT_MAX_SCHEDULE_COUNT
         count = getattr(scheduler, "max_schedule_count", None)
         return count if isinstance(count, int) and count > 0 else NVFLARE_DEFAULT_MAX_SCHEDULE_COUNT

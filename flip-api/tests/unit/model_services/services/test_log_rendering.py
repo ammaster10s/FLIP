@@ -159,6 +159,14 @@ class TestRenderLog:
         )
         assert render_log(row) == "Waiting for resources · this trust did not confirm its resources · try 1 of 10"
 
+    def test_a_row_naming_no_trust_says_only_how_far_the_scheduler_got(self):
+        """The reporter's row against the model when no site was checked carries no ``requested``."""
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 10, "max_attempts": 10, "final": True},
+        )
+        assert render_log(row) == "Training could not start · NVFLARE gave up after 10 tries"
+
     @pytest.mark.parametrize(
         "details",
         [None, {}, {"attempt": "2", "max_attempts": 10}, {"requested": "lots"}, {"requested": {"num_of_gpus": "1"}}],
