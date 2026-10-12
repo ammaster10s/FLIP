@@ -15,13 +15,29 @@
 # bring up SuperLink + 2 SuperNodes + fl-api with the tutorial's dev data mounted,
 # submit the job to the fl-api control plane, wait for it to finish (or fail), and
 # tear down. Called by fl-tutorials/flower/Makefile's run-tutorial / run-all-tutorials.
+#
+# The run uses the tutorial's own pyproject.toml values, as sim-tutorial.sh does: fl-api's
+# /submit_tutorial leaves out app/config.toml, which carries the platform settings.
+# Exit 0 means the run FINISHED; FAILED, STOPPED or no terminal status within WAIT_SECS
+# exits 1, so run-all-tutorials never counts an unfinished tutorial as a pass.
 set -euo pipefail
 
 TUTORIAL="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
-COMPOSE="docker compose -f $REPO_ROOT/fl-services/flower/compose.dev.yml -p flwr"
-WAIT_SECS="${WAIT_SECS:-900}"
+COMPOSE_FILES="-f $REPO_ROOT/fl-services/flower/compose.dev.yml"
+# GPU for the SuperNodes when the host has one, as sim-tutorial.sh gives each site a share.
+# RUN_TUTORIAL_GPU=0 keeps the CPU; =1 requires the GPU overlay even if nvidia-smi is absent.
+if [ -z "${RUN_TUTORIAL_GPU:-}" ]; then
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    RUN_TUTORIAL_GPU=1
+  else
+    RUN_TUTORIAL_GPU=0
+  fi
+fi
+[ "$RUN_TUTORIAL_GPU" != 0 ] && COMPOSE_FILES="$COMPOSE_FILES -f $REPO_ROOT/fl-services/flower/compose.dev.gpu.yml"
+COMPOSE="docker compose $COMPOSE_FILES -p flwr"
+WAIT_SECS="${WAIT_SECS:-3600}"
 
 list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
@@ -73,7 +89,7 @@ mkdir -p "$WORKING_DIR" && chmod 777 "$WORKING_DIR"
 cleanup() { echo "🧹 Tearing down..."; $COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-echo "🚀 Flower tutorial '$TUTORIAL' — starting standalone stack..."
+echo "🚀 Flower tutorial '$TUTORIAL' — starting standalone stack (GPU: $([ "$RUN_TUTORIAL_GPU" != 0 ] && echo on || echo off))..."
 $COMPOSE up -d --remove-orphans
 
 echo "⏳ Waiting for fl-api health..."
@@ -115,10 +131,10 @@ except Exception:
   case "$st" in
     FINISHED) echo "✅ '$TUTORIAL' run FINISHED"; exit 0 ;;
     FAILED)   echo "❌ '$TUTORIAL' run FAILED"; $COMPOSE logs supernode-1 2>&1 | tail -15; exit 1 ;;
-    STOPPED)  echo "⚠️  '$TUTORIAL' run STOPPED"; exit 0 ;;
+    STOPPED)  echo "❌ '$TUTORIAL' run STOPPED before it finished"; exit 1 ;;
   esac
   sleep 5
 done
 rounds="$($COMPOSE logs supernode-1 2>&1 | grep -c 'Push .AppOutputs.' || true)"
-echo "⚠️  '$TUTORIAL' not terminal within ${WAIT_SECS}s (last status: ${last:-unknown}, ${rounds} ClientApp round(s) done). Increase WAIT_SECS for slow CPU jobs (e.g. spleen)."
-exit 0
+echo "❌ '$TUTORIAL' not terminal within ${WAIT_SECS}s (last status: ${last:-unknown}, ${rounds} ClientApp round(s) done). Increase WAIT_SECS for a slow host."
+exit 1

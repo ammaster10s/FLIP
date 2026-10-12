@@ -509,7 +509,7 @@ The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variable
 
    make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
-The harness brings the stack up, submits the app to the FL API exactly as the platform does, waits for the run and tears the stack down. To iterate by hand instead:
+The harness brings the stack up, submits the app to the FL API through the platform's submit path, waits for the run and tears the stack down. It runs the tutorial's own ``pyproject.toml`` values, as the simulator does, not the platform settings in ``app/config.toml`` (the spleen tutorial's 3 rounds of 1 epoch rather than 30 of 5). The SuperNodes train on the GPU when ``nvidia-smi`` sees one (``RUN_TUTORIAL_GPU=0`` keeps the CPU), and the harness exits non-zero unless the run finishes within ``WAIT_SECS`` (default 3600). To iterate by hand instead:
 
 .. code-block:: bash
 
