@@ -25,7 +25,12 @@ from nvflare.apis.fl_constant import FLContextKey, ReservedKey
 from nvflare.apis.fl_context import FLContext
 
 from flip.constants import ModelStatus
-from flip.nvflare.components.job_scheduling_reporter import JobSchedulingReporter, scheduling_shortfall
+from flip.nvflare.components import job_scheduling_reporter
+from flip.nvflare.components.job_scheduling_reporter import (
+    FINAL_STATUS_RETRY_DELAYS_SECONDS,
+    JobSchedulingReporter,
+    scheduling_shortfall,
+)
 from flip.schemas import FLLogEvent
 
 MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
@@ -160,6 +165,45 @@ def test_the_last_attempt_the_scheduler_will_make_fails_the_model():
     assert details["attempt"] == details["max_attempts"] == 5
     assert flip.send_event.call_args.kwargs["success"] is False
     flip.update_status.assert_called_once_with(MODEL_ID, ModelStatus.ERROR)
+
+
+def _last_attempt_ctx():
+    return _fl_ctx(_meta(schedule_count=4), {"AZ1": GPU_REQ}, {"AZ1": (False, "")}, max_schedule_count=5)
+
+
+@pytest.fixture
+def waits(monkeypatch):
+    """The seconds the reporter sleeps for, recorded instead of slept."""
+    recorded = []
+    monkeypatch.setattr(job_scheduling_reporter.time, "sleep", recorded.append)
+    return recorded
+
+
+def test_the_models_error_is_retried_until_the_hub_accepts_it(waits):
+    """That ERROR is all that frees the model's net, and the reporter gets no later chance to send it."""
+    flip = MagicMock()
+    flip.update_status.side_effect = [False, False, True]
+    reporter = JobSchedulingReporter(flip=flip)
+
+    reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _last_attempt_ctx())
+
+    assert flip.update_status.call_count == 3
+    assert waits == list(FINAL_STATUS_RETRY_DELAYS_SECONDS[:2])
+
+
+def test_a_hub_that_never_accepts_it_is_given_up_on_with_the_way_to_free_the_net(waits):
+    flip = MagicMock()
+    flip.update_status.return_value = False
+    reporter = JobSchedulingReporter(flip=flip)
+    reporter.log_error = MagicMock()
+
+    reporter.handle_event(EventType.AFTER_CHECK_CLIENT_RESOURCES, _last_attempt_ctx())
+
+    assert flip.update_status.call_count == len(FINAL_STATUS_RETRY_DELAYS_SECONDS) + 1
+    assert waits == list(FINAL_STATUS_RETRY_DELAYS_SECONDS)
+    message = reporter.log_error.call_args.args[1]
+    assert MODEL_ID in message
+    assert "Abort job" in message
 
 
 def test_a_job_that_will_be_scheduled_reports_nothing():

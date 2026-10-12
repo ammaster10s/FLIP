@@ -24,12 +24,13 @@ it at container start, and NVFLARE adds its components to the provisioned ``reso
 listens for ``AFTER_CHECK_CLIENT_RESOURCES``, the event the scheduler fires once every site has
 answered, and when the job will not start it sends the hub a ``JOB_WAITING_FOR_RESOURCES`` event for
 each site that fell short, saying what it was asked for. On the scheduler's last attempt it also fails
-the model, since nothing else will.
+the model, since nothing else will, and retries that until the hub accepts it.
 
 It reports and never decides: the scheduler's own rule (``min_clients`` and every mandatory site) is
 mirrored only to know whether there is anything to report.
 """
 
+import time
 from typing import Any
 
 from nvflare.apis.event_type import EventType
@@ -45,6 +46,12 @@ from flip.utils.utils import Utils
 
 # DefaultJobScheduler's own default, used when the scheduler component cannot be read.
 NVFLARE_DEFAULT_MAX_SCHEDULE_COUNT = 10
+
+# On the scheduler's last try the model's ERROR is all that frees its net, and NVFLARE does not call the
+# reporter for that job again, so the update is retried until the hub accepts it. Seconds to wait before each
+# retry, about a minute in all: enough for a brief hub outage. The wait holds up the scheduler's pass, which
+# costs nothing here, since the hub gives a net one job at a time and this job is it.
+FINAL_STATUS_RETRY_DELAYS_SECONDS = (5, 15, 40)
 
 
 def scheduling_shortfall(
@@ -135,7 +142,20 @@ class JobSchedulingReporter(FLComponent):
             )
         if final:
             # The scheduler marks the job FINISHED:CAN_NOT_SCHEDULE on its next pass and fires no event.
-            self.flip.update_status(model_id, ModelStatus.ERROR)
+            self._fail_model(fl_ctx, model_id)
+
+    def _fail_model(self, fl_ctx: FLContext, model_id: str) -> None:
+        for wait in (0, *FINAL_STATUS_RETRY_DELAYS_SECONDS):
+            if wait:
+                time.sleep(wait)
+            if self.flip.update_status(model_id, ModelStatus.ERROR):
+                return
+        self.log_error(
+            fl_ctx,
+            f"The hub did not accept model {model_id}'s ERROR status after "
+            f"{len(FINAL_STATUS_RETRY_DELAYS_SECONDS) + 1} tries; its net stays BUSY until the model's job is "
+            "aborted (Abort job in the UI).",
+        )
 
     def _max_attempts(self, fl_ctx: FLContext) -> int:
         scheduler = fl_ctx.get_engine().get_component(self.job_scheduler_id)

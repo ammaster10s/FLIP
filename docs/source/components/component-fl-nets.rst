@@ -104,7 +104,9 @@ not provide the resources:
   2 of 10*;
 - on the last try: *Training could not start · … · NVFLARE gave up after 10 tries*. The model then turns
   ``ERROR`` and the net is freed. Without this, a job that never starts has nothing inside it to tell the
-  hub, and the model would sit at ``INITIATED`` with the net ``BUSY``.
+  hub, and the model would sit at ``INITIATED`` with the net ``BUSY``. That last update is the reporter's
+  only chance, so it retries it for about a minute until the hub accepts it; if the hub is unreachable for
+  longer, the model stays ``INITIATED`` and **Abort job** on it frees the net.
 
 To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
 Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.

@@ -104,13 +104,17 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
         """
         Updates training status in Central Hub.
 
         Args:
             model_id (str): The model UUID
             new_model_status (ModelStatus): The new status to set
+
+        Returns:
+            bool: True once the hub has accepted the update. A failed update is logged, not raised, so a caller
+            that cannot afford to lose it checks this and retries.
         """
 
     @abstractmethod

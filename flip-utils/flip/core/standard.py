@@ -287,13 +287,16 @@ class FLIPStandardProd(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
         """
         Updates the model status on the Central Hub.
 
         Args:
             model_id (str): Unique model identifier.
             new_model_status (ModelStatus): New model status value.
+
+        Returns:
+            bool: True if the hub accepted the update, False if it failed (the failure is logged, not raised).
         """
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
@@ -314,6 +317,7 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
+            return True
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when updating the model status, see exception below | status code "
@@ -323,6 +327,7 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             self.logger.error("Something went wrong when updating the model status, see exception below")
             self.logger.exception(e)
+        return False
 
     @override
     def send_metrics(
@@ -662,9 +667,10 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
-        """Log only in dev mode - no actual status update."""
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
+        """Log only in dev mode - no actual status update, so there is nothing to fail."""
         self.logger.info("[DEV] Status → %s", new_model_status)
+        return True
 
     @override
     def send_metrics(
