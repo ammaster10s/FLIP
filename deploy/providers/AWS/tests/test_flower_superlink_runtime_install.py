@@ -19,8 +19,10 @@ unless ``FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION`` is exactly ``"1"``. A co
 task heartbeat, so the run never starts. Until FLIP#1418 the ECS task set the variable only on LZA
 estates, as the second argument of a ``merge`` behind ``var.lza_managed_network``, so every other estate
 kept the install. This pins the variable into the unconditional part of the SuperLink's task
-environment. The compose and Helm shapes are held to the same rule by
-``scripts/tests/test_flower_runtime_install.py``.
+environment, holds it to one assignment (``merge`` lets a later map win, so a second one could undo
+the first), and keeps the deprecated ``--allow-runtime-dependency-installation`` flag, which a
+SuperLink still honours over the variable, out of the stack. The compose, Helm and image shapes are
+held to the same rule by ``scripts/tests/test_flower_runtime_install.py``.
 """
 
 import re
@@ -33,7 +35,18 @@ LOCALS_TF = AWS_PROVIDER_DIR / "locals.tf"
 ECS_TASKS_TF = AWS_PROVIDER_DIR / "ecs_tasks.tf"
 
 SUPERLINK_MAP = "fl_server_flower"
-DISABLE_LINE = re.compile(r'^\s*FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION\s*=\s*"1"\s*$', re.MULTILINE)
+DISABLE_VAR = "FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION"
+INSTALL_FLAG = "--allow-runtime-dependency-installation"
+DISABLE_LINE = re.compile(rf'^\s*{DISABLE_VAR}\s*=\s*"1"\s*$', re.MULTILINE)
+
+
+def _stack_sources() -> dict[Path, str]:
+    """Every ``.tf`` file of the stack, comments stripped, outside any ``.terraform`` cache."""
+    return {
+        path: strip_comments(path.read_text())
+        for path in sorted(AWS_PROVIDER_DIR.rglob("*.tf"))
+        if ".terraform" not in path.parts
+    }
 
 
 def test_superlink_task_env_disables_runtime_install_unconditionally() -> None:
@@ -59,3 +72,23 @@ def test_superlink_task_env_disables_runtime_install_unconditionally() -> None:
 def test_flower_superlink_task_uses_that_map() -> None:
     """The ECS fl-server task takes its Flower environment from the map the test above checks."""
     assert f"local.ecs_task_env.{SUPERLINK_MAP}" in strip_comments(ECS_TASKS_TF.read_text())
+
+
+def test_variable_is_assigned_once_across_the_stack() -> None:
+    """A second assignment anywhere — a later ``merge`` map, an override in the task definition — could undo it."""
+    hits = {str(path.relative_to(AWS_PROVIDER_DIR)): text.count(DISABLE_VAR) for path, text in _stack_sources().items()}
+    found = {path: n for path, n in hits.items() if n}
+    assert sum(found.values()) == 1, (
+        f"{DISABLE_VAR} should appear once, in {SUPERLINK_MAP}; found {found}. "
+        f"In a merge the last map wins, so a second assignment can switch the per-run install back on (FLIP#1418)"
+    )
+
+
+def test_no_install_flag_in_the_stack() -> None:
+    """The SuperLink honours the deprecated opt-in flag over the variable, so it must not appear in any command."""
+    offenders = [
+        str(path.relative_to(AWS_PROVIDER_DIR)) for path, text in _stack_sources().items() if INSTALL_FLAG in text
+    ]
+    assert not offenders, (
+        f"{INSTALL_FLAG} in {offenders}: flower-superlink still accepts it and it overrides {DISABLE_VAR} (FLIP#1418)"
+    )
