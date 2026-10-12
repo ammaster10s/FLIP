@@ -121,20 +121,24 @@ The FLIP API will:
 5. Upload results to S3 (unless `LOCAL_DEV="true"`)
 6. Update job status via FLIP API
 
-The dev compose stack (`deploy/compose.development.yml` +
-`deploy/compose.development.flower.yml`) wires everything correctly:
+`fl-services/flower/compose.dev.yml` wires the containers:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.development` via `${VAR}` substitutions in each
-  service's `volumes:` block and bind-mounted into the containers.
-- Inside the containers the mounts land at stable locations
-  (`/images`, `/dataframe_file`, `/app/runs`), and
-  the `environment:` blocks point the app at those paths, so paths in the
-  app resolve consistently regardless of your host layout.
-- Uploaded app bundles (sources + model checkpoint) live under
-  `/app/src/<model_id>`; the FL API and the SuperLink share the `/app/src`
-  volume, and the evaluation ServerApp reads the checkpoint from the path in the
-  `flip-job-dir` run-config value the FL API injects at submission time.
+- `DEV_DATAFRAME` and `DEV_IMAGES_DIR` come from your shell (Docker Compose's
+  `${VAR}` substitutions in each SuperNode's `volumes:` block). Export them to this
+  tutorial's data under `fl-tutorials/data/` before `make up`; unset, `make up` points
+  them at empty placeholders (`/tmp/flwr-dev-images`, `/tmp/flwr-dev-dataframe.csv`).
+  `WORKING_DIR` is fixed by the Makefile to `fl-services/flower/runs` (gitignored), the
+  same directory `sim-tutorial.sh` uses.
+- Inside the containers the mounts land at stable locations (`/images`,
+  `/dataframe_file`, `/app/runs`), and the `environment:` blocks point the app at
+  those paths, so paths in the app resolve consistently regardless of your host layout.
+- `fl-tutorials/flower` is mounted at `/app/src` in both the FL API and the SuperLink,
+  so a tutorial submitted by name runs from there and the evaluation ServerApp reads
+  `model.pt` from the `flip-job-dir` the FL API injects at submission time (this
+  tutorial's `app/`, where `download-checkpoints` put it). On the platform the same
+  path holds the uploaded bundle, `/app/src/<model_id>`.
+- `make up` runs the stack `--insecure`; `make up-secure` runs it with TLS and
+  SuperNode auth after `make provision`.
 
 ## Data Location
 

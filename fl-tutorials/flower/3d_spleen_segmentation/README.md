@@ -120,15 +120,17 @@ the compose file and re-running `make up`.
 
 `fl-services/flower/compose.dev.yml` wires the containers:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR` and `WORKING_DIR` come from your shell (Docker
-  Compose's `${VAR}` substitutions in each service's `volumes:` block; unset, they
-  fall back to empty placeholders under `/tmp`). Export them to this tutorial's data
-  under `fl-tutorials/data/` before `make up`; they are bind-mounted into the
-  SuperNode and SuperLink containers.
-- Inside the containers the mounts always land at stable locations
-  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
-  the `environment:` blocks point the app at those paths, so relative paths in
-  tutorial code resolve consistently regardless of your host layout.
+- `DEV_DATAFRAME` and `DEV_IMAGES_DIR` come from your shell (Docker Compose's
+  `${VAR}` substitutions in each SuperNode's `volumes:` block). Export them to this
+  tutorial's data under `fl-tutorials/data/` before `make up`; unset, `make up` points
+  them at empty placeholders (`/tmp/flwr-dev-images`, `/tmp/flwr-dev-dataframe.csv`).
+  `WORKING_DIR` is fixed by the Makefile to `fl-services/flower/runs` (gitignored), the
+  same directory `sim-tutorial.sh` uses.
+- Inside the containers the mounts always land at stable locations (`/images`,
+  `/dataframe_file`, `/app/runs`, and `fl-tutorials/flower` at `/app/src`, where
+  the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
+  point the app at those paths, so relative paths in tutorial code resolve
+  consistently regardless of your host layout.
 - `make up` runs the stack `--insecure` (the SuperLink's mode and health server
   are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
   `make provision`.
