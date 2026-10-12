@@ -16,8 +16,9 @@
 ## :sparkles: Highlights
 
 - **The development stack needs no AWS account** (#1274, #1337, #1374, #1385, #1403) — the dev hub signs users in through a local Keycloak instead of Cognito and stores files in a local S3-compatible RustFS store instead of S3, and the dev trusts download the XNAT WAR and plugins from upstream, checked against pinned SHA-256s, instead of from an S3 bucket. A new contributor can run `make up` without AWS SSO. flip-api picks its identity provider with `AUTH_BACKEND`: `keycloak` is the only value a dev hub accepts and `cognito` the only value a production hub accepts, and production defaults to it, so a deployed hub needs no new configuration. A CI smoke boots the hub, logs in through Keycloak and round-trips a file through the object store without AWS.
-- **Flower 1.38** (#1272) — the Flower backend moves from 1.36 to 1.38. Each SuperNode is now registered with its trust's name, which the ServerApp can see. The SuperLink's Control API moves from gRPC on 9093 to HTTP on 8000, Flower's default.
-- **Terraform CI for Landing Zone (LZA) accounts** (#1300, #1357, #1358, #1364) — a least-privilege CI bootstrap module, unattended plan/apply/drift for `PROD=lza` and `PROD=lza-stag`, and a Terraform-managed Ark+ demo-assets bucket.
+- **Flower 1.38** (#1272, #1422) — the Flower backend moves from 1.36 to 1.38. Each SuperNode is now registered with its trust's name, which the ServerApp can see. The SuperLink's Control API moves from gRPC on 9093 to HTTP on 8000, Flower's default. Flower apps now run in the FL image's own environment, with no per-run dependency install on the SuperLink or the SuperNodes (#1422). That fixes runs failing or hanging after round 1, and FL hosts no longer need a package index during a run.
+- **Terraform CI for Landing Zone (LZA) accounts** (#1300, #1357, #1358, #1360, #1364) — a least-privilege CI bootstrap module, unattended plan/apply/drift for `PROD=lza` and `PROD=lza-stag`, and a Terraform-managed Ark+ demo-assets bucket. A plan that touches LZA FL ingress now carries an advisory warning (#1360).
+- **A 3D prostate segmentation tutorial** (#1091) — Flower federated training on the PI-CAI dataset with an nnU-Net plan: dataset tooling under `fl-tutorials/datasets/prostate/`, a seedable cohort (`make -C trust seed-trusts PROJECTS=prostate_project`), and `make e2e_smoke_prostate`, which uploads the prostate and zonal masks into every Trust's XNAT and trains. Flower only.
 
 ## :warning: Breaking Changes
 
@@ -35,6 +36,7 @@
 
 - **Required:** **yes for Flower sites**, which must move to Flower 1.38 with the hub. NVFLARE sites: recommended, not required. The release fixes imaging-api reporting a failed XNAT upload as a success (#1397) and quotes XNAT URLs (#1352, #1399). **Yes, as a flag day, from v0.6.x or earlier** (v0.7.0's AES-256-GCM change has no CBC fallback).
 - **Ordering:** Flower: hub and sites together, in one Deployment-Mode window. NVFLARE: sites at their own pace, before or after the hub.
+- **Kubernetes trusts:** recommended. The fl-client no longer crash-loops when `uploadedFederatedDataBucket` is unset (#1427), and `preflight` / `sync-kit` resolve LZA kits and keep working under Helm 4 after `patch-kit-secrets` (#1366).
 - **Refreshed kit needed:** no. The Hub-shared block is unchanged.
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
@@ -50,6 +52,8 @@
 - A dev object store (RustFS) behind the unchanged boto3 code, with presigned-URL audiences, an origin allow-list, and `make clean-object-store` (#1337).
 - Flower SuperNodes are registered with `--name <trust>`. Key registration waits for the SuperLink Control API instead of racing it on a cold start (#1272).
 - imaging-api builds every XNAT URL through one segment-quoting helper (#1352, #1399).
+- The image-tag resolver behind the CI apply can pin each image to a release by digest (`v<X.Y.Z>@sha256:…`), with the FL API on its own tag (#1363). It ships dark: nothing sets the release yet, so applies resolve exactly as before until the follow-up lands.
+- A local deployment guide, *Deploy FLIP locally*, and a shorter root README (#1412).
 - tflint runs over the AWS Terraform in CI (#1394). CI generates throwaway test credentials per run, so PRs from forks pass (#1383).
 
 ## :bug: Bug Fixes
@@ -60,6 +64,8 @@
 - **imaging-api no longer reports a rejected XNAT file upload as a success.** A PUT that XNAT refused was logged as uploaded and returned in the success list. It now raises with XNAT's status code (#1397).
 - The `FlipSG` tag on security groups no longer flips on every Terraform apply, which had caused a permanent plan diff and gaps in the drift alarm (#1393).
 - dcm2niix runs as the XNAT uid, and the dev `xnat-reset` skips `sudo` when the operator already owns the tree (#1317).
+- **Flower runs no longer fail after round 1** (#1422). Every ClientApp launch in a run shared one per-run dependency environment, and each launch deleted it on exit, so a later round's install failed with `Permission denied` or the run hung. A cold install also outlived Flower's task heartbeat, so the first run after a restart never started.
+- Helm trusts: the fl-client no longer renders an empty `UPLOADED_FEDERATED_DATA_BUCKET`, which crashed it at import (#1427), and `preflight.sh` / `sync_k8s_kit.py` take the kit token from `deploy/env_mode.mk`, so `PROD=lza-stag` finds the right kit. A Helm 4 server-side-apply conflict after `patch-kit-secrets` is also fixed (#1366).
 - A fresh dev stack comes up: four bring-up failures fixed, including the Keycloak health check (#1385).
 - `make central-hub` creates `central-hub-trust-apis-network` on a fresh host (#1347). The on-prem readiness checklist resolves the kit through Make (#1355).
 - The dev env example no longer pads `AWS_REGION` with trailing spaces, which made every presign return 500 on a fresh dev hub. `make restart-fl` creates the object-store dir before stopping any FL client (#1403).
