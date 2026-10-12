@@ -104,6 +104,17 @@ GHCR login from `~/.docker/config.json`.
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.production` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> PROD=<env>` is the only dispatch |
 
+On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`
+patches them into the chart Secret (field manager `kubectl-patch`) and the chart templates
+the same keys from the generated `values-secrets.yaml`. Helm 4 applies server-side, so the
+two must agree or `helm upgrade` is refused with `conflict with "kubectl-patch"`, a
+refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` keeps them
+in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
+server-side-apply a subset of that Secret (it prunes the keys it does not list).
+`PROD` → kit-file token comes only from `deploy/env_mode.mk`: the chart Makefile injects it
+as `KIT_ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
+without it instead of keeping their own map (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
+
 ## Commands (from `trust/`)
 
 ```bash
@@ -214,7 +225,13 @@ posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP ha
 omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
 passes it) to create the read-only role on that first start. Adding a dataset means publishing its
 `omop-csv/<project>/` tables and `dicom/<project>.tar.gz` (`trust/orthanc/publish_dicom.py` verifies
-both agree before packaging). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per
+`source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
+`fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
+with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
+`upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
+`make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
+`flower/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each
