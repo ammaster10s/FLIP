@@ -18,12 +18,13 @@ says no, the job waits and is retried with a growing interval, and after ``max_s
 it is marked ``FINISHED:CAN_NOT_SCHEDULE``. NVFLARE logs why, but only on the FL server, and the job
 never starts, so no component inside it can tell the hub anything.
 
-This component runs in the server's parent process instead, as a site-level component in the server
-kit's ``local/resources.json`` (``python -m flip.nvflare.server_site_config`` registers it at
-container start). It listens for ``AFTER_CHECK_CLIENT_RESOURCES``, the event the scheduler fires once
-every site has answered, and when the job will not start it sends the hub a
-``JOB_WAITING_FOR_RESOURCES`` event for each site that fell short, saying what it was asked for. On
-the scheduler's last attempt it also fails the model, since nothing else will.
+This component runs in the server's parent process instead, as a site-level component registered in
+the server kit's ``local/flip__p_resources.json`` (``python -m flip.nvflare.server_site_config`` writes
+it at container start, and NVFLARE adds its components to the provisioned ``resources.json`` ones). It
+listens for ``AFTER_CHECK_CLIENT_RESOURCES``, the event the scheduler fires once every site has
+answered, and when the job will not start it sends the hub a ``JOB_WAITING_FOR_RESOURCES`` event for
+each site that fell short, saying what it was asked for. On the scheduler's last attempt it also fails
+the model, since nothing else will.
 
 It reports and never decides: the scheduler's own rule (``min_clients`` and every mandatory site) is
 mirrored only to know whether there is anything to report.
