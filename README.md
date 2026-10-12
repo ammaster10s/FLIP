@@ -41,9 +41,9 @@ For the platform architecture, workflows, deployment guides, and user documentat
 
 | I want to... | Guide |
 | --- | --- |
-| Run FLIP on my machine (Central Hub + two example Trusts) | [Run FLIP locally for development](docs/source/deploy-flip/deploy-local-dev.rst) |
-| Deploy the Central Hub on AWS | [Deploy the Central Hub](docs/source/deploy-flip/deploy-central-hub.rst) |
-| Add a Trust to a FLIP network | [On premises](docs/source/deploy-flip/deploy-flip-node-on-prem.rst) · [In a TRE](docs/source/deploy-flip/deploy-flip-node-in-tre.rst) · [On Kubernetes](trust/deploy/helm/README.md) |
+| Run FLIP on my machine (Central Hub + two example Trusts) | [Run FLIP locally for development](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-local-dev.html) |
+| Deploy the Central Hub on AWS | [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) — self-contained ([on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html)) or on a Landing Zone Accelerator estate ([on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)) |
+| Add a Trust to a FLIP network | [On premises](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) · [In a TRE](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-in-tre.html) · [On Kubernetes](trust/deploy/helm/README.md) |
 | Build or run a federated-learning application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) · [FL tutorials](fl-tutorials/README.md) |
 | Contribute to FLIP | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
@@ -73,7 +73,7 @@ If you use FLIP in your research, please cite
 ```bibtex
 @misc{garciadias2026flip,
   title         = {Making Cross-Continental Federated Learning Repeatable with {FLIP}: a Multi-Application Study},
-  author        = {Garcia-Dias, Rafael and Bagur, Alexandre Triay and Tangwiriyasakul, Chayanin and Fernandez, Virginia and
+  author        = {Garcia-Dias, Rafael and {Triay Bagur}, Alexandre and Tangwiriyasakul, Chayanin and Fernandez, Virginia and
                    Esmaeili, Parhom and Ittichaiwong, Piyalitt and Li, Yang and Adams, Lawrence and Buncharoen, Wason and
                    Chapman, Martin and Chayanond, Benjamaporn and Chunrod, Sadthavud and Fongsri, Tanawat and
                    Gibson, Kass and Plungprasertkul, Supat and Tangpanithandee, Supawit and Veerakanjana, Kanyakorn and
