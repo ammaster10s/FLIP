@@ -122,6 +122,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
+
+    Yields:
+        None: Control to the running application until shutdown.
     """
     _cors_allowed_origins.extend(build_identity_provider().allowed_origins())
     start_scheduler()
