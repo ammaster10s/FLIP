@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-variable "name_prefix" {
-  description = "Prefix for resource names."
-  type        = string
-}
-
 variable "location" {
   description = "Azure region."
   type        = string

@@ -747,7 +747,12 @@ def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
 
     result = subprocess.run(
         ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), "create-trust-network", "KIT=AZ1", "FL_BACKEND=nvflare"],
-        cwd=trust_dir, env=env, check=False, capture_output=True, text=True, timeout=60,
+        cwd=trust_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
     assert result.returncode == 0, result.stderr

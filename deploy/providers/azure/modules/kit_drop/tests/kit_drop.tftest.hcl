@@ -15,7 +15,6 @@
 mock_provider "azurerm" {}
 
 variables {
-  name_prefix           = "flipaz"
   location              = "uksouth"
   resource_group_name   = "flipaz-node-rg"
   storage_account_name  = "flipazkit0123abcd"

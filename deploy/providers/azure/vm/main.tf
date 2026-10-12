@@ -164,7 +164,6 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "node" {
 module "kit_drop" {
   source                = "../modules/kit_drop"
   count                 = var.kit_drop_enabled ? 1 : 0
-  name_prefix           = var.name_prefix
   location              = var.location
   resource_group_name   = azurerm_resource_group.node.name
   storage_account_name  = local.kit_storage_account_name

@@ -70,7 +70,7 @@ def _pack(tmp_path: Path, backend: str, *, provision_ok: bool = True) -> tuple[s
         "#!/bin/bash\n"
         f'echo "make $*" >> "{log}"\n'
         f"{'exit 1' if not provision_ok else ''}\n"
-        f"for f in {lay_out}; do mkdir -p \"$(dirname \"$f\")\"; echo secret > \"$f\"; done\n"
+        f'for f in {lay_out}; do mkdir -p "$(dirname "$f")"; echo secret > "$f"; done\n'
     )
     make.chmod(make.stat().st_mode | stat.S_IEXEC)
     out = tmp_path / "out" / f"selftest-{backend}.tar.gz"
@@ -98,5 +98,7 @@ def test_a_failed_provision_writes_no_tarball(tmp_path):
 
 
 def test_rejects_an_unknown_backend(tmp_path):
-    result = subprocess.run(["bash", str(SCRIPT), "pytorch", str(tmp_path / "x.tar.gz")], capture_output=True, text=True)
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "pytorch", str(tmp_path / "x.tar.gz")], capture_output=True, text=True
+    )
     assert result.returncode == 2

@@ -24,6 +24,7 @@ locals {
   }
 }
 
+# tflint-ignore: azurerm_resources_missing_prevent_destroy # holds only one-day kits and must go with the node on make destroy
 resource "azurerm_storage_account" "this" {
   # checkov:skip=CKV2_AZURE_1:Platform-managed encryption at rest; a customer-managed key needs Key Vault, which a kit drop holding one-day blobs does not justify
   # checkov:skip=CKV_AZURE_206:Locally redundant on purpose: a lost kit is re-uploaded, never restored
@@ -53,6 +54,7 @@ resource "azurerm_storage_account" "this" {
   }
 }
 
+# tflint-ignore: azurerm_resources_missing_prevent_destroy # holds only one-day kits and must go with the node on make destroy
 resource "azurerm_storage_container" "kits" {
   # checkov:skip=CKV2_AZURE_21:Blob read logging needs a Log Analytics workspace, a standing cost the trial does not carry
   name                  = "kits"

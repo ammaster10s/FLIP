@@ -19,7 +19,7 @@ variables {
   subscription_id      = "00000000-0000-0000-0000-000000000000"
   egress_public_ip_id  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-bootstrap-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-egress-ip"
   admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAT8RdfFQymZ+0z9XcvL1GYWdmlY8Ci6MB9I5PXKhOKU flip-azure-terraform-test-only"
-  flip_ref             = "0123456789abcdef0123456789abcdef01234567"
+  flip_ref             = "0123456789abcdef0123456789abcdef01234567" # pragma: allowlist secret
   operator_ip          = "203.0.113.7"
 }
 

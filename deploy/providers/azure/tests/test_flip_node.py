@@ -48,8 +48,8 @@ def _setup(tmp_path: Path, *, disk_present: bool, has_fs: bool) -> tuple[dict, P
     env_file = tmp_path / "node.env"
     env_file.write_text(
         "FLIP_REPO_URL=https://github.com/londonaicentre/FLIP.git\n"
-        "FLIP_REF=0123456789abcdef0123456789abcdef01234567\n"
-        "FLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\n"
+        "FLIP_REF=0123456789abcdef0123456789abcdef01234567\n"  # pragma: allowlist secret
+        "FLIP_ADMIN_USER=azureuser\nFL_BACKEND=nvflare\n"  # pragma: allowlist secret
         "KIT_DROP_URL=https://flipazkit01234567.blob.core.windows.net/kits\n"
     )
     env = {
@@ -86,7 +86,7 @@ def test_provision_formats_a_blank_disk_and_runs_the_play(tmp_path):
     calls = log.read_text()
     assert "mkfs.ext4" in calls
     assert "git clone" in calls
-    assert "0123456789abcdef0123456789abcdef01234567" in calls
+    assert "0123456789abcdef0123456789abcdef01234567" in calls  # pragma: allowlist secret
     assert "ansible-galaxy install -r" in calls
     assert "ansible-playbook -i localhost, -c local" in calls
     assert "fl_backend=nvflare" in calls
@@ -205,7 +205,8 @@ def test_fetch_kit_gives_up_naming_the_likely_causes(tmp_path):
     _stub_curl(env, tmp_path, tarball, refusals=99)
     result = _run(env, "fetch-kit", "selftest-nvflare.tar.gz")
     assert result.returncode != 0
-    assert "HTTP 403" in result.stderr and "role" in result.stderr.lower()
+    assert "HTTP 403" in result.stderr
+    assert "role" in result.stderr.lower()
 
 
 def test_fetch_kit_rejects_a_name_with_a_path(tmp_path):
@@ -217,8 +218,11 @@ def test_fetch_kit_rejects_a_name_with_a_path(tmp_path):
 
 def test_fetch_kit_needs_a_kit_drop(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
-    Path(env["FLIP_NODE_ENV"]).write_text(Path(env["FLIP_NODE_ENV"]).read_text().replace(
-        "KIT_DROP_URL=https://flipazkit01234567.blob.core.windows.net/kits", "KIT_DROP_URL="))
+    Path(env["FLIP_NODE_ENV"]).write_text(
+        Path(env["FLIP_NODE_ENV"])
+        .read_text()
+        .replace("KIT_DROP_URL=https://flipazkit01234567.blob.core.windows.net/kits", "KIT_DROP_URL=")
+    )
     result = _run(env, "fetch-kit", "selftest-nvflare.tar.gz")
     assert result.returncode != 0
     assert "kit drop" in result.stderr.lower()
@@ -241,7 +245,11 @@ def test_run_selftest_runs_on_the_delivered_kit(tmp_path):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     tarball = _tarball(tmp_path / "src.tar.gz", {"fl-kit/net-1/certificates/ca.crt": "ca"})
     _stub_curl(env, tmp_path, tarball)
-    _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $* SKIP=$SELFTEST_SKIP_PROVISION KIT=$SELFTEST_DEV_KIT_DIR" >> "{log}"')
+    _stub(
+        Path(env["PATH"].split(":")[0]),
+        "make",
+        f'echo "make $* SKIP=$SELFTEST_SKIP_PROVISION KIT=$SELFTEST_DEV_KIT_DIR" >> "{log}"',
+    )
     result = _run(env, "run-selftest", "flower")
     assert result.returncode == 0, result.stderr
     kit = Path(env["FLIP_DIR"]) / "kits" / "selftest-flower" / "fl-kit"
@@ -256,7 +264,9 @@ def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
     _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
     result = _run(env, "run-selftest", "nvflare")
     assert result.returncode != 0
-    assert "deploy/providers/azure selftest-kit FL_BACKEND=nvflare" in result.stderr, "the error says how to deliver one"
+    assert "deploy/providers/azure selftest-kit FL_BACKEND=nvflare" in result.stderr, (
+        "the error says how to deliver one"
+    )
     assert not log.exists() or "selftest-node" not in log.read_text()
 
 
@@ -289,7 +299,9 @@ def test_join_installs_the_kit_file_owner_only_with_the_node_settings(tmp_path):
     assert oct(kit.stat().st_mode & 0o777) == "0o600", "the kit file holds the trust's keys"
     text = kit.read_text()
     assert text.startswith("TRUST_CODE=AZ1\n"), "the hub's values come first, unchanged"
-    assert f"FL_KIT_DIR={env['FLIP_FL_KIT_DIR']}" in text.split("flip-node join", 1)[1], "node settings come last, so they win"
+    assert f"FL_KIT_DIR={env['FLIP_FL_KIT_DIR']}" in text.split("flip-node join", 1)[1], (
+        "node settings come last, so they win"
+    )
     assert "NUM_AVAILABLE_GPUS=0" in text
 
 
@@ -316,7 +328,8 @@ def test_join_refuses_a_kit_without_its_kit_file(tmp_path):
     _stub_curl(env, tmp_path, _tarball(tmp_path / "j.tar.gz", {"fl-kit/net-1/x": "1"}))
     _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
     result = _run(env, "run-join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "lza-stag")
-    assert result.returncode != 0 and ".env.AZ1" in result.stderr
+    assert result.returncode != 0
+    assert ".env.AZ1" in result.stderr
     assert not log.exists() or "up-onprem-trust" not in log.read_text()
 
 
@@ -329,4 +342,4 @@ def test_join_rejects_unsafe_arguments(tmp_path):
 def test_join_starts_a_detached_unit(tmp_path):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     assert _run(env, "join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "lza-stag").returncode == 0
-    assert f"systemd-run --unit=flip-join-AZ1" in log.read_text()
+    assert "systemd-run --unit=flip-join-AZ1" in log.read_text()

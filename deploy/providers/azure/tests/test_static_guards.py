@@ -151,9 +151,8 @@ def test_destroy_bootstrap_refuses_while_the_node_exists():
 
 def test_bootstrap_keeps_its_region_and_puts_the_ip_with_the_node():
     recipe = _recipe("bootstrap")
-    assert 'location=$(BOOTSTRAP_LOCATION)' in recipe, "bootstrap's own region must not move with the node"
-    assert 'egress_location=$(LOCATION)' in recipe, "the outbound IP must sit in the node's region"
-
+    assert "location=$(BOOTSTRAP_LOCATION)" in recipe, "bootstrap's own region must not move with the node"
+    assert "egress_location=$(LOCATION)" in recipe, "the outbound IP must sit in the node's region"
 
 
 def test_plan_and_destroy_let_the_operator_through_the_kit_drop_firewall():

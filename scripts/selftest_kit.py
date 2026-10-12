@@ -37,7 +37,7 @@ def managed_values(backend: str, docker_tag: str) -> dict[str, str]:
     return {
         "AES_KEY_BASE64": base64.b64encode(secrets.token_bytes(32)).decode(),
         "CENTRAL_HUB_API_URL": "https://hub.invalid/api",
-        "TRUST_API_KEY_HEADER": "X-Trust-API-Key",
+        "TRUST_API_KEY_HEADER": "X-Trust-API-Key",  # pragma: allowlist secret
         "FL_BACKEND": backend,
         "FLOWER_KIT_DATE": "selftest",
         "FLARE_KIT_DATE": "selftest",

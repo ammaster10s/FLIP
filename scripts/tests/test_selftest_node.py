@@ -121,7 +121,8 @@ def _run(
         if wc_reply
         else '  *"wc -l"*dicom.log*) echo 7;;\n'
         f'  *"wc -l"*) r=$(( $(cat "{counter}.reads" 2>/dev/null || echo 0) + 1 )); echo $r > "{counter}.reads"; '
-        f'n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; [ $r -gt {log_lag} ] && echo $((n + 5)) > "{counter}";;\n'
+        f'n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; '
+        f'[ $r -gt {log_lag} ] && echo $((n + 5)) > "{counter}";;\n'
     )
     # `docker inspect` answers the FL client's state, one line per call (running restarting count).
     _stub(
@@ -223,8 +224,11 @@ def main() -> int:
     print("xnat_imports_after_the_store_returns")
     # XNAT records the receipt asynchronously: the store has returned but the line lands a few reads later.
     result, report, _, _ = _run("lag", log_lag=3)
-    _assert(_check(report, "xnat c-store").get("ok") is True, "a log that grows late still passes",
-            json.dumps(_check(report, "xnat c-store")))
+    _assert(
+        _check(report, "xnat c-store").get("ok") is True,
+        "a log that grows late still passes",
+        json.dumps(_check(report, "xnat c-store")),
+    )
 
     print("a_store_xnat_never_received_fails_run")
     result, report, _, _ = _run("unreceived", log_lag=1000)
@@ -233,11 +237,16 @@ def main() -> int:
 
     print("a_delivered_kit_is_checked_before_anything_starts")
     result, report, calls, tmp = _run("delivered")
-    _assert(_check(report, "fl kit delivered").get("ok") is True, "a delivered kit is recorded",
-            json.dumps(_check(report, "fl kit delivered")))
+    _assert(
+        _check(report, "fl kit delivered").get("ok") is True,
+        "a delivered kit is recorded",
+        json.dumps(_check(report, "fl kit delivered")),
+    )
     result, report, calls, tmp = _run("nokit", no_kit=True)
     check = _check(report, "fl kit delivered")
-    _assert(check.get("ok") is False and "missing-kit" in check.get("detail", ""), "a missing kit names where it looked")
+    _assert(
+        check.get("ok") is False and "missing-kit" in check.get("detail", ""), "a missing kit names where it looked"
+    )
     _assert("up-trust" not in calls.read_text(), "and the stack is not started")
 
     print("health_failure_fails_run")
