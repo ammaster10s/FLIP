@@ -59,10 +59,13 @@ Flower ≥1.32 can install an app's declared dependencies **at run time**: the a
 prepended to `sys.path`. **FLIP turns this off on both sides** (FLIP#1418): the SuperLink sets
 `FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1` (every compose file, and the ECS task on every
 estate), and the SuperNodes do not pass `--allow-runtime-dependency-installation`, which is
-Flower's default. The ServerApp and the ClientApps run in the image's own environment, where
-`fl-base` installs `flip-utils[full]` from `/opt/flip-utils`, which covers every dependency the Flower
-templates declare. A dependency an app needs beyond them ships by adding it to flip-utils' `full`
-extra (what `fl-base` installs) and rebuilding the FL images.
+Flower's default. The ServerApp and the ClientApps run in the image's own environment: `flwr/base`
+plus `flip-utils[full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
+every package the template app code imports. Nothing checks it against the templates'
+`[project].dependencies`, whose version floors and extras (`pandas>=3.0.0`, `flwr[simulation]`) no
+longer apply at run time, so a package the image lacks fails as an import error when the app starts
+on the SuperLink or at a trust, not at build time. A dependency an app needs ships by adding it to
+flip-utils' `full` extra (what `fl-base` installs) and rebuilding the FL images.
 
 Two failures made the per-run install unusable, in flwr 1.36 through 1.39:
 

@@ -91,7 +91,7 @@ services:
       # falls through to the base interpreter (Permission denied on setuptools) or
       # loses its env mid-round. The ClientApp runs in the image's environment,
       # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
-      # every Flower template dependency, and no package index needed at run time.
+      # every package the template app code imports, and no package index needed at run time.
     shm_size: '8gb'
     # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 

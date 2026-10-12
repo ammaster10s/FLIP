@@ -233,7 +233,7 @@ spec:
             # falls through to the base interpreter (Permission denied on setuptools) or
             # loses its env mid-round. The ClientApp runs in the image's environment,
             # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
-            # every Flower template dependency, and no package index needed at run time.
+            # every package the template app code imports, and no package index needed at run time.
           {{- else if eq .Values.flBackend "nvflare" }}
           command:
             - /bin/bash

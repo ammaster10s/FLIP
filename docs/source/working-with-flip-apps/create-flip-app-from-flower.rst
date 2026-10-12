@@ -446,8 +446,8 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
    files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
    governs the run — uploaded files cannot override it. Nothing is installed at run time: the
    ``ServerApp`` on the SuperLink and the ``ClientApp`` at each trust run in the FL image's own
-   environment, which carries every package the templates list, so no FL host needs a package index
-   during a run. ``torch``/``torchvision`` in that environment are PyTorch's CUDA 13.0 builds
+   environment, which carries every package the base template's app code imports, so no FL host
+   needs a package index during a run. ``torch``/``torchvision`` in that environment are PyTorch's CUDA 13.0 builds
    (Torch 2.13 / torchvision 0.28), so GPU hosts require NVIDIA driver 580 or newer; upgrade older
    drivers before deploying these images.
 
