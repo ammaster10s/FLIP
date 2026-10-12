@@ -89,6 +89,8 @@ make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
                                                               # a registered-but-offline trust does not block the run
+make e2e_smoke EXTRA_ARGS="--gpus 0"                          # the run's GPU request per trust (N or N:GIB, FLIP#70);
+                                                              # omitted, config.json RESOURCE_SPEC or the FL API default
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
@@ -178,7 +180,8 @@ which defaults to `http://localhost:8080/api` — the *local dev hub* — unless
 hands your remote token to the dev hub, which answers `500 Internal server error during authentication`, and nothing on
 the remote hub logs a request. Remote hubs enforce MFA, so the Cognito password flow is out: pass a pre-obtained bearer
 as `FLIP_E2E_TOKEN` (the Cognito **AccessToken** of a TOTP-enrolled admin) plus `FLIP_E2E_REFRESH_TOKEN` so the smoke
-can renew it across a long training run. The module also imports flip-api `Settings`, whose dev class requires
+can renew it across a long training run (through Cognito: a supplied token is never sent to the local Keycloak, even
+when `.env.development` makes it the configured backend). The module also imports flip-api `Settings`, whose dev class requires
 `POSTGRES_PASSWORD` even though the smoke never opens the database — export any dummy value on an LZA env, which has
 none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
 `FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.

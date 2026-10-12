@@ -210,13 +210,18 @@ def _maybe_refresh(headers: dict[str, str]) -> bool:
     FLIP_E2E_REFRESH_TOKEN, Cognito REFRESH_TOKEN_AUTH) and local Keycloak
     runs, where ``admin_authentication`` leaves the refresh token in
     FLIP_E2E_REFRESH_TOKEN. Returns True if the token was refreshed.
+
+    The provider follows where the token came from, not the local settings: a checkout with
+    .env.development resolves to the Keycloak backend whatever hub the smoke targets, and the
+    dev Keycloak cannot renew a remote hub's Cognito token.
     """
     refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
     if not refresh:
         return False
 
     settings = get_settings()
-    if settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
+    supplied = bool(os.environ.get("FLIP_E2E_TOKEN"))
+    if not supplied and settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
         from flip_api.auth.identity.keycloak import refresh_grant
 
         try:
@@ -729,14 +734,32 @@ def wait_for_files_scanned(
     )
 
 
+def _parse_gpus(value: str) -> dict[str, int]:
+    """Parse ``--gpus N[:GIB]`` into the hub's ``{num_gpus, mem_per_gpu_gib}`` request."""
+    count, _, mem = value.partition(":")
+    try:
+        return {"num_gpus": int(count), "mem_per_gpu_gib": int(mem or 0)}
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected N or N:GIB, got {value!r}") from e
+
+
 def initiate_training(
-    client: requests.Session, headers: dict[str, str], model_id: str, trusts: list[dict[str, Any]]
+    client: requests.Session,
+    headers: dict[str, str],
+    model_id: str,
+    trusts: list[dict[str, Any]],
+    resources: dict[str, int] | None = None,
 ) -> None:
     trust_ids = [t["id"] for t in trusts]
     # Log the human-friendly trust codes (fall back to name, then id) but send the stable ids.
     labels = [t.get("code") or t.get("name") or t["id"] for t in trusts]
     _log(f"🚀 Initiating training across trusts: {labels}")
-    resp = _post(client, f"/fl/initiate/{model_id}", {"trust_ids": trust_ids}, headers)
+    body: dict[str, Any] = {"trust_ids": trust_ids}
+    if resources is not None:
+        # The run's GPU override (FLIP#70); omitted, the job's config.json or the fl-api default applies.
+        _log(f"  🎛️  GPU request per trust set for this run: {resources}")
+        body["resources"] = resources
+    resp = _post(client, f"/fl/initiate/{model_id}", body, headers)
     if resp.status_code != 204:
         raise SmokeFailure(f"initiate training failed: HTTP {resp.status_code} {resp.text}")
     _log("  ✅ training initiated (model status now INITIATED)")
@@ -999,6 +1022,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds to wait for the model to reach RESULTS_UPLOADED (default: %(default)s)",
     )
     parser.add_argument(
+        "--gpus",
+        type=_parse_gpus,
+        default=None,
+        metavar="N[:GIB]",
+        help="Override the run's GPU request per trust (FLIP#70), e.g. --gpus 0 or --gpus 1:16. "
+        "Omitted, the job's config.json RESOURCE_SPEC or the FL API's default applies.",
+    )
+    parser.add_argument(
         "--abort-midway",
         action="store_true",
         help="#490 stop-training check: once training is running, POST /fl/stop/{model_id} twice "
@@ -1128,7 +1159,7 @@ def main(argv: list[str] | None = None) -> int:
             _log("🩻 Project has no imaging: skipping the image-pull wait (nothing was dispatched to XNAT)")
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
-        initiate_training(client, headers, model_id, trusts)
+        initiate_training(client, headers, model_id, trusts, args.gpus)
         wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.
