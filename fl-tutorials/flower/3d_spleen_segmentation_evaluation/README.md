@@ -52,11 +52,13 @@ pip install -e .
 
 ## Running this tutorial
 
-> **Run this tutorial with the Docker Compose stack, not `flwr run` / the
-> Simulation Engine.** The compose stack is the supported path; the
-> simulation path is documented below only so you understand why we avoid it.
+> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=<this tutorial> FL_BACKEND=flower`
+> runs it on the flwr simulator (below), as NVFLARE's tutorials do — what the release check runs.
+> To run it on the Flower containers by hand, use `fl-services/flower` as shown here. The
+> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
+> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Avoid a raw `flwr run`.
 
-### Recommended: Docker Compose
+### On the Flower containers, by hand
 
 From the repository root:
 
@@ -117,8 +119,8 @@ itself is what fl-api injects at submit time on the platform: the ServerApp open
 `<flip-job-dir>/<checkpoint>`, so `sim-tutorial.sh` passes a `--run-config` pointing
 `flip-job-dir` at `fl-tutorials/data/model_checkpoints` (where `download-spleen-checkpoint`,
 part of `download-spleen-data`, puts `model.pt`) and `checkpoint` at that file. Nothing in
-`app/` knows which runtime it is in. Use the compose stack above before merging, since only that
-path exercises the deployment wiring (TLS, fl-api submit, SuperNode registration).
+`app/` knows which runtime it is in. The deployment wiring (the FL images, fl-api submit, SuperNode
+registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
 
 A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
 environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and

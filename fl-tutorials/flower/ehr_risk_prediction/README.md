@@ -45,7 +45,7 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
   because the deployed bundle's `pyproject.toml` comes from the base template, not from here.
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
   `flwr run --run-config` on a platform submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
-  A tutorial run (`run-tutorial`, `stack-tutorial`) uses `pyproject.toml`'s values instead (FLIP#1432).
+  A tutorial run (`run-tutorial`, or `make submit` on `fl-services/flower`) uses `pyproject.toml`'s values instead (FLIP#1432).
 
 > `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
 > `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
@@ -122,24 +122,14 @@ fetched at run time, never committed).
 
 ## How to run
 
-### Local run (standalone Flower stack)
+### Local run (the flwr simulator)
 
-Brings up the standalone Flower compose stack (SuperLink + 2 SuperNodes + fl-api), submits the job,
-polls to completion and tears down — no imaging, CPU only:
+No SuperLink container, no SuperNodes, no fl-api, no Docker — `flwr` starts a local SuperLink of
+its own. No imaging, CPU only. Every site reads the same CSV and each `ClientApp` slices out its own
+`person_id`-modulo partition, so the run is genuinely federated off one file:
 
 ```bash
 make -C fl-tutorials download-synthea-data FL_BACKEND=flower           # once
-make -C fl-tutorials stack-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
-```
-
-Both SuperNodes read the same mounted CSV; each `ClientApp` slices out its own `person_id`-modulo
-partition, so the run is genuinely federated off one file.
-
-For the fast inner loop, the same app runs on the `flwr` simulator — no SuperLink container, no
-SuperNodes, no fl-api, no Docker; `flwr` starts a local SuperLink of its own — with the same
-partitioning:
-
-```bash
 make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 ```
 

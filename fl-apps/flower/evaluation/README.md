@@ -96,8 +96,8 @@ runs on the flwr simulator via
 (`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
 **raw** `flwr run`, for three reasons the script handles — a long-lived SuperLink caches its
 environment, the `ClientApp` runs from a snapshot under `~/.flwr/apps/`, and `WORKING_DIR` defaults
-to a container path. Only the compose stack exercises the deployment wiring (TLS, fl-api submit,
-SuperNode registration):
+to a container path. The deployment wiring (the FL images, fl-api submit, SuperNode registration) is
+exercised by `make e2e_smoke FL_BACKEND=flower` on the dev stack; to run the Flower containers by hand:
 
 ```bash
 make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt

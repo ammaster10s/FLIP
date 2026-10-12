@@ -11,20 +11,20 @@
 #
 # Flower tutorial runner, mirroring NVFLARE's: run-tutorial and run-all-tutorials run the
 # flwr SIMULATOR (sim-tutorial.sh: no SuperLink container, no SuperNodes, no fl-api, no Docker),
-# and sim-tutorial is the same target under its "no containers" name. stack-tutorial is the
-# Flower-only extra: the standalone compose stack from fl-services/flower (SuperLink +
-# 2 SuperNodes + fl-api), which also exercises the deployment wiring the simulator skips.
+# and sim-tutorial is the same target under its "no containers" name. The deployment path (the
+# FL images, fl-api submit, SuperNode registration) is `make e2e_smoke FL_BACKEND=flower` on the
+# dev stack, as for NVFLARE; fl-services/flower's `make up` / `make submit` runs the containers
+# by hand.
 # The root `make -C fl-tutorials … FL_BACKEND=flower` forwards here.
 #
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification       # simulator
 #   make run-all-tutorials                                # every tutorial on the simulator (the release check)
-#   make stack-tutorial TUTORIAL=xray_classification     # compose stack
 #
 # Every tutorial needs its dataset downloaded first —
 # `make -C fl-tutorials download-<dataset>-data FL_BACKEND=flower`. The dataset tooling is
 # shared with the NVFLARE harness in fl-tutorials/datasets/ and lands under the shared
-# gitignored fl-tutorials/data/, which both runners read.
+# gitignored fl-tutorials/data/, which sim-tutorial.sh reads.
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
@@ -32,7 +32,7 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # 3d_spleen_segmentation_evaluation, 3d_prostate_segmentation, ehr_risk_prediction).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials sim-tutorial stack-tutorial
+.PHONY: list-tutorials run-tutorial run-all-tutorials sim-tutorial
 
 list-tutorials:
 	@echo "Available Flower tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
@@ -51,8 +51,3 @@ run-all-tutorials:
 		echo "🚀 Running Flower tutorial $$d"; \
 		bash $(REPO_ROOT)/fl-tutorials/flower/sim-tutorial.sh "$$d" || { echo "❌ tutorial $$d failed"; exit 1; }; \
 	done
-
-# Run one tutorial on the standalone compose stack (up → submit → wait → down), on the FL images
-# (`make build-fl FL_BACKEND=flower` for local ones). See stack-tutorial.sh's header.
-stack-tutorial:
-	@bash $(REPO_ROOT)/fl-tutorials/flower/stack-tutorial.sh "$(TUTORIAL)"

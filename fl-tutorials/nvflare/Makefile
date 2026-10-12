@@ -26,7 +26,7 @@
 # Discover tutorials: any <category>/<name>/ that carries a .env.app.
 TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
 
-.PHONY: list-tutorials run-tutorial sim-tutorial run-all-tutorials stack-tutorial
+.PHONY: list-tutorials run-tutorial sim-tutorial run-all-tutorials
 
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
@@ -52,7 +52,3 @@ run-all-tutorials:
 		echo "🚀 Running NVFLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done
-
-# Flower's compose-stack runner has no NVFLARE counterpart: NVFLARE tutorials only run on the simulator.
-stack-tutorial:
-	@echo "❌ stack-tutorial is Flower-only (FL_BACKEND=flower); NVFLARE tutorials run on the simulator: make run-tutorial"; exit 1

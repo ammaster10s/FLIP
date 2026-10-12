@@ -34,13 +34,14 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 
 ## Running this tutorial
 
-> **Two supported paths.** `make sim-tutorial` runs the flwr simulator with no containers at
-> all — fast, and what you want while iterating on app code. The Docker Compose stack is the
-> pre-merge check: it is the only path that exercises the real deployment wiring (TLS, fl-api
-> submit, SuperNode registration). The app code is identical in both, and both give each site a
-> disjoint slice of the cohort.
+> **Two paths.** `make run-tutorial` (alias `sim-tutorial`) runs the flwr simulator with no
+> containers at all, as NVFLARE's tutorials do — what the release check runs. `fl-services/flower`
+> runs the Flower containers by hand. The deployment wiring (the FL images, fl-api submit,
+> SuperNode registration) is exercised by `make e2e_smoke FL_BACKEND=flower` and
+> `make -C flip-api e2e_smoke_spleen` against the dev stack (FLIP#1435). The app code is identical
+> in both, and both give each site a disjoint slice of the cohort.
 
-### Recommended: Docker Compose
+### On the Flower containers, by hand
 
 From the Flower service directory:
 
@@ -81,9 +82,7 @@ make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flo
 ```
 
 Runs every ClientApp in-process — **no SuperLink container, no SuperNodes, no fl-api, no
-Docker**. Use it while iterating on app code; use the compose stack above before merging, since
-it is the only path that exercises the real deployment wiring (TLS, fl-api submit, SuperNode
-registration).
+Docker**. The deployment wiring is exercised by the e2e smoke against the dev stack (above).
 
 **The app code is identical either way.** Site identity comes from `context.node_config`'s
 `partition-id`, which the simulator populates and a deployed SuperNode accepts via

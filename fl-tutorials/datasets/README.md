@@ -21,7 +21,7 @@ backend tree. Everything downloads at run time; nothing is committed.
 
 All outputs land under the shared, gitignored [`fl-tutorials/data/`](../) root, so one
 download serves both backends' harnesses (the NVFLARE simulator via each tutorial's
-`.env.app`, Flower's via `flower/sim-tutorial.sh` and its compose stack via `flower/stack-tutorial.sh`).
+`.env.app`, Flower's via `flower/sim-tutorial.sh`).
 
 Invoke the targets through the fl-tutorials root Makefile (which forwards here):
 

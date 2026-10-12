@@ -503,13 +503,7 @@ Two local paths are supported, and the app code is identical on both because sit
 
 The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Its exit status is the run's terminal status as the SuperLink reports it (``flwr run`` alone returns 0 whatever became of the run), and it refuses to start against a local SuperLink another checkout left listening on the Control API port, which would otherwise execute the app in that checkout's environment (naming the pid and command line where ``ss`` can see them). Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
 
-**Full-fidelity check: the compose stack.** ``fl-services/flower`` runs a SuperLink, two SuperNodes and an FL API in containers, with the dev data bind-mounted, and exercises what the simulator cannot: TLS, the FL API submit path and SuperNode registration. Run it once before uploading:
-
-.. code-block:: bash
-
-   make -C fl-tutorials stack-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
-
-The harness brings the stack up, submits the app to the FL API through the platform's submit path, waits for the run and tears the stack down. It runs the tutorial's own ``pyproject.toml`` values, as the simulator does, not the platform settings in ``app/config.toml`` (the spleen tutorial's 3 rounds of 1 epoch rather than 30 of 5). The SuperNodes train on the GPU when ``nvidia-smi`` sees one (``STACK_TUTORIAL_GPU=0`` keeps the CPU), and the harness exits non-zero unless the run finishes within ``WAIT_SECS`` (default 3600). To iterate by hand instead:
+**Full-fidelity check: the dev stack.** What the simulator cannot exercise — the FL images, the FL API submit path and SuperNode registration — is covered by the end-to-end smoke test against the running dev stack, as for NVFLARE: ``make e2e_smoke FL_BACKEND=flower`` and its spleen, prostate and EHR variants (see ``flip-api/AGENTS.md``). To run the Flower containers on their own by hand (SuperLink, two SuperNodes and an FL API, with the dev data bind-mounted; a tutorial submit there uses the tutorial's ``pyproject.toml`` values, not ``app/config.toml``):
 
 .. code-block:: bash
 

@@ -70,7 +70,7 @@ batch-size = 2
 spatial-dims = 3
 num-classes = 2
 # Checkpoint filename to evaluate, relative to flip-job-dir: the model.pt that
-# `download-checkpoints` places in app/, which a stack-tutorial run evaluates.
+# `download-checkpoints` places in app/, which `make -C fl-services/flower submit` evaluates.
 # run-tutorial (sim-tutorial.sh) points flip-job-dir at fl-tutorials/data/model_checkpoints instead;
 # on the platform the uploaded app/config.toml sets this value.
 checkpoint = "model.pt"

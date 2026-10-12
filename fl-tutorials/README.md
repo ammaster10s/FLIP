@@ -44,15 +44,14 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 ```
 
 `run-tutorial` runs the simulator on both backends, in the `flip-utils` environment with its `full` extra (the
-package set the FL images install), so it needs no FL image. Flower also has `stack-tutorial`, which runs the same
-app on the `fl-services/flower` compose stack and so needs the Flower images (`make build-fl FL_BACKEND=flower` for
-local ones). The spleen examples take `download-spleen-data` in place of
+package set the FL images install), so it needs no FL image; the images are exercised by `make e2e_smoke` against
+the dev stack. The spleen examples take `download-spleen-data` in place of
 `download-xray-data`; the EHR risk-prediction example (the tabular/OMOP-only one — no imaging, CPU is enough)
 takes `download-synthea-data`. The prostate example is Flower-only and takes `prepare-prostate-local-data
 NUM_CASES=12` for the simulator; see its [README](flower/3d_prostate_segmentation/README.md) for the full
 PI-CAI setup and the nnU-Net plan.
 
-GPU-backed examples need a CUDA GPU on the host (and, for `stack-tutorial`, the NVIDIA Container Toolkit). Dataset tooling is
+GPU-backed examples need a CUDA GPU on the host. Dataset tooling is
 shared across backends in [`datasets/`](datasets/) and downloads land in the shared gitignored `data/` root, so
 one download serves both backends; generated runs stay in gitignored per-backend output directories. Run
 `make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite — it is also

@@ -35,15 +35,14 @@ make -C fl-tutorials download-xray-data                  # xray dataset (HF); sp
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (= sim-tutorial)
-make -C fl-tutorials stack-tutorial TUTORIAL=xray_classification FL_BACKEND=flower # Flower only: the compose stack
 ```
 
 The two backends mirror each other: `run-tutorial` and `run-all-tutorials` (the release check) run
 the simulator, and `sim-tutorial` is an alias for `run-tutorial`. On Flower that is `flwr run` against
 a local SuperLink flwr starts itself (`flower/sim-tutorial.sh`: no SuperLink container, no
-SuperNodes, no fl-api, no Docker). Flower adds `stack-tutorial`, the standalone compose stack
-(`flower/stack-tutorial.sh`, whose header covers the run values, the GPU switch and the exit status,
-FLIP#1432), which also exercises the fl-api submit path, SuperNode registration and the FL images. The app code is identical either way — site identity comes from
+SuperNodes, no fl-api, no Docker). On both backends the FL images, the fl-api submit path and
+SuperNode registration are exercised by `make e2e_smoke` on the dev stack (FLIP#1435);
+`fl-services/flower`'s `make up` / `make submit` runs the Flower containers by hand. The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
