@@ -82,16 +82,19 @@
 
 Tutorial suite, on a GPU host:
 
-- [ ] NVFLARE — `make -C fl-tutorials run-all-tutorials`
-- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
+- [x] NVFLARE — `make -C fl-tutorials run-all-tutorials`
+- [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
+- [x] Host and date recorded: RTX 5090 workstation, 12 October 2026
+
+NVFLARE: all eight tutorials passed on the simulator — xray_classification 53 s, ehr_risk_prediction 31 s, 3d_spleen_segmentation 10 min 50 s, 3d_spleen_segmentation_evaluation 89 s, latent_diffusion_model 2 min 38 s, arkplus_fine_tuning 1 min 57 s, arkplus_baseline_classification_evaluation 42 s, arkplus_multimodel_classification_evaluation 79 s. The three Ark+ tutorials first failed because their checkpoint (`Ark6_swinLarge768_ep50.pth.tar`) was not staged; it is not part of any dataset download, so fetch it first (`make download-raw-checkpoint` in each Ark+ tutorial).
+Flower: all five tutorials passed on the compose stack (what `run-all-tutorials FL_BACKEND=flower` runs at this commit), at the release commit on locally built FL images with #1433's tutorial values and GPU overlay — xray_classification 3 min 17 s, ehr_risk_prediction 1 min 54 s, 3d_spleen_segmentation 4 min 37 s, 3d_spleen_segmentation_evaluation 88 s (those four in parallel stacks), 3d_prostate_segmentation 1 min 41 s (12 PI-CAI studies).
 
 Full-platform smoke test, against a running deployment:
 
-- [ ] NVFLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
+- [x] NVFLARE — `make e2e_smoke`
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
 
-<!-- Record host, date, trusts and image tags here once both pass. -->
+Both passed on 12 October 2026 on the dev stack on an RTX 5090 workstation, with the hub, both trusts and the FL images (built locally from the release branch at `8f7242c82`, after #1422) at the release commit: create project, cohort query, trust approval, image pull, training (`xray_classification`, CPU clients), results uploaded and downloaded. Flower ran two rounds past the point where #1418 used to fail, with no per-run dependency install.
 
 ## :file_folder: PRs merged in this release
 
