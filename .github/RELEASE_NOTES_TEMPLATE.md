@@ -56,6 +56,7 @@
 - A local deployment guide, *Deploy FLIP locally*, and a shorter root README (#1412), plus a sweep of docs and docstrings that had drifted from the code (#1425).
 - The root `make` targets refuse to drive a hub compose project that another checkout created, which had let `make up` in one checkout recreate another's hub with the wrong env file. Use `FLIP_INSTANCE=<name>` for a second stack, or `ALLOW_FOREIGN_PROJECT=1` to skip the check (#1232).
 - Helm `smoke-cstore` checks that the stored study reaches XNAT's prearchive, instead of watching `dicom.log` grow (#1378).
+- The EC2 (`site.yml`) and on-prem (`onprem.yml`) trust plays share one set of Ansible roles under `trust/deploy/ansible/roles/` (#1217). On-prem provisioning now also installs the base packages and the observability config that the production compose reads from `/opt/flip/config/observability`. A missing or misspelt `fl_backend` / `fl_kit_source` stops the play. This affects first-install provisioning only; the upgrade commands don't run Ansible.
 - tflint runs over the AWS Terraform in CI (#1394). CI generates throwaway test credentials per run, so PRs from forks pass (#1383).
 
 ## :bug: Bug Fixes
