@@ -108,6 +108,13 @@ not provide the resources:
   only chance, so it retries it for about a minute until the hub accepts it; if the hub is unreachable for
   longer, the model stays ``INITIATED`` and **Abort job** on it frees the net.
 
+The reporter only hears about a job once the scheduler has asked the Trusts for their resources. NVFLARE
+stops before that, and fires no event, when a job has no deploy map (refused outright), when one of its
+Trusts is not connected (FLIP makes every Trust in a run mandatory), or when fewer Trusts are connected
+than its ``min_clients`` (both retried as above). The hub is told about none of these: the model stays at
+``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. A hub-side check of in-flight models
+against the FL net's own state is tracked in `FLIP#727 <https://github.com/londonaicentre/FLIP/issues/727>`__.
+
 To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
 Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.
 
