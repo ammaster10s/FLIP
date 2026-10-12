@@ -50,7 +50,8 @@ login user (the Azure play does).
 
 Guards over this tree (all static, no host needed): `../tests/test_onprem_playbook.py` walks the
 on-prem play *through* its roles (docker-group grant, per-net dir ownership);
-`../tests/test_roles_contract.py` pins the input checks above;
+`../tests/test_roles_contract.py` pins the input checks above and holds `flip_observability_config`'s
+file list to the `trust/observability` tree;
 `deploy/providers/AWS/tests/test_site_roles.py` pins how `site.yml` composes the roles (EC2 docker group,
 S3 kit source under the `flkit` tag, per-slot images trees, galaxy installs outside the checkout);
 `trust/xnat/tests/test_data_dir_ownership.py` pins the XNAT bind-mount uid in `flip_trust_dirs` to

@@ -18,6 +18,8 @@ observability_dest_dir: /opt/flip/config/observability
 flip_owner: ubuntu
 flip_group: ubuntu
 # The files the Loki / Alloy / Grafana containers read, relative to both dirs.
+# ../../tests/test_roles_contract.py fails when this drifts from the files under
+# trust/observability/{alloy,loki,grafana}, or names a dir tasks/main.yml does not create.
 observability_config_files:
   - alloy/config.alloy
   - loki/loki-config.yml

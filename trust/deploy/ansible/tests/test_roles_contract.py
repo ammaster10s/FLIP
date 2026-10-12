@@ -15,7 +15,9 @@
 
 The roles are composed by onprem.yml, deploy/providers/AWS/site.yml and (next) azure.yml.
 A missing or misspelt input must stop the play, not fall back to a value that silently
-re-owns the net-N dirs for the wrong backend or stages no FL kit at all.
+re-owns the net-N dirs for the wrong backend or stages no FL kit at all. The same goes for
+flip_observability_config's hand-kept file list: a file added under trust/observability
+that the list misses never reaches a provisioned host.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ import yaml
 
 ANSIBLE_DIR = Path(__file__).resolve().parent.parent
 ROLES_DIR = ANSIBLE_DIR / "roles"
+OBSERVABILITY_DIR = ANSIBLE_DIR.parent.parent / "observability"
+# The trust/observability subtrees the Loki / Alloy / Grafana containers read; the rest of the
+# tree (log_config/, the README) is Python and docs, never copied to a host.
+OBSERVABILITY_SERVICES = ("alloy", "loki", "grafana")
 
 
 def _load(path: Path):
@@ -82,3 +88,35 @@ def test_walker_skips_galaxy_roles_installed_beside_the_local_ones(tmp_path, mon
     )
     monkeypatch.setattr(walker, "ROLES_DIR", tmp_path)
     assert list(walker._role_tasks("geerlingguy.docker")) == [], "a galaxy role is not ours to walk"
+
+
+def _observability_config_files() -> list[str]:
+    defaults = _load(ROLES_DIR / "flip_observability_config" / "defaults" / "main.yml") or {}
+    return defaults.get("observability_config_files") or []
+
+
+def test_observability_role_copies_every_config_file_in_the_tree() -> None:
+    """The role copies a hand-kept list, so a file added under trust/observability must be listed too.
+
+    Grafana reads its whole provisioning dir, so a missing dashboard or datasource is a panel that
+    silently never appears on a provisioned host, not a provisioning failure.
+    """
+    on_disk = {
+        str(path.relative_to(OBSERVABILITY_DIR))
+        for service in OBSERVABILITY_SERVICES
+        for path in (OBSERVABILITY_DIR / service).rglob("*")
+        if path.is_file() and not path.name.startswith(".")
+    }
+    assert on_disk, f"no config files found under {OBSERVABILITY_DIR} — this guard has drifted"
+    assert set(_observability_config_files()) == on_disk, (
+        "flip_observability_config's observability_config_files must list exactly the files under "
+        f"trust/observability/{{{','.join(OBSERVABILITY_SERVICES)}}}"
+    )
+
+
+def test_observability_role_creates_the_dir_of_every_file_it_copies() -> None:
+    tasks = _load(ROLES_DIR / "flip_observability_config" / "tasks" / "main.yml") or []
+    [dirs_task] = [task for task in tasks if task.get("name") == "create observability config directories"]
+    created = set(dirs_task.get("loop") or [])
+    missing = {str(Path(f).parent) for f in _observability_config_files()} - created
+    assert not missing, f"the copy task would write into directories the role never creates: {sorted(missing)}"
