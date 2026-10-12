@@ -114,6 +114,10 @@ def main() -> int:
         kv.get("ORTHANC_STORAGE_DIR") == "/opt/flip/data/trust-1/orthanc-storage", "Orthanc storage under the data root"
     )
     _assert(kv.get("BASE_IMAGES_DOWNLOAD_DIR") == "/opt/flip/data/trust-1", "images base is the data root")
+    _assert(
+        kv.get("XNAT_DATA_DIR") == "/opt/flip/data/trust-1/xnat",
+        "XNAT under the data root, never a joined trust's /opt/flip/xnat (xnat-reset empties it)",
+    )
     _assert(kv.get("CENTRAL_HUB_API_URL", "").endswith(".invalid/api"), "hub URL can never resolve")
 
     print("file_mode_is_0600")

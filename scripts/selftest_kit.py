@@ -64,7 +64,9 @@ def host_values(fl_kit_dir: str, data_root: str) -> dict[str, str]:
         "OMOP_DATA_DIR": f"{data_root}/omop/db_data",
         "ORTHANC_STORAGE_DIR": f"{data_root}/orthanc-storage",
         "BASE_IMAGES_DOWNLOAD_DIR": data_root,
-        "XNAT_DATA_DIR": "/opt/flip/xnat",
+        # Under the self-test's own data root, never a trust's: up-trust's XNAT step (xnat-reset)
+        # empties this directory, and a node that has joined a hub keeps its XNAT at /opt/flip/xnat.
+        "XNAT_DATA_DIR": f"{data_root}/xnat",
     }
 
 

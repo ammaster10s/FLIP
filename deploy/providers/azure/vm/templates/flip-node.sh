@@ -148,16 +148,31 @@ fetch_kit() {
     echo "Kit ${name} extracted to ${dest}"
 }
 
+# The self-test is the acceptance check before a node joins a hub. It brings up a throwaway trust
+# whose first-install step empties its XNAT directory, on the same ports and slot as a real one, so
+# it refuses on a node that has joined: run_join leaves this marker.
+JOINED_MARKER="${FLIP_DIR}/.joined"
+refuse_if_joined() {
+    if [ -f "${JOINED_MARKER}" ]; then
+        echo "ERROR: this node has joined a hub as trust $(cat "${JOINED_MARKER}"); the self-test would" >&2
+        echo "       start a second trust beside it. Run the self-test before joining, or on a fresh node." >&2
+        exit 1
+    fi
+}
+
 # The self-test runs on a kit the operator packed and delivered (make selftest-kit), as a real
-# trust runs on the kit its hub admin sends: the node carries no provisioning tooling.
+# trust runs on the kit its hub admin sends: the node carries no provisioning tooling. It stages
+# that kit in its own directory, never in ${FL_KIT_DIR}, where a joined trust's kit lives.
 run_selftest() {
     local backend="$1"
+    refuse_if_joined
     if ! (fetch_kit "selftest-${backend}.tar.gz"); then
         echo "ERROR: no ${backend} self-test kit could be fetched. From the operator's machine:" >&2
         echo "       make -C deploy/providers/azure selftest-kit FL_BACKEND=${backend}" >&2
         exit 1
     fi
     SELFTEST_SKIP_PROVISION=1 SELFTEST_DEV_KIT_DIR="${FLIP_DIR}/kits/selftest-${backend}/fl-kit" \
+        SELFTEST_FL_KIT_DIR="${FLIP_DIR}/selftest/fl-kit" \
         make -C "${REPO_DIR}/trust" selftest-node "FL_BACKEND=${backend}"
 }
 
@@ -209,6 +224,7 @@ run_join() {
     esac
     kit_file="${REPO_DIR}/trust/.env.${kit}"
     install -m 0600 "${src}/.env.${kit}" "${kit_file}"
+    echo "${kit}" > "${JOINED_MARKER}"
     # The node's own settings go last so they win over the template's (the kit file is make syntax).
     cat >> "${kit_file}" <<NODE
 
@@ -270,6 +286,7 @@ case "${cmd}" in
         ;;
     selftest)
         check_backend "${1:-}"
+        refuse_if_joined
         start_unit "flip-selftest-$1" "${FLIP_NODE_BIN}" run-selftest "$1"
         ;;
     logs)

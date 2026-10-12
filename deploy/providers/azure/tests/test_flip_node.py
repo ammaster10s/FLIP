@@ -258,12 +258,27 @@ def test_run_selftest_runs_on_the_delivered_kit(tmp_path):
     _stub(
         Path(env["PATH"].split(":")[0]),
         "make",
-        f'echo "make $* SKIP=$SELFTEST_SKIP_PROVISION KIT=$SELFTEST_DEV_KIT_DIR" >> "{log}"',
+        f'echo "make $* SKIP=$SELFTEST_SKIP_PROVISION KIT=$SELFTEST_DEV_KIT_DIR STAGE=$SELFTEST_FL_KIT_DIR" >> "{log}"',
     )
     result = _run(env, "run-selftest", "flower")
     assert result.returncode == 0, result.stderr
     kit = Path(env["FLIP_DIR"]) / "kits" / "selftest-flower" / "fl-kit"
-    assert f"selftest-node FL_BACKEND=flower SKIP=1 KIT={kit}" in log.read_text()
+    staged = Path(env["FLIP_DIR"]) / "selftest" / "fl-kit"
+    assert f"selftest-node FL_BACKEND=flower SKIP=1 KIT={kit} STAGE={staged}" in log.read_text()
+    assert staged != Path(env["FLIP_FL_KIT_DIR"]), "never where a joined trust's kit lives"
+
+
+@pytest.mark.parametrize("command", ["selftest", "run-selftest"])
+def test_the_selftest_refuses_on_a_node_that_has_joined(tmp_path, command):
+    """It would start a second trust beside the real one, and its first install empties XNAT's dir."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    Path(env["FLIP_DIR"]).mkdir(parents=True, exist_ok=True)
+    (Path(env["FLIP_DIR"]) / ".joined").write_text("AZ1\n")
+    _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
+    result = _run(env, command, "nvflare")
+    assert result.returncode == 1
+    assert "joined a hub as trust AZ1" in result.stderr
+    assert not log.exists() or ("selftest-node" not in log.read_text() and "systemd-run" not in log.read_text())
 
 
 def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
@@ -313,6 +328,12 @@ def test_join_installs_the_kit_file_owner_only_with_the_node_settings(tmp_path):
         "node settings come last, so they win"
     )
     assert "NUM_AVAILABLE_GPUS=0" in text
+
+
+def test_join_marks_the_node_as_joined_so_the_selftest_refuses(tmp_path):
+    env, _, result = _join(tmp_path, "nvflare")
+    assert result.returncode == 0, result.stderr
+    assert (Path(env["FLIP_DIR"]) / ".joined").read_text().strip() == "AZ1"
 
 
 def test_join_stages_the_nvflare_slot_for_its_client_and_brings_the_trust_up(tmp_path):
