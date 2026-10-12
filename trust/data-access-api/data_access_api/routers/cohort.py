@@ -260,10 +260,16 @@ def _restrict_to_membership(df: pd.DataFrame, snapshot: Snapshot) -> pd.DataFram
     A row is kept when every frozen column it carries a value in holds a member, and at least one
     does. So neither a patient who joined OMOP after approval nor a new study of an approved patient
     enters the cohort, while a row with no value in one frozen column (a member's row whose
-    LEFT-JOINed ``accession_id`` is NULL) is served as it was counted at approval. A row with no
-    value in any frozen column cannot be matched and is dropped. A frozen column the query no longer
-    projects matches nothing — fail-closed, since membership can no longer be checked — and so does
-    a record freezing no column at all, which ``Snapshot`` already refuses to construct.
+    LEFT-JOINed ``accession_id`` is NULL) is matched on the other. A row with no value in any frozen
+    column cannot be matched and is dropped. A frozen column the query no longer projects matches
+    nothing — fail-closed, since membership can no longer be checked — and so does a record freezing
+    no column at all, which ``Snapshot`` already refuses to construct.
+
+    This freezes membership, not records: ``df`` is the query of record run against live OMOP, so a
+    record an approved patient gains after approval is kept whenever it carries no new study id — a
+    new measurement, visit or condition in a tabular cohort, or a NULL-``accession_id`` row in an
+    imaging one. That is intended (FLIP#857): the national data opt-out is per patient, so it acts on
+    membership, and freezing the records would mean copying patient data out of OMOP.
     """
     if snapshot.person_ids is None and snapshot.accession_ids is None:
         logger.error("Cohort membership freezes no id column; releasing no rows")
@@ -423,9 +429,10 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     It runs the query of record stored at approval (FLIP#857) — **the caller-supplied SQL is
     ignored** (logged when it differs) — against live OMOP, uncached, and keeps only the rows
     whose ``person_id`` / ``accession_id`` are in the membership frozen at approval. So the
-    cohort can shrink (a patient removed from OMOP drops out on the next fetch) but can never
-    grow, and researcher code cannot execute arbitrary SQL under an approved project's id. A
-    project with no frozen membership is refused.
+    membership can shrink (a patient removed from OMOP drops out on the next fetch) but can never
+    grow, and researcher code cannot execute arbitrary SQL under an approved project's id. The
+    records of approved patients are read live, including any added after approval (see
+    ``_restrict_to_membership``). A project with no frozen membership is refused.
 
     Because it is row-level, the served cohort must clear the disclosure threshold (the
     governance decision's ``effective_threshold``) in **distinct subjects**, re-counted on every
@@ -492,13 +499,16 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     Accession IDs are still row-level identifiers, and they are the pointer set into the imaging
     data: they decide whose studies get pulled into XNAT, where project members view them. So
     the released set must clear the disclosure threshold in **distinct subjects** (resolved
-    through ``omop.image_occurrence``, never more than the number of values released), and the
-    refusal reuses ``/cohort/dataframe``'s fixed text so an empty set and a below-threshold one
-    are indistinguishable. The trust applies this itself rather than relying on the hub's
+    through ``omop.image_occurrence``, uncached, never more than the number of values released),
+    and the refusal reuses ``/cohort/dataframe``'s fixed text so an empty set and a below-threshold
+    one are indistinguishable. The trust applies this itself rather than relying on the hub's
     staging guard — a trust must stay safe regardless of what the hub checked.
 
     A cohort frozen without an ``accession_id`` column, or whose ``accession_id`` was NULL on every
-    row, returns an EMPTY list rather than an error: it has no imaging to pull.
+    row, returns an EMPTY list rather than an error: it has no imaging to pull. That one branch is
+    not re-counted: with no accessions there is nothing to resolve, and this route never runs the
+    cohort SQL, so the threshold (still the live one) is applied to the subject count frozen at
+    approval. The answer is an empty list either way.
 
     Args:
         query_input (DataframeQuery): The encrypted project id (and the advisory query).
@@ -556,7 +566,7 @@ def create_snapshot(query_input: SnapshotCreateRequest) -> SnapshotResponse:
     holds the latter but not the former, so researcher code cannot reach here. What is stored is
     the query of record and the ``person_id`` / ``accession_id`` values it returned — no
     clinical values. From that point the row-level routes run only the stored query, restricted
-    to those ids, so the cohort can shrink but never grow.
+    to those ids, so the membership can shrink but never grow; the members' records are read live.
 
     Freezing is once per project: when a membership already exists the route returns its facts
     without running the query again. A snapshot the hub re-queues — because its result never

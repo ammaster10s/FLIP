@@ -104,9 +104,10 @@ logged when it differs). Consequences:
 
 - `/cohort/dataframe` re-runs the query of record against live OMOP (uncached) and keeps only the
   rows whose `person_id` / `accession_id` are in the frozen sets — every frozen column a row has a
-  value in must hold a member, and at least one must — so the cohort **can shrink but never grow**: a patient removed from OMOP (an opt-out, a
-  correction) drops out on the next fetch, while neither a new patient nor a new study of an
-  approved patient can enter;
+  value in must hold a member, and at least one must — so the cohort's membership **can shrink but
+  never grow**: a patient removed from OMOP (an opt-out, a correction) drops out on the next fetch,
+  while neither a new patient nor a new study of an approved patient can enter. The membership is
+  frozen, not the records (*What is frozen* below);
 - `/cohort/accession-ids` never runs the cohort SQL: it serves the frozen accession ids that still
   resolve through `omop.image_occurrence` (uncached), so the imaging status poll costs two lookups on
   that table — sequential scans today, since the OMOP DDL has no index on `accession_id` — and a
@@ -133,17 +134,31 @@ logged when it differs). Consequences:
   (AES-key possession) on top of the trust-internal key, so researcher FL code cannot define or
   destroy the frozen cohort — see [Authentication](#authentication).
 
-Because values are read live, a training run is not bit-identical across rounds if OMOP changes
-mid-run: rows can disappear, and an approved patient's attributes can be corrected. That is the
-accepted cost of keeping patient data out of the snapshot store.
+**What is frozen: patients, not records.** Approval freezes **who** is in the cohort — its patients
+and imaging studies — not their records. The query of record runs against live OMOP on every fetch,
+so an approved patient's records are served as OMOP holds them now, including records added after
+approval: a new measurement, visit or condition for an approved patient is served by a tabular
+cohort, and by an imaging cohort on any row whose `accession_id` is NULL. A query that aggregates
+per patient is recomputed over those records too. What cannot happen is a new patient, or a new
+imaging study, entering the cohort.
+
+That is the intended scope of the freeze. The national data opt-out is per patient, so it acts on
+membership: once a patient's opt-out is applied in OMOP, they drop out on the next fetch. Freezing
+the records as well would mean keeping a second copy of patient data outside OMOP, which the store
+deliberately does not do (it holds identifiers only).
+
+It follows that a training run is not bit-identical across rounds if OMOP changes mid-run: rows can
+disappear, an approved patient's values can change, and an approved patient can gain rows.
 
 The disclosure threshold below is enforced at snapshot creation (nothing is persisted for a
 below-threshold cohort, nor for one exposing neither `person_id` nor `accession_id`, which has no
-membership to freeze — that is a 400 naming the column) and **re-counted on every row-level
-fetch** against the live threshold, so a cohort that shrinks below the floor stops being served and
-an operator raising their floor takes effect on already-approved projects. Snapshot creation reads
-OMOP (and counts its subjects) with the query cache bypassed, so it freezes the live cohort, never a
-result cached at submission.
+membership to freeze — that is a 400 naming the column) and **re-counted on every row-level fetch**
+against the live threshold, so a cohort that shrinks below the floor stops being served and an
+operator raising their floor takes effect on already-approved projects. The one exception is a
+tabular project's empty accession list: `/cohort/accession-ids` never runs the cohort SQL and has no
+accessions to resolve, so it applies the live threshold to the subject count frozen at approval.
+Snapshot creation reads OMOP (and counts its subjects) with the query cache bypassed, so it freezes
+the live cohort, never a result cached at submission.
 
 ## Authentication
 

@@ -15,8 +15,11 @@
 At project approval the trust runs its cohort query once and records who is in it: the query of
 record plus the ``person_id`` and/or ``accession_id`` values it returned. The row-level routes then
 re-run that stored query (never the caller's SQL) and keep only rows whose ids are in the frozen
-set, so an approved cohort can SHRINK — a patient removed from OMOP (an opt-out, a correction) drops
-out and their data is no longer reachable — but can never GROW with the live database.
+set, so an approved cohort's membership can SHRINK — a patient removed from OMOP (an opt-out, a
+correction) drops out and their data is no longer reachable — but can never GROW with the live
+database. What is frozen is who is in the cohort, not their records: an approved patient's rows are
+read live, so a record added to OMOP after approval (a new measurement, visit or condition) is served.
+That matches the national data opt-out, which is per patient and so acts on membership.
 
 What is stored is identifiers and the SQL text, never clinical values: the artefact is a small,
 human-readable JSON file an operator can inspect, diff and audit, and the attribute data stays in
@@ -103,10 +106,12 @@ class Snapshot:
     # The frozen member ids, as strings. None when the cohort does not project that column; empty
     # when it does but every value was NULL. Serving keeps a row only when every frozen column it
     # has a value in holds a member, and at least one does, so neither a new patient nor a new study
-    # of an existing patient can enter an approved cohort.
+    # of an existing patient can enter an approved cohort. A new record of an approved patient that
+    # carries no new study id can.
     person_ids: Sequence[str] | None
     accession_ids: Sequence[str] | None
-    # Facts at approval, for the hub's audit strip and drift check. Serving re-counts live.
+    # Facts at approval, for the hub's audit strip and drift check. Serving re-counts live, except a
+    # tabular project's empty accession list, which is gated on subject_count (nothing to re-count).
     row_count: int
     subject_count: int
     columns: Sequence[str]

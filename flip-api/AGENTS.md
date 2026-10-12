@@ -236,8 +236,9 @@ runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/
 
 At approval the hub queues a PERSIST_COHORT task per approved trust (before CREATE_IMAGING, and for tabular
 projects too); the trust freezes the approved cohort's membership, and its row-level routes then serve only those
-members (the cohort can shrink, never grow). The hub keeps one `cohort_snapshot_status` row per (project, trust)
-with the approval-time facts, written by the task's post-processing (retried by the stale-task recovery job).
+members (the membership can shrink, never grow; their records are read live, so a member's row count can rise).
+The hub keeps one `cohort_snapshot_status` row per (project, trust) with the approval-time facts, written by the
+task's post-processing (retried by the stale-task recovery job).
 
 - `GET /projects/{id}/cohort-snapshots` — one entry per approved trust with `status` `frozen` / `pending` /
   `failed`, derived from the latest PERSIST_COHORT task (`project_services/services/cohort_snapshot_service.py`).

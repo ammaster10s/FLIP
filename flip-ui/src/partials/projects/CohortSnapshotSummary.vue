@@ -104,7 +104,7 @@ interface ICohortSnapshotSummaryProps {
 const props = defineProps<ICohortSnapshotSummaryProps>();
 const route = useRoute();
 
-// The frozen membership record is never replaced (the served cohort can shrink;
+// The frozen membership record is never replaced (its members can drop out;
 // this shows approval-time facts), but a trust's freeze or re-check can still be pending —
 // the refresh picks up its completion without a reload (FLIP#857).
 const { data, error } = useSWRV(

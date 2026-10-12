@@ -276,7 +276,7 @@ on a hub run with Docker Compose, ``make -C flip-api backfill_cohort_snapshots``
 approved project at once (``EXTRA_ARGS="--dry-run"`` previews). Neither touches a site whose
 membership is already frozen unless asked to (``?include_frozen=true`` on the endpoint,
 ``EXTRA_ARGS="--include-frozen"`` on the backfill) — the recovery for a site that lost its snapshot
-store. A site that still holds its membership keeps it unchanged, so the cohort cannot grow; one that
+store. A site that still holds its membership keeps it unchanged, so its patients cannot change; one that
 lost it freezes afresh from its live database.
 
 Deploying the hub itself — ``make deploy-centralhub PROD=true TAG=v<X.Y.Z>`` after enabling

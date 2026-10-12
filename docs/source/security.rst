@@ -176,11 +176,14 @@ independent controls would each have to fail before anything unintended could ex
 - row-level data is released only for the **cohort frozen at project approval**: each
   Trust records the approved query and the patient and study identifiers it returned (no
   clinical values), and from then on serves only that query, restricted to those
-  identifiers, ignoring any SQL supplied at request time. The cohort a project trains on
-  can therefore never grow beyond what was approved, and training code cannot run queries
-  of its own. It can shrink: a patient removed from the Trust's database — for instance
-  after an opt-out — drops out on the next fetch, and a cohort that falls below the
-  disclosure threshold stops being served.
+  identifiers, ignoring any SQL supplied at request time. No patient or imaging study
+  outside the approved cohort can therefore reach training, and training code cannot run
+  queries of its own. The freeze is of patients, not records: an approved patient's
+  records are read live, so one added after approval (a new measurement, visit or
+  condition) is served. The national data opt-out is per patient, so it acts on that
+  membership: a patient removed from the Trust's database — for instance after an
+  opt-out — drops out on the next fetch, and a cohort that falls below the disclosure
+  threshold stops being served.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege

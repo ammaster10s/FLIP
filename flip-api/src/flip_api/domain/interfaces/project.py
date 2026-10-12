@@ -269,11 +269,11 @@ class ICohortSnapshot(BaseModel):
     ``status`` is FROZEN, PENDING or FAILED, as the hub knows it: a trust never frozen (PENDING or FAILED)
     refuses training, while a frozen trust being re-checked keeps serving (PENDING, or FROZEN with ``error``
     set when the re-check failed). The count fields are the approval-time facts
-    and are present once the trust has reported a snapshot. The frozen membership bounds what the
-    project trains on at that trust (it can shrink as patients opt out, never grow), so
-    ``rowCount`` is an upper bound. ``approvedRecordCount`` is the count the project was
-    staged/approved on; when it differs from ``rowCount`` the live cohort drifted between
-    submission and approval. ``error`` is a category-only reason, set when ``status`` is FAILED.
+    and are present once the trust has reported a snapshot. The frozen membership bounds who the
+    project trains on at that trust (it can shrink as patients opt out, never grow), but their
+    records are read live, so ``rowCount`` is not the live count. ``approvedRecordCount`` is the
+    count the project was staged/approved on; when it differs from ``rowCount`` the live cohort
+    drifted between submission and approval. ``error`` is a category-only reason, set when ``status`` is FAILED.
     """
 
     trust_id: UUID = Field(alias="trustId")

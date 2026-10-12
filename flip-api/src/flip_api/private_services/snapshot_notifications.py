@@ -82,7 +82,7 @@ def handle_snapshot_task_completed(task: TrustTask, db: Session) -> None:
     ``INSERT ... ON CONFLICT DO UPDATE`` on the table's unique constraint, so a re-queued
     snapshot (or two post-processing runs racing — submission and the recovery job) updates the row
     in place rather than duplicating it or failing on the constraint. The row holds the
-    approval-time facts; the frozen membership bounds what the project trains on at that
+    approval-time facts; the frozen membership bounds who the project trains on at that
     trust (it can shrink, never grow). Logs a WARNING when the frozen member count differs
     from the count the project was approved on: the live cohort drifted between submission
     and approval. The drift is surfaced, never acted on.

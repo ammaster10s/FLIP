@@ -145,7 +145,7 @@ export type CohortSnapshotState = "frozen" | "pending" | "failed";
 
 // One approved trust's cohort freeze (FLIP#857) — aggregates only. The count fields are the
 // approval-time facts, present once the trust has reported a snapshot: the frozen membership
-// bounds what the project trains on there (it can shrink, never grow). A rowCount differing
+// bounds who the project trains on there (it can shrink, never grow; their records are read live). A rowCount differing
 // from approvedRecordCount means the live cohort drifted between submission and approval;
 // hasAccessions=false marks a cohort with no imaging to pull. error is a category-only reason:
 // why a "failed" trust is not frozen, or, on a "frozen" one, that its last re-check failed.
