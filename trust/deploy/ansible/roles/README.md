@@ -41,9 +41,10 @@ Role lookup: `onprem.yml` finds `./roles` beside itself; `site.yml` finds them t
 `ansible-galaxy` installs into the first entry and would otherwise drop `geerlingguy.docker` into this
 directory (galaxy-style `namespace.role` dirs here are gitignored, and the test walker skips them).
 
-Inputs every play must set: `fl_backend` (`nvflare` | `flower`) has no role default, and
-`flip_fl_kit` / `flip_trust_dirs` check it (and `fl_kit_source`) in their first task, so a missing or
-misspelt value stops the play instead of re-owning the net-N dirs or staging the wrong kit.
+Inputs every play must set: `fl_backend` (`nvflare` | `flower`) and `fl_kit_source` (`s3` |
+`precreate` | `none`) have no role default, and `flip_fl_kit` / `flip_trust_dirs` check them in their
+first task, so a missing or misspelt value stops the play instead of re-owning the net-N dirs, staging
+the wrong kit, or staging none.
 `flip_owner` / `flip_group` default to `ubuntu` in four roles; set them at play level for any other
 login user (the Azure play does).
 

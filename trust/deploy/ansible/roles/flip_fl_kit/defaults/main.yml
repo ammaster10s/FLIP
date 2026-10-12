@@ -20,15 +20,15 @@ flip_group: ubuntu
 # fl_backend has no default on purpose: the play must say nvflare or flower (the first task
 # checks it), because the wrong backend wipes and re-stages the wrong kit layout.
 
-# Where the kit comes from:
+# fl_kit_source has no default either: the play must say where the kit comes from (the
+# first task checks it), because a silent `none` stages nothing and still reports success.
 #   s3        — the EC2 path: sync this host's slot out of the hub's participant-kit
 #               bucket with the instance role (needs flip_aicentre_bucket, fl_kit_date,
 #               trust_num). Wipes net-1/ first, asserts the result.
 #   precreate — the on-prem path: lay down the empty directory tree the compose
 #               mounts expect; the operator extracts the kit tarball into it by hand
 #               (package-onprem-trust-kit.sh), and nothing wipes.
-#   none      — only ensure fl_kit_dir exists.
-fl_kit_source: none
+#   none      — only ensure fl_kit_dir exists (a play that delivers the kit another way).
 
 # precreate: the slot whose NVFLARE service tree is laid down. On-prem hosts
 # conventionally take Trust_2; a different slot means a different kit file value too.

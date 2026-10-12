@@ -52,10 +52,18 @@ def test_fl_backend_has_no_silent_default(role: str) -> None:
     assert "fl_backend" not in defaults, f"{role} must not default fl_backend: the play has to say which backend"
 
 
+def test_fl_kit_source_has_no_silent_default() -> None:
+    """A play that omits fl_kit_source must stop, not stage nothing and report success."""
+    defaults = _load(ROLES_DIR / "flip_fl_kit" / "defaults" / "main.yml") or {}
+    assert "fl_kit_source" not in defaults, "flip_fl_kit must not default fl_kit_source: the play has to say it"
+
+
 def test_fl_kit_role_checks_its_inputs_first() -> None:
     conditions = _assert_conditions(_first_task("flip_fl_kit"))
-    assert "fl_kit_source in" in conditions, "fl_kit_source must be one of s3/precreate/none"
-    assert "fl_backend in" in conditions, "fl_backend must be nvflare or flower"
+    assert "fl_kit_source is defined and fl_kit_source in" in conditions, (
+        "fl_kit_source must be one of s3/precreate/none"
+    )
+    assert "fl_backend is defined and fl_backend in" in conditions, "fl_backend must be nvflare or flower"
 
 
 def test_trust_dirs_role_checks_fl_backend_first() -> None:
