@@ -335,10 +335,9 @@ def _submit_from_job_dir(job_dir: Path, label: str, *, apply_config_toml: bool =
     # temp copy and pass that to `flwr run` -- flwr also rejects mixing a config
     # file with inline key=value overrides, so everything goes through one file.
     #
-    # A tutorial submit (apply_config_toml=False) skips config.toml: a tutorial's
-    # config.toml carries the platform settings it is uploaded with (spleen: 30 rounds
-    # x 5 epochs), while its pyproject.toml carries the tutorial-sized run that
-    # sim-tutorial.sh and NVFLARE's `make run` use. Only flip-job-dir is passed.
+    # A tutorial submit (apply_config_toml=False) skips config.toml, which carries the
+    # settings the tutorial is uploaded to the platform with, so flwr runs the tutorial's
+    # own pyproject.toml values; only flip-job-dir is passed (FLIP#1432).
     config_toml_path = job_dir / "app" / "config.toml"
 
     with _state_lock:

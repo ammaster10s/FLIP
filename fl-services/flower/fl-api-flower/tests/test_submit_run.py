@@ -73,26 +73,22 @@ def test_submit_tutorial_success(client, src_root, mock_flwr_run):
     assert response.status_code == 200
 
 
-def _capture_run_config(monkeypatch, fab_name: str) -> dict:
-    """Patch `flwr run` and record the --run-config file it was given (None if absent)."""
+def _capture_run_config(monkeypatch, returncode: int = 0) -> dict:
+    """Patch `flwr run`; record its --run-config path and contents (None when absent)."""
     captured: dict = {}
 
     def _capture(command, *_args, **_kwargs):
-        captured["command"] = command
-        # the temp --run-config file still exists here (before the finally block)
+        captured["path"] = None
+        captured["run_config"] = None
         if "--run-config" in command:
-            captured["run_config"] = parse(Path(command[command.index("--run-config") + 1]).read_text())
-        else:
-            captured["run_config"] = None
+            # the temp file still exists here (before the finally block deletes it)
+            captured["path"] = Path(command[command.index("--run-config") + 1])
+            captured["run_config"] = parse(captured["path"].read_text())
         return subprocess.CompletedProcess(
             args=command,
-            returncode=0,
-            stdout=(
-                f'{{"success": true,"run-id":"123","fab-id":"flwrlabs/{fab_name}",'
-                f'"fab-name":"{fab_name}","fab-version":"1.0.0","fab-hash":"abc",'
-                f'"fab-filename":"flwrlabs.{fab_name}.1-0-0.abc.fab"}}'
-            ),
-            stderr="",
+            returncode=returncode,
+            stdout='{"success": true,"run-id":"123"}' if returncode == 0 else "",
+            stderr="" if returncode == 0 else "flwr: boom",
         )
 
     monkeypatch.setattr(app_module.subprocess, "run", _capture)
@@ -102,53 +98,71 @@ def _capture_run_config(monkeypatch, fab_name: str) -> dict:
 _PLATFORM_CONFIG_TOML = 'num-server-rounds = 30\nlocal-epochs = 5\ncheckpoint = "model.pt"\n'
 
 
-def test_submit_tutorial_runs_on_pyproject_values_not_config_toml(client, src_root, monkeypatch):
+@pytest.mark.parametrize("with_config_toml", [True, False])
+def test_submit_tutorial_runs_on_pyproject_values_not_config_toml(client, src_root, monkeypatch, with_config_toml):
     """A tutorial's config.toml holds its platform settings; the tutorial submit passes only flip-job-dir."""
     app_dir = src_root / "spleen_app" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     config_toml = app_dir / "config.toml"
-    config_toml.write_text(_PLATFORM_CONFIG_TOML)
-    captured = _capture_run_config(monkeypatch, "spleen_app")
+    if with_config_toml:
+        config_toml.write_text(_PLATFORM_CONFIG_TOML)
+    captured = _capture_run_config(monkeypatch)
 
     response = client.post("/submit_tutorial/spleen_app")
 
     assert response.status_code == 200
     # no num-server-rounds / local-epochs / checkpoint: flwr falls back to the pyproject.toml values
     assert dict(captured["run_config"]) == {"flip-job-dir": str(app_dir)}
-    # the app's own config.toml is left untouched
-    assert config_toml.read_text() == _PLATFORM_CONFIG_TOML
+    assert not captured["path"].exists()
+    if with_config_toml:
+        assert config_toml.read_text() == _PLATFORM_CONFIG_TOML
 
 
-def test_submit_tutorial_passes_flip_job_dir_without_config_toml(client, src_root, monkeypatch):
-    """flip-job-dir reaches the run even when the tutorial has no config.toml."""
-    app_dir = src_root / "eval_app" / "app"
-    app_dir.mkdir(parents=True, exist_ok=True)
-    captured = _capture_run_config(monkeypatch, "eval_app")
-
-    response = client.post("/submit_tutorial/eval_app")
-
-    assert response.status_code == 200
-    assert dict(captured["run_config"]) == {"flip-job-dir": str(app_dir)}
-
-
-def test_submit_run_merges_flip_job_dir_into_config_toml(client, src_root, monkeypatch):
+@pytest.mark.parametrize("endpoint", ["/submit_run", "/submit_job"])
+def test_platform_submit_merges_flip_job_dir_into_config_toml(client, src_root, monkeypatch, endpoint):
     """A platform submit applies the uploaded config.toml plus flip-job-dir, leaving the file untouched."""
     model_id = str(uuid4())
     app_dir = src_root / model_id / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     config_toml = app_dir / "config.toml"
     config_toml.write_text(_PLATFORM_CONFIG_TOML)
-    captured = _capture_run_config(monkeypatch, "standard_app")
+    captured = _capture_run_config(monkeypatch)
+
+    response = client.post(f"{endpoint}/{model_id}")
+
+    assert response.status_code == 200
+    assert dict(captured["run_config"]) == {
+        "num-server-rounds": 30,
+        "local-epochs": 5,
+        "checkpoint": "model.pt",
+        "flip-job-dir": str(app_dir),
+    }
+    assert not captured["path"].exists()
+    assert config_toml.read_text() == _PLATFORM_CONFIG_TOML
+
+
+def test_platform_submit_without_config_toml_passes_no_run_config(client, src_root, monkeypatch):
+    """With no uploaded config.toml a platform submit runs the template's values, no --run-config at all."""
+    model_id = str(uuid4())
+    (src_root / model_id).mkdir(parents=True, exist_ok=True)
+    captured = _capture_run_config(monkeypatch)
 
     response = client.post(f"/submit_run/{model_id}")
 
     assert response.status_code == 200
-    run_config = captured["run_config"]
-    assert run_config["num-server-rounds"] == 30
-    assert run_config["local-epochs"] == 5
-    assert run_config["checkpoint"] == "model.pt"
-    assert run_config["flip-job-dir"] == str(app_dir)
-    assert config_toml.read_text() == _PLATFORM_CONFIG_TOML
+    assert captured["run_config"] is None
+
+
+def test_submit_removes_the_temp_run_config_when_flwr_fails(client, src_root, monkeypatch):
+    """The temp --run-config file is deleted on the failure path too, where a leak would go unnoticed."""
+    (src_root / "spleen_app" / "app").mkdir(parents=True, exist_ok=True)
+    captured = _capture_run_config(monkeypatch, returncode=1)
+
+    response = client.post("/submit_tutorial/spleen_app")
+
+    assert response.status_code == 500
+    assert captured["path"] is not None
+    assert not captured["path"].exists()
 
 
 def test_submit_tutorial_folder_not_found(client, src_root):

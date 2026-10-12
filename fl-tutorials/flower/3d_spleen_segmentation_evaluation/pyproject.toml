@@ -70,8 +70,9 @@ batch-size = 2
 spatial-dims = 3
 num-classes = 2
 # Checkpoint filename to evaluate, relative to flip-job-dir: the model.pt that
-# `download-checkpoints` places in app/. A tutorial run (run-tutorial.sh, sim-tutorial.sh)
-# uses this value; on the platform the uploaded app/config.toml sets it.
+# `download-checkpoints` places in app/, which a run-tutorial.sh run evaluates.
+# sim-tutorial.sh points flip-job-dir at fl-tutorials/data/model_checkpoints instead;
+# on the platform the uploaded app/config.toml sets this value.
 checkpoint = "model.pt"
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
 # See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details

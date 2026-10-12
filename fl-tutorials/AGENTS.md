@@ -40,7 +40,7 @@ make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 `sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
 `run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` against a local
 SuperLink flwr starts itself (no SuperLink container, no SuperNodes, no fl-api, no Docker) where
-`run-tutorial` brings up the standalone compose stack (`flower/run-tutorial.sh`: the tutorial's `pyproject.toml` run values, not its platform `app/config.toml`; the SuperNodes on the GPU when `nvidia-smi` sees one, `RUN_TUTORIAL_GPU=0` for CPU; exit 1 unless the run FINISHES within `WAIT_SECS`, default 3600). The app code is identical either way — site identity comes from
+`run-tutorial` brings up the standalone compose stack (`flower/run-tutorial.sh`, whose header covers the run values, the GPU switch and the exit status, FLIP#1432). The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
