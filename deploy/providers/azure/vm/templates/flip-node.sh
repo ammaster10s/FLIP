@@ -72,8 +72,18 @@ mount_data_disk() {
     fi
 }
 
+# The rule Terraform applies to flip_ref, enforced on every checkout path (first boot and
+# reprovision alike): a full commit or a release tag, never a branch, so the node stays pinned.
+check_ref() {
+    if ! [[ "${1}" =~ ^([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        echo "ERROR: the ref must be a full commit sha or a vX.Y.Z tag, never a branch (got '${1}')" >&2
+        exit 2
+    fi
+}
+
 checkout() {
     local ref="${1:-${FLIP_REF}}"
+    check_ref "${ref}"
     if [ ! -d "${REPO_DIR}/.git" ]; then
         git clone --quiet "${FLIP_REPO_URL}" "${REPO_DIR}"
     fi
@@ -82,6 +92,7 @@ checkout() {
 }
 
 provision() {
+    check_ref "${1:-${FLIP_REF}}"
     mount_data_disk
     checkout "${1:-}"
     # cloud-init wrote flip-node once, at first boot; the checkout's copy is the one for this ref.
@@ -134,10 +145,21 @@ fetch_kit() {
         attempt=$((attempt + 1))
         sleep "${FETCH_BACKOFF_SECONDS}"
     done
-    # An absolute path or a .. component could write outside the kit dir: refuse the whole kit.
-    if tar -tzf "${tarball}" | grep -qE '(^/|(^|/)\.\.(/|$))'; then
+    # A kit is plain files and directories. An absolute path or a .. component could write outside
+    # the kit dir, and so could a symlink or hard link, which no check of the names can see: refuse
+    # the whole kit if any member is one of them.
+    if ! python3 -I - "${tarball}" <<'PY'
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1]) as kit:
+    for member in kit.getmembers():
+        if member.name.startswith("/") or ".." in member.name.split("/") or not (member.isfile() or member.isdir()):
+            sys.exit(1)
+PY
+    then
         rm -f "${tarball}"
-        echo "ERROR: ${name} has an unsafe member (absolute path or ..); nothing was extracted." >&2
+        echo "ERROR: ${name} has an unsafe member (absolute path, .. or a link); nothing was extracted." >&2
         exit 1
     fi
     rm -rf "${dest}"
@@ -265,7 +287,10 @@ fi
 shift
 case "${cmd}" in
     provision) provision "${1:-}" ;;
-    reprovision) start_unit flip-reprovision "${FLIP_NODE_BIN}" provision "${1:-}" ;;
+    reprovision)
+        if [ -n "${1:-}" ]; then check_ref "$1"; fi
+        start_unit flip-reprovision "${FLIP_NODE_BIN}" provision "${1:-}"
+        ;;
     status)
         cloud-init status --long || true
         if [ -f "${FLIP_DIR}/.provisioned" ]; then echo "provisioned: $(cat "${FLIP_DIR}/.provisioned")"; else echo "provisioned: no"; fi

@@ -131,6 +131,25 @@ def test_logs_rejects_an_unsafe_unit_or_line_count(tmp_path, args):
     assert not log.exists() or "journalctl" not in log.read_text()
 
 
+@pytest.mark.parametrize("command", ["provision", "reprovision"])
+@pytest.mark.parametrize("ref", ["main", "develop", "0123abc", "v1.2"])
+def test_a_branch_or_partial_ref_is_refused_on_every_checkout_path(tmp_path, command, ref):
+    """Terraform pins flip_ref at first boot; reprovision must hold the node to the same rule."""
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    result = _run(env, command, ref)
+    assert result.returncode == 2
+    assert "never a branch" in result.stderr
+    calls = log.read_text() if log.exists() else ""
+    for tool in ("git", "systemd-run", "mount"):
+        assert tool not in calls, f"{tool} ran before the ref was checked"
+
+
+def test_provision_checks_out_a_release_tag(tmp_path):
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    assert _run(env, "provision", "v0.12.0").returncode == 0
+    assert "checkout --quiet --detach v0.12.0" in log.read_text()
+
+
 def test_unknown_command_prints_usage(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
     result = _run(env, "explode")
@@ -197,6 +216,23 @@ def test_fetch_kit_refuses_a_member_that_escapes_the_kit_dir(tmp_path):
     assert result.returncode != 0
     assert "unsafe" in result.stderr.lower()
     assert not list(tmp_path.rglob("escaped.txt")), "nothing may be written outside the kit dir"
+
+
+@pytest.mark.parametrize("kind", [tarfile.SYMTYPE, tarfile.LNKTYPE])
+def test_fetch_kit_refuses_a_link_member(tmp_path, kind):
+    """A link can point outside the kit dir under a harmless name; a kit is plain files and dirs."""
+    env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
+    tarball = tmp_path / "src.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tar:
+        link = tarfile.TarInfo("fl-kit/escape")
+        link.type = kind
+        link.linkname = str(tmp_path / "outside") if kind == tarfile.SYMTYPE else "fl-kit/x"
+        tar.addfile(link)
+    _stub_curl(env, tmp_path, tarball)
+    result = _run(env, "fetch-kit", "evil.tar.gz")
+    assert result.returncode != 0
+    assert "unsafe" in result.stderr.lower()
+    assert not (Path(env["FLIP_DIR"]) / "kits" / "evil" / "fl-kit").exists(), "nothing was extracted"
 
 
 def test_fetch_kit_waits_out_role_propagation(tmp_path):
