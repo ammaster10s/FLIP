@@ -47,6 +47,20 @@ define run_on_node
 		--command-id RunShellScript --scripts "$(1)" --query 'value[0].message' -o tsv
 endef
 
+# Run Command hands its script to a shell on the node, so every argument is checked here, before it
+# goes into that script: flip-node's own checks run only after the node's shell has parsed it. The
+# patterns are flip-node's; a value is single-quoted for the local shell while it is checked.
+sq = '$(subst ','\'',$(1))'
+REF_PATTERN := ([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)
+BACKEND_PATTERN := (nvflare|flower)
+BLOB_PATTERN := [A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz
+KIT_PATTERN := [A-Za-z0-9_]+
+PROD_PATTERN := [a-z-]+
+UNIT_PATTERN := [A-Za-z0-9][A-Za-z0-9@._-]*
+LINES_PATTERN := [0-9]{1,5}
+# $(call check_arg,<variable name>,<value>,<pattern>)
+check_arg = v=$(call sq,$(2)); [[ "$$v" =~ ^$(3)$$ ]] || { echo "❌ $(1)='$$v' is not valid: it must match $(3)."; exit 1; }
+
 .PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join logs report stop start test lint
 
 help: ## Show this help message
@@ -112,10 +126,12 @@ status: ## First-boot and provisioning state of the node
 	@$(call run_on_node,flip-node status)
 
 reprovision: ## Re-run the play on the node (REF=<sha|vX.Y.Z> to move the code)
+	@$(if $(REF),$(call check_arg,REF,$(REF),$(REF_PATTERN)),true)
 	$(require_subscription)
 	@$(call run_on_node,flip-node reprovision $(REF))
 
 selftest: ## Start the hubless self-test on the node, on the kit selftest-kit delivered (FL_BACKEND=nvflare|flower)
+	@$(call check_arg,FL_BACKEND,$(FL_BACKEND),$(BACKEND_PATTERN))
 	$(require_subscription)
 	@$(call run_on_node,flip-node selftest $(FL_BACKEND))
 
@@ -138,13 +154,19 @@ selftest-kit: ## Pack a self-test FL kit here and put it in the kit drop (FL_BAC
 join: ## Install a hub-registered kit on the node and bring the trust up (NAME=<blob> KIT=<code> PROD=lza-stag)
 	$(require_subscription)
 	@[ -n "$(NAME)" ] && [ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ NAME=<uploaded kit blob> KIT=<trust code> PROD=<env> are required."; exit 1; }
+	@$(call check_arg,NAME,$(NAME),$(BLOB_PATTERN))
+	@$(call check_arg,KIT,$(KIT),$(KIT_PATTERN))
+	@$(call check_arg,PROD,$(PROD),$(PROD_PATTERN))
 	@$(call run_on_node,flip-node join $(NAME) $(KIT) $(PROD))
 
 logs: ## Tail a node unit's log (UNIT=flip-selftest-nvflare LINES=80)
+	@$(call check_arg,UNIT,$(UNIT),$(UNIT_PATTERN))
+	@$(call check_arg,LINES,$(LINES),$(LINES_PATTERN))
 	$(require_subscription)
 	@$(call run_on_node,flip-node logs $(UNIT) $(LINES))
 
 report: ## Print the latest self-test report (FL_BACKEND=nvflare|flower)
+	@$(call check_arg,FL_BACKEND,$(FL_BACKEND),$(BACKEND_PATTERN))
 	$(require_subscription)
 	@$(call run_on_node,flip-node report $(FL_BACKEND))
 

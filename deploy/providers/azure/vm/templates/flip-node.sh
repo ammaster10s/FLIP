@@ -273,7 +273,10 @@ case "${cmd}" in
         start_unit "flip-selftest-$1" "${FLIP_NODE_BIN}" run-selftest "$1"
         ;;
     logs)
-        [ -n "${1:-}" ] || usage
+        if ! [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9@._-]*$ ]] || ! [[ "${2:-80}" =~ ^[0-9]{1,5}$ ]]; then
+            echo "usage: flip-node logs UNIT [LINES] (e.g. logs flip-selftest-nvflare 80)" >&2
+            exit 2
+        fi
         journalctl -u "$1" -n "${2:-80}" --no-pager
         ;;
     report)

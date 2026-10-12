@@ -23,6 +23,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import pytest
 from conftest import AZURE_DIR
 
 SCRIPT = AZURE_DIR / "vm" / "templates" / "flip-node.sh"
@@ -119,6 +120,15 @@ def test_selftest_starts_a_detached_unit(tmp_path):
     calls = log.read_text()
     assert "systemd-run --unit=flip-selftest-flower" in calls
     assert f"{env['FLIP_NODE_BIN']} run-selftest flower" in calls, "the unit runs the installed flip-node"
+
+
+@pytest.mark.parametrize("args", [("flip-provision; id",), ("flip-provision", "80; id"), ("",)])
+def test_logs_rejects_an_unsafe_unit_or_line_count(tmp_path, args):
+    env, log = _setup(tmp_path, disk_present=True, has_fs=True)
+    _stub(Path(env["PATH"].split(":")[0]), "journalctl", f'echo "journalctl $*" >> "{log}"')
+    result = _run(env, "logs", *args)
+    assert result.returncode == 2
+    assert not log.exists() or "journalctl" not in log.read_text()
 
 
 def test_unknown_command_prints_usage(tmp_path):
