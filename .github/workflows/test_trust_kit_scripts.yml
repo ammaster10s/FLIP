@@ -42,6 +42,10 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_flower_runtime_install.py asserts on the Flower composes and the Helm chart (FLIP#1418).
+      - "fl-services/flower/compose*.yml"
+      - "trust/deploy/helm/templates/**"
+      - "trust/deploy/helm/values*.yaml"
       # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
       # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
       - ".github/workflows/secret-scanning.yml"
