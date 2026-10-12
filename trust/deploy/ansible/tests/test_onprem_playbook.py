@@ -38,6 +38,8 @@ ROLES_DIR = ANSIBLE_DIR / "roles"
 
 # The per-net images bind sources, which imaging-api AND the fl-client both write into.
 NET_DIR_TASK = "create per-net images bind-mount directories"
+OBSERVABILITY_COPY_TASK = "copy observability config files"
+FL_KIT_PRECREATE_TASK = "Create FL participant kit directories (default FL_KIT_DIR=/opt/flip/fl-kit)"
 EXPECTED_IMAGES_BASE_DIRS = ["{{ flip_dir }}/data/images"]
 EXPECTED_NET_IDS = ["net-1", "net-2"]
 
@@ -224,6 +226,12 @@ def test_roles_walk_reaches_the_shared_roles(playbook: list[dict]) -> None:
     names = {task.get("name") for task in _iter_tasks(playbook)}
     assert NET_DIR_TASK in names, "the roles walk did not reach flip_trust_dirs — the tests are checking nothing"
     assert "Install Docker" in names, "the roles walk did not reach flip_docker"
+    # What on-prem gains from the shared roles: without these the production compose has no
+    # observability config and the operator no tree to extract the FL kit into.
+    assert OBSERVABILITY_COPY_TASK in names, "on-prem no longer composes flip_observability_config"
+    assert FL_KIT_PRECREATE_TASK in names, "on-prem no longer pre-creates the FL kit tree (flip_fl_kit)"
+    # The walk does not evaluate `when:`, so pin the source that import is gated on.
+    assert _play_vars(playbook).get("fl_kit_source") == "precreate", "on-prem must pre-create the FL kit tree"
 
 
 def test_fl_backend_has_a_playbook_default(playbook: list[dict]) -> None:
