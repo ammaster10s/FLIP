@@ -59,6 +59,7 @@ from typing import Any
 
 import requests
 
+from flip_api.config import get_settings
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.utils import constants
@@ -107,6 +108,11 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Ark+ baseline classification evaluation",
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
+    ),
+    "3d_prostate_segmentation": TutorialCopy(
+        "3D prostate segmentation",
+        "Outlining the prostate gland and its peripheral and transition zones on T2-weighted MRI, with a "
+        "3D segmentation model trained across the participating trusts' scans.",
     ),
     "ehr_risk_prediction": TutorialCopy(
         "EHR risk prediction",
@@ -202,15 +208,37 @@ def resolve_model_name(base_name: str, abort_midway: bool) -> str:
 
 
 def _maybe_refresh(headers: dict[str, str]) -> bool:
-    """Refresh the bearer token in-place via Cognito REFRESH_TOKEN_AUTH.
+    """Refresh the bearer token in-place through the configured identity provider.
 
-    Used when the smoke runs token-driven against a remote hub (FLIP_E2E_TOKEN):
-    a long run can outlast the access token's TTL, so a 401 triggers a refresh.
-    Returns True if the token was refreshed.
+    Used when a long run outlasts the access token's TTL, so a 401 triggers a
+    refresh: token-driven runs against a remote hub (FLIP_E2E_TOKEN +
+    FLIP_E2E_REFRESH_TOKEN, Cognito REFRESH_TOKEN_AUTH) and local Keycloak
+    runs, where ``admin_authentication`` leaves the refresh token in
+    FLIP_E2E_REFRESH_TOKEN. Returns True if the token was refreshed.
     """
     refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
+    if not refresh:
+        return False
+
+    settings = get_settings()
+    if settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
+        from flip_api.auth.identity.keycloak import refresh_grant
+
+        try:
+            tokens = refresh_grant(
+                settings.KEYCLOAK_PUBLIC_URL, settings.KEYCLOAK_REALM, settings.KEYCLOAK_CLIENT_ID, refresh
+            )
+        except Exception as exc:  # noqa: BLE001 - refresh is best-effort
+            _log(f"  ⚠️  token refresh failed: {exc}")
+            return False
+        headers["authorization"] = "Bearer " + tokens["access_token"]
+        if tokens.get("refresh_token"):
+            os.environ["FLIP_E2E_REFRESH_TOKEN"] = tokens["refresh_token"]
+        _log("  🔄 refreshed access token")
+        return True
+
     client_id = os.environ.get("AWS_COGNITO_APP_CLIENT_ID")
-    if not refresh or not client_id:
+    if not client_id:
         return False
     import boto3
 
@@ -272,7 +300,7 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log("🔐 Authenticating as admin via Cognito…")
+    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers
@@ -894,10 +922,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--model-files-dir",
         type=Path,
-        required=True,
+        default=None,
         help="Directory whose files are uploaded to the model. Flower: "
         "../fl-tutorials/flower/xray_classification/app. "
-        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files.",
+        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
+        "Required unless --stop-after-enrichment.",
+    )
+    parser.add_argument(
+        "--stop-after-enrichment",
+        action="store_true",
+        help="Run cohort → approval → image pull → data enrichment and stop there, creating no model "
+        "and training nothing: verifies the data path end to end (cohort, pull, labels beside every "
+        "converted image) without the training app.",
     )
     parser.add_argument(
         "--query-file",
@@ -1011,13 +1047,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
     if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
         parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+    if args.model_files_dir is None and not args.stop_after_enrichment:
+        parser.error("--model-files-dir is required unless --stop-after-enrichment")
+    # --stop-after-enrichment exists to verify the data path up to the labels; without an enrichment
+    # command there is nothing to verify, and the run would still report "enrichment done".
+    if args.stop_after_enrichment and not args.data_enrichment_cmd:
+        parser.error("--stop-after-enrichment needs --data-enrichment-cmd (and --data-enrichment-cwd)")
 
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    tutorial = describe_tutorial(args.model_files_dir)
+    # Under --stop-after-enrichment there is no app dir, so the tutorial is read off the query
+    # file's directory instead (…/<tutorial>/query.sql).
+    tutorial = describe_tutorial(args.model_files_dir or args.query_file.parent)
     project_name = args.project_name or default_project_name(tutorial.label)
     # The description is the tutorial's clinical task in plain language: the projects list is read by
     # clinicians and reviewers, so it says what the project is for, not which harness produced it.
@@ -1081,9 +1125,10 @@ def main(argv: list[str] | None = None) -> int:
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
-        model_id = create_model(client, headers, project_id, model_name)
-        upload_files(client, headers, model_id, args.model_files_dir)
+        if not args.stop_after_enrichment:
+            model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
+            model_id = create_model(client, headers, project_id, model_name)
+            upload_files(client, headers, model_id, args.model_files_dir)
         # Wait for the image pull whenever the project has imaging — including on
         # --project-id reuse: a prior run on this project may have left pulls in
         # flight (aborted midway, failed, or simply queued back-to-back before the
@@ -1105,6 +1150,12 @@ def main(argv: list[str] | None = None) -> int:
             _log("🩻 Project has no imaging: skipping the image-pull wait (nothing was dispatched to XNAT)")
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
+        if args.stop_after_enrichment:
+            _log("\n" + "=" * 60)
+            _log("🛑 --stop-after-enrichment: cohort, image pull and enrichment done; no model, no training")
+            _log(f"   project_id   = {project_id}")
+            _log("=" * 60)
+            return 0
         initiate_training(client, headers, model_id, trusts)
         wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:

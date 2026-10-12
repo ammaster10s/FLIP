@@ -37,7 +37,7 @@ from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import PresignAudience, S3Client
 
 
 class UnknownJobTypeError(Exception):
@@ -107,13 +107,14 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
 #                             ``app.server_app:app`` relative to it, so it must sit at the run root.
 #
-# There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
-# dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
-# than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
-# keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
-# both halves have to change together: add the lockfile here and stop excluding it there, and the
-# lock then has to be resolved for the FL image's platform, not for whoever ran ``uv sync`` last.
+# There is deliberately no slot for a lockfile, and no template commits one. Nothing installs an
+# app's dependencies at run time (the FL apps run in the image's environment, see FL_APP_BASE_DIR in
+# AGENTS.md), and any ``uv sync`` against a template resolves fresh, so a committed ``uv.lock``
+# would be a resolution for the developer's machine rather than for the FL image — which is also why
+# ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to keep one out of an app folder. If
+# reproducible per-run resolution ever becomes a requirement, both halves have to change together:
+# add the lockfile here and stop excluding it there, and the lock then has to be resolved for the FL
+# image's platform, not for whoever ran ``uv sync`` last.
 BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
     FLBackend.NVFLARE: frozenset({"meta.json"}),
     FLBackend.FLOWER: frozenset({"pyproject.toml"}),
@@ -192,7 +193,7 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
 # precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
 # dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
 # resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
-# per-run ``uv sync`` at a trust resolves from.
+# ``uv sync`` against a template resolves from.
 #
 # So the two halves of the rule are not the same kind of rule, and only one of them is closed. At
 # the template root the allowlist is *positional* — a directory ships because it is an app folder,
@@ -1201,9 +1202,10 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    # Generate presigned URLs for each object to be downloaded
+    # Generate presigned URLs for each object to be downloaded. The fl-api fetches them over the
+    # docker network, so they are signed for the internal endpoint, not the browser-facing one.
     try:
-        urls = [s3.get_presigned_url(f) for f in files]
+        urls = [s3.get_presigned_url(f, audience=PresignAudience.INTERNAL) for f in files]
         return urls
     except Exception as e:
         error_msg = f"Failed to generate presigned URLs: {e}"

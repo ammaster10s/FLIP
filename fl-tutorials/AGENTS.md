@@ -8,7 +8,7 @@ built on the templates in `fl-apps/`; the images they run on are built from
 |------|---------|
 | `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
 | `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
-| `flower/{xray_classification,3d_spleen_segmentation*}` | Flower imaging tutorials |
+| `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
 | `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
@@ -40,7 +40,7 @@ make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 `sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
 `run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` against a local
 SuperLink flwr starts itself (no SuperLink container, no SuperNodes, no fl-api, no Docker) where
-`run-tutorial` brings up the standalone compose stack. The app code is identical either way — site identity comes from
+`run-tutorial` brings up the standalone compose stack (`flower/run-tutorial.sh`, whose header covers the run values, the GPU switch and the exit status, FLIP#1432). The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
@@ -53,7 +53,7 @@ checkpoint: `sim-tutorial.sh` passes `--run-config` pointing `flip-job-dir` at
 runs unchanged app code too. The wrapper's exit status is the **run's** — it reads the run id off
 the stream and asks the SuperLink (`flwr ls`) for the terminal status, because `flwr run --stream`
 returns 0 whatever became of the run — and it refuses to start while a local SuperLink it did not
-start still listens on `127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}` (#1249): `flwr run . local`
+start still listens on `127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}` (#1249): `flwr run . local`
 reuses whatever is there, so a SuperLink another worktree left behind would run the app in *that*
 checkout's environment with nothing in the output saying so. The stale-process cleanup deliberately
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never

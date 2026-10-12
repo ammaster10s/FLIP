@@ -26,7 +26,7 @@ app/
   feature_engineering.py # shared byte-identical with the NVFLARE copy
   models.py              # shared byte-identical with the NVFLARE copy — the MLP factory
   config.json            # per-tutorial hyperparameters read at runtime
-  config.toml            # Flower run-config overrides applied by fl-api at submit
+  config.toml            # Flower run-config overrides applied by fl-api on a platform submit
 pyproject.toml           # flwr app definition + run-config defaults (incl. DP knobs)
 query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
 ```
@@ -44,12 +44,14 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
   reads this at runtime. It is the only per-tutorial knob that rides through the FLIP upload flow,
   because the deployed bundle's `pyproject.toml` comes from the base template, not from here.
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
-  `flwr run --run-config` at submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  `flwr run --run-config` on a platform submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  A tutorial run (`run-tutorial`, `sim-tutorial`) uses `pyproject.toml`'s values instead (FLIP#1432).
 
-> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — Flower
-> runtime-installs an app's declared deps and prepends them to `sys.path`, so declaring it would
-> shadow the in-image `/opt/flip-utils` copy the platform actually runs (FLIP#767). Pick up a
-> flip-utils change with `make build-fl FL_BACKEND=flower`.
+> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
+> `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
+> declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
+> platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
+> up a flip-utils change on the compose stacks with `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 

@@ -119,14 +119,15 @@ export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
-# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by the ci/
-# root. The LZA modes take the platform's AICentre-WorkloadRoleBoundary instead
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
+# modules/terraform_ci_bootstrap (through ci/ or a platform repository). The LZA
+# modes take the platform's AICentre-WorkloadRoleBoundary instead
 # (londonaicentre/lza#51): the accelerator deploys it to every workload account,
 # and an LZA SCP denies creating a role, or attaching or writing a policy onto
 # one, unless the role carries it. So on LZA it is not a choice — without it every
-# role change is denied, from a laptop or from CI. ci/ is not applied there: the
-# platform owns the boundary, and the CI roles with it. An env file that sets the
-# variable still wins: `?=` only supplies the default.
+# role change is denied, from a laptop or from CI. There the platform instantiates
+# the bootstrap module with its own boundary rather than FLIP's. An env file that
+# sets the variable still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
@@ -196,6 +197,13 @@ endif
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+# The FL API's own tag (FLIP#1283). Only CI's resolve-image-tags.sh sets it — a
+# release apply pins `v<X.Y.Z>@sha256:…`, and that digest is fl-api's, not
+# fl-server's. Exported only when set so every other caller keeps variables.tf's
+# empty default, which ecs_tasks.tf reads as "same tag as the FL server".
+ifneq ($(DOCKER_FL_API_TAG),)
+export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}
+endif
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). The LZA account has no internet egress, so .env.lza-prod
@@ -207,15 +215,10 @@ export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
 endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
-export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
 export TF_VAR_fl_backend=${FL_BACKEND}
 export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
-export TF_VAR_DB_PORT=${DB_PORT}
-export TF_VAR_UI_PORT=${UI_PORT}
-export TF_VAR_API_PORT=${API_PORT}
-export TF_VAR_FL_API_PORT=${FL_API_PORT}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
 # literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
@@ -233,7 +236,6 @@ export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
-export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
 # for the first bring-up (default CloudFront domain, no custom certs/records) and
@@ -682,8 +684,23 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
 	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
 	## without prompting so scripted staging deploys stay non-interactive.
+	## A release apply pins `repo:v<X.Y.Z>@sha256:…` (FLIP#1283) — the release name is still
+	## there to swap TAG onto, so the digest is stripped and the deploy proceeds; only a
+	## digest-ONLY reference (no tag at all) has nothing to replace and is refused.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	base_ref() { \
+	  _img="$$1"; _svc="$$2"; _base="$$_img"; \
+	  case "$$_img" in \
+	  *@*) \
+	    _base="$${_img%@*}"; \
+	    case "$$_base" in \
+	    *:*) ;; \
+	    *) echo "❌ $$_svc: digest-only image '$$_img' — cannot swap a tag onto it" >&2; return 1;; \
+	    esac;; \
+	  esac; \
+	  printf '%s' "$$_base"; \
+	}; \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
 	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
 	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
@@ -720,10 +737,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  case "$$image" in \
-	  *@*) echo "❌ $$service: digest-pinned image '$$image' — cannot swap a tag onto it"; exit 1;; \
-	  esac; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  base_image=$$(base_ref "$$image" "$$service") || exit 1; \
+	  new_image="$${base_image%:*}:$$TAG"; \
 	  case "$$new_image" in \
 	  ghcr.io/*) \
 	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
@@ -787,7 +802,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
+	  new_image="$${new_image%:*}:$$TAG"; \
 	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \

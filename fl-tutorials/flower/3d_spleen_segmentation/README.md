@@ -107,7 +107,7 @@ command — `sim-tutorial.sh` handles all five:
 3. **`WORKING_DIR` defaults to `/app/runs`** — a path inside a SuperNode container that does not
    exist on the host. The script points it at the same host directory the compose path uses.
 4. **`flwr run . local` connects to whatever already listens on the local Control API port**
-   (`127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}`) and never checks who started it. A
+   (`127.0.0.1:${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}`) and never checks who started it. A
    SuperLink another checkout left running captures the run, and the app then executes in *that*
    checkout's environment — its `flip` package, its Python, its numpy — with nothing in the output
    saying so but the venv paths in a traceback. Because the stale-process cleanup above
@@ -130,7 +130,8 @@ only under `LOCAL_DEV`: deployed, each trust's data-access-api already serves th
 cohort. See that function's docstring for how the buckets are chosen.
 
 The first run is slow: `flwr run` builds a per-run environment under `~/.flwr/runtime-envs/` and
-installs the app's dependencies (MONAI, torch) into it. Later runs reuse it.
+installs the app's dependencies (MONAI, torch) into it. The environment is deleted when the run
+ends, but uv's cache keeps the downloaded wheels, so later runs start faster.
 
 ## Best-model selection
 
