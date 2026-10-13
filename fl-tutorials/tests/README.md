@@ -167,23 +167,11 @@ reader's convention, wholly independent of pixel content. It is parametrised ove
 
 ## NIfTI orientation
 
-`test_nifti_orientation.py` covers the five shipped NIfTI transform modules: NVFLARE and Flower
-spleen segmentation, their evaluation variants, and NVFLARE latent diffusion. All nine factories
-are exercised, including both training and validation factories where present. A registry guard
-discovers every non-DICOM `LoadImaged` factory, so a new module or factory cannot remain uncovered.
-
-Pytest writes a tiny asymmetric image and binary label under its temporary directory, in equivalent
-RAS and LPS encodings. Reorienting both voxels and affine preserves physical coordinates; changing
-only the affine would describe a different volume. All spatial dimensions differ, and neither the
-image nor label is mirror-symmetric on any axis. No binary fixture or downloaded data is required.
-
-The shipped prefix through `Orientationd` must reproduce the known RAS voxels and affine exactly,
-for the image and label independently. This catches a wrong target orientation even if both inputs
-produce identical outputs. A second check runs complete validation/evaluation preprocessing, or
-the training prefix before its first random crop/augmentation, and compares both encodings' values
-and affines after the `Orientationd`/`Spacingd` path. Image and label must stay spatially aligned.
-The phantom spacing matches the apps' target spacing, keeping interpolation fidelity outside this
-orientation check. Random training behaviour remains outside its scope.
+`test_nifti_orientation.py` checks spleen, prostate and latent-diffusion transform factories against
+an asymmetric synthetic RAS/LPS image and masks, pinning both known RAS output and agreement after
+deterministic preprocessing. Its registry discovers `LoadImaged` in top-level functions; class
+methods and module constants are outside that guard. Generated `fl_job/` copies are ignored, and
+the standalone prostate inference script is deliberately excluded. See the module docstring for scope.
 
 ## Bundle-export parity
 

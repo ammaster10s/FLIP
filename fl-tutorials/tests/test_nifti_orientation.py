@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +52,8 @@ class NiftiApp:
     def transforms(self, factory_name: str) -> mt.Compose:
         factory = getattr(load_module(f"nifti_{self.app_id}", self.path), factory_name)
         kwargs = {"spatial_shape": _SHAPE} if "spatial_shape" in inspect.signature(factory).parameters else {}
+        if "target_spacing" in inspect.signature(factory).parameters:
+            kwargs["target_spacing"] = tuple(_AFFINE.diagonal()[:3])
         return factory(**kwargs)
 
 
@@ -63,12 +67,20 @@ NIFTI_APPS = (
     NiftiApp("flower_spleen", "flower/3d_spleen_segmentation/app/transforms.py"),
     NiftiApp("flower_spleen_eval", "flower/3d_spleen_segmentation_evaluation/app/transforms.py"),
     NiftiApp(
+        "flower_prostate",
+        "flower/3d_prostate_segmentation/app/dataset.py",
+        factories=("build_loader",),
+        keys=("image", "whole_gland", "pz_tz"),
+    ),
+    NiftiApp(
         "nvflare_ldm",
         "nvflare/image_synthesis/latent_diffusion_model/app_files/transforms.py",
         keys=("image",),
     ),
 )
 _CHAINS = [pytest.param(app, factory, id=f"{app.app_id}/{factory}") for app in NIFTI_APPS for factory in app.factories]
+# This reference-only host script runs inference instead of returning an app transform chain.
+_EXCLUDED_FACTORIES = {("flower/3d_prostate_segmentation/nnunet_infer.py", "infer_loop")}
 
 
 @pytest.fixture(scope="session")
@@ -84,7 +96,9 @@ def nifti_phantom(tmp_path_factory):
     label[6:9, 9:13, 4:7] = 1
     image[3, 11, 6] = 240
 
-    reference = {"image": image, "label": label}
+    zonal_label = label.copy()
+    zonal_label[6:9, 9:13, 4:7] = 2
+    reference = {"image": image, "label": label, "whole_gland": label, "pz_tz": zonal_label}
     directory = tmp_path_factory.mktemp("phantom-nifti")
     paths = {"RAS": {}, "LPS": {}}
     to_lps = ornt_transform(axcodes2ornt("RAS"), axcodes2ornt("LPS"))
@@ -155,24 +169,30 @@ def test_nifti_preprocessing_agrees_across_encodings(nifti_phantom, app: NiftiAp
         assert nib.aff2axcodes(np.asarray(ras.affine)) == ("R", "A", "S"), f"{key} is not RAS"
         np.testing.assert_allclose(np.asarray(ras), np.asarray(lps), rtol=0, atol=1e-6, err_msg=key)
         np.testing.assert_allclose(ras.affine, lps.affine, rtol=0, atol=1e-6, err_msg=f"{key} affine")
-    if "label" in app.keys:
-        for result in output.values():
-            np.testing.assert_allclose(result["image"].affine, result["label"].affine, rtol=0, atol=1e-6)
+    for result in output.values():
+        for key in app.keys:
+            np.testing.assert_allclose(result["image"].affine, result[key].affine, rtol=0, atol=1e-6)
 
 
 def test_registry_covers_every_nifti_factory() -> None:
-    """Every non-DICOM LoadImaged factory must be exercised, including new app variants."""
+    """Top-level non-DICOM LoadImaged factories are exercised or deliberately excluded."""
     dicom_paths = {app.path.resolve() for app in DICOM_APPS}
     registered = {(app.path.resolve(), factory) for app in NIFTI_APPS for factory in app.factories}
     discovered = set()
     for path in sorted(TUTORIALS_ROOT.rglob("*.py")):
         relative = path.relative_to(TUTORIALS_ROOT)
-        if relative.parts[0] == "tests" or any(part.startswith(".") for part in relative.parts):
+        if (
+            relative.parts[0] == "tests"
+            or "fl_job" in relative.parts
+            or any(part.startswith(".") for part in relative.parts)
+        ):
             continue
         if path.resolve() in dicom_paths:
             continue
         for node in ast.parse(path.read_text(encoding="utf-8")).body:
             if not isinstance(node, ast.FunctionDef):
+                continue
+            if (relative.as_posix(), node.name) in _EXCLUDED_FACTORIES:
                 continue
             for call in ast.walk(node):
                 if not isinstance(call, ast.Call):
@@ -184,3 +204,23 @@ def test_registry_covers_every_nifti_factory() -> None:
     assert discovered == registered, (
         f"unregistered NIfTI factories: {discovered - registered}; stale entries: {registered - discovered}"
     )
+
+
+def test_registries_ignore_exported_copies(tmp_path, monkeypatch) -> None:
+    """An exported job's generated loader must not be mistaken for tutorial source."""
+    import test_dicom_orientation
+    import tutorial_apps
+
+    module_paths = {app.module_path for app in NIFTI_APPS} | {app.module_path for app in DICOM_APPS}
+    for module_path in module_paths:
+        destination = tmp_path / module_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(TUTORIALS_ROOT / module_path, destination)
+    exported = tmp_path / "nvflare/image_classification/xray_classification/fl_job/job/app/custom/transforms.py"
+    exported.parent.mkdir(parents=True)
+    exported.write_text("def exported_loader():\n    return LoadImaged(keys=['image'])\n", encoding="utf-8")
+    monkeypatch.setattr(tutorial_apps, "TUTORIALS_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "TUTORIALS_ROOT", tmp_path)
+    monkeypatch.setattr(test_dicom_orientation, "TUTORIALS_ROOT", tmp_path)
+    test_registry_covers_every_nifti_factory()
+    test_dicom_orientation.test_registry_covers_every_dicom_load_site()
