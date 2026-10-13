@@ -27,8 +27,11 @@ FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
 LINES ?= 80
 # The public IP kits are uploaded from: the kit drop's firewall admits only it and the node
-# subnet. Looked up lazily, by the targets that pass it.
-OPERATOR_IP ?= $(shell curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null)
+# subnet. Looked up lazily, by the first target that uses it, and then fixed: the answer reaches
+# a shell, so it is looked up once (a check is worthless if a second lookup can differ) and only
+# an IPv4 address is kept.
+IPV4_PATTERN := [0-9]{1,3}(\.[0-9]{1,3}){3}
+OPERATOR_IP ?= $(eval OPERATOR_IP := $$(shell curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null | grep -Ex '$(IPV4_PATTERN)' | head -n1))$(OPERATOR_IP)
 
 # Resolved lazily, only by the targets that need Azure.
 SUB_ID = $(shell az account show --subscription "$(AZ_SUBSCRIPTION)" --query id -o tsv 2>/dev/null)

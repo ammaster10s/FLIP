@@ -17,42 +17,8 @@ back what would have been sent to the node.
 
 from __future__ import annotations
 
-import os
-import stat
-import subprocess
-from pathlib import Path
-
 import pytest
-from conftest import AZURE_DIR
-
-STUB_AZ = """#!/bin/bash
-printf '%s\\n' "$*" >> "$AZ_LOG"
-case "$1 $2" in
-    "account show") echo 00000000-0000-0000-0000-000000000000 ;;
-    "vm run-command") echo ok ;;
-esac
-"""
-
-
-def _make(tmp_path: Path, target: str, **variables: str) -> tuple[subprocess.CompletedProcess, list[str]]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    az = bin_dir / "az"
-    az.write_text(STUB_AZ)
-    az.chmod(az.stat().st_mode | stat.S_IEXEC)
-    log = tmp_path / "az.log"
-    log.touch()
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "AZ_LOG": str(log)}
-    args = [f"{k}={v}" for k, v in {"AZ_SUBSCRIPTION": "trial", **variables}.items()]
-    result = subprocess.run(
-        ["make", "-s", "-C", str(AZURE_DIR), target, *args],
-        env=env,
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    return result, log.read_text().splitlines()
+from conftest import run_make
 
 
 def _sent(calls: list[str]) -> list[str]:
@@ -72,7 +38,7 @@ def _sent(calls: list[str]) -> list[str]:
     ],
 )
 def test_a_valid_argument_reaches_the_node(tmp_path, target, variables, sent):
-    result, calls = _make(tmp_path, target, **variables)
+    result, calls = run_make(tmp_path, target, **variables)
 
     assert result.returncode == 0, result.stdout + result.stderr
     scripts = _sent(calls)
@@ -97,7 +63,7 @@ def test_a_valid_argument_reaches_the_node(tmp_path, target, variables, sent):
 )
 def test_an_unsafe_argument_never_reaches_the_node(tmp_path, target, variables, bad):
     sentinel = str(tmp_path / "PWNED")
-    result, calls = _make(tmp_path, target, **{k: v.replace("PWNED", sentinel) for k, v in variables.items()})
+    result, calls = run_make(tmp_path, target, **{k: v.replace("PWNED", sentinel) for k, v in variables.items()})
 
     assert result.returncode != 0
     assert f"{bad}=" in result.stdout + result.stderr, "the refusal names the argument"
