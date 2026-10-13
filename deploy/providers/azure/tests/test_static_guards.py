@@ -47,6 +47,7 @@ TARGETS = [
     "aks-credentials",
     "aks-stop",
     "aks-start",
+    "aks-allow-ip",
     "logs",
     "report",
     "stop",

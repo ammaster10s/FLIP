@@ -45,6 +45,8 @@ The node never provisions an FL kit, so it carries no provisioning tooling.
 - `yq` and `uv` on your machine, for `make selftest-kit` (it provisions the FL dev kit here).
 - `plan` looks up your public IP (api.ipify.org) for the kit drop's firewall; override it with
   `OPERATOR_IP=<ip>`. If your IP changes, `kit-upload` is refused until you plan and apply again.
+  The AKS API server admits only that IP too: `make aks-start` sets it once the cluster is up,
+  and `make aks-allow-ip` resets it on a running cluster after your IP changes (no plan, free).
 
 **Cost.** Nothing here skips Terraform's confirmation: every `bootstrap`, `apply` and `destroy`
 shows the plan and asks. On a Free Trial with the spending limit on, running out of credit

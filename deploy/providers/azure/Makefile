@@ -26,10 +26,10 @@ SSH_PUBLIC_KEY_FILE ?= $(HOME)/.ssh/id_ed25519.pub
 FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
 LINES ?= 80
-# The public IP kits are uploaded from: the kit drop's firewall admits only it and the node
-# subnet. Looked up lazily, once per make run, so every use in a run sees the same answer. Only a
-# line shaped like an IPv4 address is kept, because the answer reaches a shell; a failed lookup is
-# empty, and curl's own error is left on the terminal.
+# Your public IP: the kit drop's firewall admits only it and the node subnet, and the AKS API
+# server only it. Looked up lazily, once per make run, so every use in a run sees the same answer.
+# Only a line shaped like an IPv4 address is kept, because the answer reaches a shell; a failed
+# lookup is empty, and curl's own error is left on the terminal.
 IPV4_PATTERN := [0-9]{1,3}(\.[0-9]{1,3}){3}
 OPERATOR_IP ?= $(eval OPERATOR_IP := $$(shell curl -fsS --max-time 10 https://api.ipify.org | grep -Ex '$(IPV4_PATTERN)' | head -n1))$(OPERATOR_IP)
 
@@ -73,7 +73,13 @@ LINES_PATTERN := [0-9]{1,5}
 # $(call check_arg,<variable name>,<value>,<pattern>)
 check_arg = v=$(call sq,$(2)); [[ "$$v" =~ ^$(3)$$ ]] || { echo "❌ $(1)='$$v' is not valid: it must match $(3)."; exit 1; }
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start logs report stop start test lint
+# The AKS API server admits one IP, and an operator's public IP moves (home, office, VPN). This
+# resets it without a plan; aks-plan reads the same lookup, so Terraform agrees at its next plan.
+define admit_operator
+	az aks update --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --api-server-authorized-ip-ranges "$(OPERATOR_IP)/32"
+endef
+
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -236,9 +242,16 @@ aks-stop: ## Stop the cluster (its node stops billing; disks and the IP stay)
 	$(require_subscription)
 	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
 
-aks-start: ## Start a stopped cluster
+aks-start: ## Start a stopped cluster, then admit only your current IP to its API server
+	@$(call check_arg,OPERATOR_IP,$(OPERATOR_IP),$(IPV4_PATTERN))
 	$(require_subscription)
 	az aks start --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
+	$(admit_operator)
+
+aks-allow-ip: ## Admit only your current IP to the running cluster's API server, without a plan (free)
+	@$(call check_arg,OPERATOR_IP,$(OPERATOR_IP),$(IPV4_PATTERN))
+	$(require_subscription)
+	$(admit_operator)
 
 test: ## Credential-free checks: terraform test in every root and module, plus pytest
 	@for d in bootstrap modules/network modules/kit_drop vm aks; do \
