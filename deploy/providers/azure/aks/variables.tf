@@ -40,7 +40,7 @@ variable "operator_ip" {
 
   validation {
     condition     = can(cidrhost("${var.operator_ip}/32", 0))
-    error_message = "operator_ip must be an IPv4 address: the API server admits only it."
+    error_message = "operator_ip must be an IPv4 address: the API server admits only it. The Makefile looks it up from api.ipify.org: if that failed, pass OPERATOR_IP=<your public IPv4>."
   }
 }
 

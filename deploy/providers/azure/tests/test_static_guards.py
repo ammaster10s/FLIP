@@ -226,9 +226,9 @@ def test_aks_apply_asks_first_and_refuses_while_the_vm_holds_the_outbound_ip():
     assert "$(NODE_RG)" in body, "the VM's NIC holds the bootstrap IP"
 
 
-def test_aks_plan_and_destroy_admit_only_the_operator():
-    for target in ("aks-plan", "aks-destroy"):
-        assert "operator_ip=$(OPERATOR_IP)" in _target(target), target
+def test_aks_plan_admits_only_the_operator():
+    # aks-destroy passes a fixed placeholder instead: test_makefile_aks_allowlist.py
+    assert "operator_ip=$(OPERATOR_IP)" in _target("aks-plan")
 
 
 def test_make_test_covers_the_aks_root():

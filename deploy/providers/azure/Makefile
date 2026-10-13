@@ -74,9 +74,17 @@ LINES_PATTERN := [0-9]{1,5}
 check_arg = v=$(call sq,$(2)); [[ "$$v" =~ ^$(3)$$ ]] || { echo "❌ $(1)='$$v' is not valid: it must match $(3)."; exit 1; }
 
 # The AKS API server admits one IP, and an operator's public IP moves (home, office, VPN). This
-# resets it without a plan; aks-plan reads the same lookup, so Terraform agrees at its next plan.
+# resets it without a plan. aks-plan passes OPERATOR_IP to Terraform the same way, so its next plan
+# shows no allowlist change as long as your IP has not moved again.
 define admit_operator
 	az aks update --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --api-server-authorized-ip-ranges "$(OPERATOR_IP)/32"
+endef
+
+# The value is single-quoted for the local shell while it is checked, as check_arg does.
+define require_operator_ip
+	@v=$(call sq,$(OPERATOR_IP)); [[ "$$v" =~ ^$(IPV4_PATTERN)$$ ]] || { \
+		echo "❌ OPERATOR_IP='$$v' is not one IPv4 address: the api.ipify.org lookup failed (curl's error, if any, is above) or answered something else."; \
+		echo "   Pass yours: make $@ OPERATOR_IP=<your public IPv4>"; exit 1; }
 endef
 
 .PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip logs report stop start test lint
@@ -230,7 +238,7 @@ aks-destroy: ## Destroy the AKS cluster, keep bootstrap and the outbound IP (ask
 	$(require_subscription)
 	$(TF) -chdir=aks destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(OPERATOR_IP)"
+		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	$(require_subscription)
@@ -243,13 +251,15 @@ aks-stop: ## Stop the cluster (its node stops billing; disks and the IP stay)
 	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
 
 aks-start: ## Start a stopped cluster, then admit only your current IP to its API server
-	@$(call check_arg,OPERATOR_IP,$(OPERATOR_IP),$(IPV4_PATTERN))
+	$(require_operator_ip)
 	$(require_subscription)
 	az aks start --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
-	$(admit_operator)
+	$(admit_operator) || { \
+		echo "❌ The cluster is running (and billing), but its API server still admits only its previous IP."; \
+		echo "   Retry: make aks-allow-ip AZ_SUBSCRIPTION=... Or stop it: make aks-stop AZ_SUBSCRIPTION=..."; exit 1; }
 
 aks-allow-ip: ## Admit only your current IP to the running cluster's API server, without a plan (free)
-	@$(call check_arg,OPERATOR_IP,$(OPERATOR_IP),$(IPV4_PATTERN))
+	$(require_operator_ip)
 	$(require_subscription)
 	$(admit_operator)
 
