@@ -65,3 +65,25 @@ def test_start_admits_the_operator_once_the_cluster_is_up(tmp_path):
     verbs = [c.split()[1] for c in _aks(calls)]
     assert verbs == ["start", "update"], "a stopped cluster refuses updates, so start comes first"
     assert _aks(calls)[1].endswith("--api-server-authorized-ip-ranges 203.0.113.7/32")
+
+
+def test_the_ip_lookup_runs_once_so_the_checked_answer_is_the_one_sent(tmp_path):
+    sentinel = str(tmp_path / "PWNED")
+    result, calls = run_make(tmp_path, "aks-start", ipify=["203.0.113.7", f'198.51.100.1"; touch {sentinel}; "'])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len([c for c in calls if c.startswith("curl ")]) == 1, calls
+    assert _aks(calls)[1].endswith("--api-server-authorized-ip-ranges 203.0.113.7/32")
+    assert not (tmp_path / "PWNED").exists(), "a second, different answer never reached the shell"
+
+
+@pytest.mark.parametrize(
+    "answer", ['203.0.113.7"; touch PWNED; "', "203.0.113.7`touch PWNED`", "<html>busy</html>", ""]
+)
+def test_an_ip_lookup_answer_that_is_not_one_ipv4_address_is_refused(tmp_path, answer):
+    sentinel = str(tmp_path / "PWNED")
+    result, calls = run_make(tmp_path, "aks-allow-ip", ipify=[answer.replace("PWNED", sentinel)])
+
+    assert result.returncode != 0
+    assert not _aks(calls)
+    assert not (tmp_path / "PWNED").exists()
