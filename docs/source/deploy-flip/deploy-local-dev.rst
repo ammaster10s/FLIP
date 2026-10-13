@@ -213,6 +213,18 @@ cache and stops at the first Trust's XNAT if it is missing:
 
    make -C trust prepare-artifacts
 
+FLIP does not redistribute the XNAT WAR or its plugins.
+`trust/xnat/artifacts.manifest <https://github.com/londonaicentre/FLIP/blob/develop/trust/xnat/artifacts.manifest>`__
+lists each file with its upstream URL and SHA-256. If this host cannot reach
+those URLs (behind a hospital firewall, for example), download the ``plugin``
+files listed there on another machine, keeping their upstream file names, put
+them in one directory, and fill the cache from it. The same checksums are
+verified:
+
+.. code-block:: bash
+
+   make -C trust prepare-artifacts ARTIFACTS_DIR=/path/to/dir
+
 Once per Docker host, enable Swarm mode (if it is already active, Docker says
 so and you can move on):
 
