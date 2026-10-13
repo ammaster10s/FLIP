@@ -41,7 +41,6 @@
 | `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
 | `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
-| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
 `aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
