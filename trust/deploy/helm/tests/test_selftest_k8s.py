@@ -470,7 +470,7 @@ def test_a_session_never_archived_fails_naming_the_project():
     check = _convert(xnat)
 
     assert not check.ok
-    assert "not archived into FLIPSELFTEST within 120s" in check.detail
+    assert "not archived into FLIPSELFTEST within 600s" in check.detail
     assert xnat.calls[-1][0] == "DELETE"
 
 

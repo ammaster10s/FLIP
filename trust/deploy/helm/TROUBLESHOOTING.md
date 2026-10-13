@@ -429,15 +429,16 @@ kubectl describe resourcequota -n flip-trust -l app.kubernetes.io/component=xnat
 kubectl exec -n flip-trust "$XNAT_POD" -c tomcat -- sh -c \
   'curl -s -u "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" "http://localhost:8080/xapi/commands?name=dcm2niix"' \
   | jq '.[0] | ."reserve-memory", ."limit-cpu"'
-# Container Service Jobs created before the upgrade: no chart labels, a CPU request
-kubectl get jobs -n flip-trust -o json | jq -r '.items[]
-  | select(.metadata.labels["app.kubernetes.io/instance"] == null)
-  | select(.spec.template.spec.containers[0].resources.requests.cpu != null) | .metadata.name'
+# Container Service Jobs created before the upgrade. Every Container Service Job carries XNAT_*
+# labels (XNAT_PROJECT, XNAT_ID, ...). An old one has a CPU *limit* in its pod template: the
+# 1-CPU request is added to the pod, not the Job, so select on the limit.
+kubectl get jobs -n flip-trust -l XNAT_PROJECT -o json | jq -r '.items[]
+  | select(.spec.template.spec.containers[0].resources.limits.cpu != null) | .metadata.name'
 ```
 
 **Fix:** if the registration still shows `1000` / `1`, run `helm upgrade` (it re-fires the
 `xnat-init` hook). Then delete the Jobs the last command lists
-(`... | xargs kubectl delete job -n flip-trust`). The scans they were for stay unconverted, so
+(`... | xargs kubectl delete job -n flip-trust`; on AZ1, 288 of them, all Pending). The scans they were for stay unconverted, so
 relaunch dcm2niix on them from XNAT: the project's Processing Dashboard (batch-launch plugin) can
 launch it on every scan at once, and the cap paces them. `make -C trust/deploy/helm selftest`
 checks that a conversion completes.

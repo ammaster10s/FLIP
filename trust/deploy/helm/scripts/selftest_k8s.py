@@ -52,8 +52,9 @@ SELFTEST_PROJECT = "FLIPSELFTEST"
 SELFTEST_NAME = "FLIP self-test"
 # How many Orthanc series the conversion check looks at to pick the smallest one to convert.
 SERIES_SAMPLE = 50
-# How long XNAT may take to move the imported session from the prearchive into the archive.
-ARCHIVE_TIMEOUT = 120
+# How long XNAT may take to move the imported session from the prearchive into the archive. It
+# archives a session only once it has been idle for about five minutes: 5.4 minutes on AZ1.
+ARCHIVE_TIMEOUT = 600
 API_COMPONENTS = ("trust-api", "imaging-api", "data-access-api")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
