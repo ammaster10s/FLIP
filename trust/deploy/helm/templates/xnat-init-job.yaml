@@ -347,11 +347,24 @@ spec:
                 xnat_curl -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" >/dev/null
               fi
 
-              echo "Registering ${DCM2NIIX_NAME} command..."
+              # Registered without the command's resource settings (FLIP#1448). On this backend
+              # the Container Service turns limit-cpu into a pod CPU *limit* and sets no CPU
+              # request (container-service 3.8.1 has no reserve-cpu), so Kubernetes defaults
+              # the request to the limit: every dcm2niix pod reserved a whole CPU, plus 1000 MiB
+              # for reserve-memory. A cohort pull starts one pod per scan, and on a 4-vCPU AKS
+              # node ~300 of them filled the node's requests until nothing else could schedule.
+              # Without them each pod is BestEffort: it reserves nothing and runs at the lowest
+              # CPU weight, and the xnat-container-jobs ResourceQuota caps how many run at once
+              # (xnat.containerService.maxConcurrentJobs). The Compose deployment registers the
+              # file unchanged, where the same keys are Docker limits.
+              jq 'del(."reserve-memory", ."limit-memory", ."limit-cpu")' \
+                /cs-config/dcm2niix_command.json > /tmp/dcm2niix_command.json
+
+              echo "Registering ${DCM2NIIX_NAME} command (no resource settings: BestEffort pods)..."
               xnat_curl -X POST "${XNAT_URL}/xapi/commands" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d @/cs-config/dcm2niix_command.json >/dev/null
+                -d @/tmp/dcm2niix_command.json >/dev/null
 
               echo "Looking up registered command id and wrapper name..."
               RESPONSE=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
@@ -418,6 +431,8 @@ spec:
 #   trust/xnat/xnat/config/anon_script.das
 # Keep them in sync with those source files until the chart can read them via
 # Helm `.Files.Get` (blocked by the source files living outside the chart dir).
+# dcm2niix_command.json keeps its resource keys here; configure-dcm2niix strips
+# them at registration, the one place the Kubernetes command differs (FLIP#1448).
 apiVersion: v1
 kind: ConfigMap
 metadata:

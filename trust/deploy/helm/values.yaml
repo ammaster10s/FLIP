@@ -736,6 +736,15 @@ xnat:
     pin: ""
   initJob:
     enabled: true
+  # XNAT's Container Service runs dcm2niix as one Kubernetes Job per archived scan, so a cohort
+  # pull starts hundreds at once (FLIP#1448). The xnat-init Job registers dcm2niix without the
+  # command file's CPU and memory settings, so each pod is BestEffort: it reserves nothing, never
+  # blocks another pod from scheduling, and takes the lowest CPU weight on the node. A
+  # ResourceQuota (templates/xnat-container-jobs-quota.yaml) admits at most this many BestEffort
+  # pods in the namespace at a time; the rest wait as Jobs without a pod until a slot frees.
+  # Raise it on a larger node pool to convert faster. null removes the cap.
+  containerService:
+    maxConcurrentJobs: 4
   web:
     enabled: true
     adminUser: "admin"

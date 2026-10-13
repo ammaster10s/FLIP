@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# How many XNAT Container Service jobs (dcm2niix) run at once (FLIP#1448).
+#
+# The Container Service starts one Job per archived scan, so a cohort pull of ~300 studies
+# creates ~300 Jobs within minutes, and the plugin has no concurrency setting of its own on the
+# Kubernetes backend. The xnat-init Job registers dcm2niix without resource settings, so each of
+# its pods is BestEffort; this quota admits at most `maxConcurrentJobs` BestEffort pods in the
+# namespace. A Job over the cap gets no pod yet (`FailedCreate ... exceeded quota` in its
+# events), and the Job controller retries it at most a minute apart until a slot frees, so the
+# backlog drains in order of retry rather than piling up Pending pods.
+#
+# The scope counts every BestEffort pod in the namespace. No pod of this chart is BestEffort
+# (tests/templates/test_container_jobs_quota.py renders them all), so in the chart's own
+# namespace that is the Container Service's jobs. A pod someone else starts here without any
+# resources (`kubectl run`) is counted too.
+{{- $max := (.Values.xnat.containerService | default dict).maxConcurrentJobs }}
+{{- if and .Values.xnat.enabled $max }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-container-jobs
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-container-jobs
+spec:
+  scopes:
+    - BestEffort
+  hard:
+    pods: {{ $max | quote }}
+{{- end }}
