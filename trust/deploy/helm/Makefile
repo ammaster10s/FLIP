@@ -160,6 +160,7 @@ update-deps: ## Update Helm chart dependencies
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
 	@PROD="$(PROD)" \
+	 KIT_ENV="$(ENV)" \
 	 KIT="$(KIT)" \
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \
@@ -203,6 +204,18 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
+# Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
+# `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
+# manager `kubectl-patch`, so an upgrade that would CHANGE one of those keys is refused
+# with `Apply failed with N conflicts: conflict with "kubectl-patch"` and the release
+# stays on its last working revision. That refusal is a safety property, not a defect:
+# forcing it would overwrite the trust's live API key with whatever values-secrets.yaml
+# happens to hold — a stale value, or none at all (templates/secrets.yaml omits an empty
+# slot) — and the trust would poll the hub with a dead credential after a routine
+# redeploy. The conflict is removed at the source instead: sync-kit / patch-kit-secrets
+# realign values-secrets.yaml with what they patch, so helm's apply is a no-op on those
+# fields (sync_k8s_kit.align_values_secrets). Helm 3 never applies server-side and is
+# unaffected either way, so no version switch is needed.
 deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
@@ -240,13 +253,26 @@ endif
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
 
-smoke-cstore: ## Send a real C-STORE through the PACS and read XNAT's receiver log (FLIP#1228)
+smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
 	## `make status` compares the pod's plugin jars against the values; this drives the
 	## path those jars are on. Both are needed: a roster can match while the importer is
 	## broken for some other reason, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
+	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's
+	## arrival time while received.log exists and gained no line. Not a pass, and not enough
+	## to fail a deploy on, so it is surfaced as a loud warning and this target still exits 0.
+	## 1 (a real failure) and 0 (a pass) are passed straight through.
 	@NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBE_CONTEXT=$(KUBE_CONTEXT) \
-		$(CHART_DIR)/scripts/smoke-cstore.sh
+		$(CHART_DIR)/scripts/smoke-cstore.sh; \
+	status=$$?; \
+	if [ $$status -eq 2 ]; then \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  C-STORE smoke INCONCLUSIVE (exit 2) — the receiver showed only an arrival-time match" \
+			"⚠️  while received.log exists and gained no line. This is NOT a verified DICOM path:" \
+			"⚠️  re-run with the PACS idle, and see TROUBLESHOOTING.md §2.7 before trusting it." >&2; \
+		exit 0; \
+	fi; \
+	exit $$status
 
 # Move a deployed Kubernetes trust to a release, data intact (FLIP#1204). A plain
 # `helm upgrade` with the pin set: PVCs survive it, the init hooks short-circuit on

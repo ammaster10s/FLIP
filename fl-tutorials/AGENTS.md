@@ -8,7 +8,7 @@ built on the templates in `fl-apps/`; the images they run on are built from
 |------|---------|
 | `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
 | `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
-| `flower/{xray_classification,3d_spleen_segmentation*}` | Flower imaging tutorials |
+| `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
 | `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
@@ -34,13 +34,15 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
-make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (= sim-tutorial)
 ```
 
-`sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
-`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` against a local
-SuperLink flwr starts itself (no SuperLink container, no SuperNodes, no fl-api, no Docker) where
-`run-tutorial` brings up the standalone compose stack. The app code is identical either way — site identity comes from
+The two backends mirror each other: `run-tutorial` and `run-all-tutorials` (the release check) run
+the simulator, and `sim-tutorial` is an alias for `run-tutorial`. On Flower that is `flwr run` against
+a local SuperLink flwr starts itself (`flower/sim-tutorial.sh`: no SuperLink container, no
+SuperNodes, no fl-api, no Docker). On both backends the FL images, the fl-api submit path and
+SuperNode registration are exercised by `make e2e_smoke` on the dev stack (FLIP#1435);
+`fl-services/flower`'s `make up` / `make submit` runs the Flower containers by hand. The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
