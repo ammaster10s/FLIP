@@ -18,6 +18,7 @@ fake below stands in for kubectl and helm and the tests pin what passes and what
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -272,6 +273,329 @@ def test_the_client_is_sampled_a_settle_period_apart():
     selftest.check_fl_client(FakeCluster(), settle_seconds=45, sleep=waited.append)
 
     assert waited == [45]
+
+
+# ── dcm2niix conversion ─────────────────────────────────────────────────────────────
+
+
+WRAPPER = "dcm2niix-scan"
+COMMAND = f"/xapi/projects/FLIPSELFTEST/commands/7/wrappers/{WRAPPER}"
+
+
+class FakeXnat:
+    """XNAT and Orthanc as XnatPod reaches them, answering each call from a route table."""
+
+    def __init__(self, **overrides):
+        self.routes = {
+            ("GET", "/xapi/commands?name=dcm2niix"): (200, json.dumps([{"id": 7, "xnat": [{"name": WRAPPER}]}])),
+            ("DELETE", "/data/projects/FLIPSELFTEST?removeFiles=true"): (200, ""),
+            ("POST", "/data/projects"): (200, ""),
+            ("PUT", "/data/projects/FLIPSELFTEST/prearchive_code/4"): (200, ""),
+            ("GET", "/data/experiments/XNAT_E00042/scans?format=json"): (
+                200,
+                json.dumps({"ResultSet": {"Result": [{"ID": "1"}]}}),
+            ),
+            ("PUT", f"{COMMAND}/enabled"): (200, ""),
+            ("POST", f"{COMMAND}/root/scan/launch"): (
+                200,
+                json.dumps({"status": "success", "workflow-id": "wf-1"}),
+            ),
+            ("GET", "/data/experiments/XNAT_E00042/scans/1/resources/NIFTI/files?format=json"): (
+                200,
+                json.dumps({"ResultSet": {"Result": [{"Name": "selftest_1.nii.gz"}, {"Name": "selftest_1.json"}]}}),
+            ),
+        }
+        # Successive answers to the experiment and container listings; the last one repeats.
+        self.experiment_answers = [[], [{"ID": "XNAT_E00042"}]]
+        self.container_answers = [
+            [],
+            [{"workflow-id": "wf-1", "status": "Running"}],
+            [{"workflow-id": "wf-1", "status": "Complete"}],
+        ]
+        self.series = ("series-a", 1)
+        self.import_answer = (200, "")
+        self.calls = []
+        self.__dict__.update(overrides)
+
+    def request(self, method, path, body=None, content_type=""):
+        self.calls.append((method, path, body))
+        if (method, path) == ("GET", "/xapi/projects/FLIPSELFTEST/containers"):
+            return 200, json.dumps(self._next(self.container_answers))
+        if (method, path) == ("GET", "/data/projects/FLIPSELFTEST/experiments?format=json"):
+            return 200, json.dumps({"ResultSet": {"Result": self._next(self.experiment_answers)}})
+        if (method, path) not in self.routes:
+            raise AssertionError(f"unexpected XNAT call: {method} {path}")
+        return self.routes[(method, path)]
+
+    @staticmethod
+    def _next(answers):
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    def smallest_series(self, orthanc_creds):
+        return self.series
+
+    def import_series(self, orthanc_creds, series_id, project):
+        self.calls.append(("IMPORT", series_id, project))
+        return self.import_answer
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def _convert(xnat, timeout=600, creds="flip:s3cret"):
+    clock = Clock()
+    return selftest.check_conversion(xnat, creds, timeout, poll=10, sleep=clock.sleep, clock=clock)
+
+
+def test_a_series_converted_to_nifti_passes_and_the_project_is_deleted():
+    xnat = FakeXnat()
+
+    check = _convert(xnat)
+
+    assert check.ok, check.detail
+    assert "selftest_1.nii.gz" in check.detail
+    deletes = [c for c in xnat.calls if c[0] == "DELETE"]
+    assert len(deletes) == 2, "a stale project is cleared before the run and the new one after it"
+    assert xnat.calls[-1][0] == "DELETE"
+    assert ("IMPORT", "series-a", "FLIPSELFTEST") in xnat.calls
+
+
+def test_dcm2niix_is_launched_on_the_imported_scan():
+    xnat = FakeXnat()
+
+    _convert(xnat)
+
+    launch = next(c for c in xnat.calls if c[1].endswith("/root/scan/launch"))
+    assert json.loads(launch[2]) == {"scan": "/archive/experiments/XNAT_E00042/scans/1"}
+
+
+@pytest.mark.parametrize(
+    ("final", "expected"),
+    [("Failed (Error)", "Failed (Error)"), ("Killed", "Killed")],
+)
+def test_a_container_that_ends_badly_fails_and_the_project_is_still_deleted(final, expected):
+    xnat = FakeXnat(container_answers=[[{"workflow-id": "wf-1", "status": final}]])
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert expected in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
+def test_a_conversion_that_never_finishes_times_out_naming_its_last_status():
+    xnat = FakeXnat(container_answers=[[{"workflow-id": "wf-1", "status": "Created"}]])
+
+    check = _convert(xnat, timeout=60)
+
+    assert not check.ok
+    assert "after 60s" in check.detail
+    assert "Created" in check.detail
+    assert "resourcequota" in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
+def test_a_complete_container_without_a_nifti_file_fails():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/experiments/XNAT_E00042/scans/1/resources/NIFTI/files?format=json")] = (
+        200,
+        json.dumps({"ResultSet": {"Result": []}}),
+    )
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "no NIfTI" in check.detail
+
+
+def test_another_projects_container_is_not_mistaken_for_ours():
+    xnat = FakeXnat(
+        container_answers=[
+            [{"workflow-id": "wf-old", "status": "Complete"}, {"workflow-id": "wf-1", "status": "Running"}],
+            [{"workflow-id": "wf-old", "status": "Complete"}, {"workflow-id": "wf-1", "status": "Failed"}],
+        ]
+    )
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "Failed" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("route", "answer", "says"),
+    [
+        (("GET", "/xapi/commands?name=dcm2niix"), (200, "[]"), "no dcm2niix command"),
+        (("POST", "/data/projects"), (403, "forbidden"), "could not create"),
+        (("PUT", f"{COMMAND}/enabled"), (500, "x"), "could not enable"),
+        (
+            ("POST", f"{COMMAND}/root/scan/launch"),
+            (500, json.dumps({"status": "failure", "message": "no such wrapper"})),
+            "refused the launch",
+        ),
+        (("PUT", "/data/projects/FLIPSELFTEST/prearchive_code/4"), (403, "x"), "auto-archive"),
+    ],
+)
+def test_each_step_that_fails_is_named(route, answer, says):
+    xnat = FakeXnat()
+    xnat.routes[route] = answer
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert says in check.detail
+
+
+def test_the_project_auto_archives_before_the_import_and_the_session_is_awaited():
+    xnat = FakeXnat()
+
+    assert _convert(xnat).ok
+    order = [c[1] for c in xnat.calls if c[0] in ("PUT", "IMPORT")]
+    assert order.index("/data/projects/FLIPSELFTEST/prearchive_code/4") < order.index("series-a")
+
+
+def test_a_session_never_archived_fails_naming_the_project():
+    xnat = FakeXnat(experiment_answers=[[]])
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "not archived into FLIPSELFTEST within 120s" in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
+def test_a_failed_import_fails_and_the_project_is_still_deleted():
+    xnat = FakeXnat(import_answer=(0, "could not fetch the series from Orthanc"))
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "did not import" in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
+def test_a_project_that_cannot_be_deleted_is_reported_without_changing_the_verdict():
+    xnat = FakeXnat()
+    answers = iter([(200, ""), (500, "boom")])
+    real = xnat.request
+
+    def request(method, path, body=None, content_type=""):
+        if method == "DELETE":
+            xnat.calls.append((method, path, body))
+            return next(answers)
+        return real(method, path, body, content_type)
+
+    xnat.request = request
+
+    check = _convert(xnat)
+
+    assert check.ok
+    assert "could not delete the FLIPSELFTEST project" in check.detail
+
+
+def test_no_orthanc_credential_or_no_series_fails_before_anything_is_created():
+    assert not _convert(FakeXnat(), creds=None).ok
+    xnat = FakeXnat(series=None)
+    check = _convert(xnat)
+    assert not check.ok
+    assert not [c for c in xnat.calls if c[0] in ("POST", "DELETE")]
+
+
+# The shell XnatPod hands the pod, run for real against a stub curl: the scripts parse, and no
+# credential appears on a command line.
+STUB_CURL = """#!/bin/sh
+printf '%s\\n' "$*" >> "$CURL_LOG.args"
+cat >> "$CURL_LOG.config"
+case "$*" in
+  *tools/find*) printf '%s' "$FIND_ANSWER" ;;
+  *-o*) for a; do [ "$prev" = "-o" ] && printf 'zip' > "$a"; prev="$a"; done ;;
+  *) printf '%s\\n%s' "$BODY" "$CODE" ;;
+esac
+"""
+
+
+class ShellCluster:
+    """Runs XnatPod's scripts in a local sh, with the pod's environment and a stub curl."""
+
+    def __init__(self, tmp_path, body='{"ok": true}', code="200", find_answer="[]"):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        curl = bin_dir / "curl"
+        curl.write_text(STUB_CURL)
+        curl.chmod(0o755)
+        self.log = tmp_path / "curl"
+        self.env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "XNAT_SERVICE_USER": "svc",
+            "XNAT_SERVICE_PASSWORD": 'pa"ss\\word',
+            "CURL_LOG": str(self.log),
+            "BODY": body,
+            "CODE": code,
+            "FIND_ANSWER": find_answer,
+        }
+
+    def exec(self, pod, script, stdin=None):
+        result = subprocess.run(["/bin/sh", "-c", script], input=stdin, capture_output=True, text=True, env=self.env)
+        return result.returncode == 0, (result.stdout if result.returncode == 0 else result.stderr).strip()
+
+    def args(self):
+        return Path(f"{self.log}.args").read_text()
+
+    def config(self):
+        return Path(f"{self.log}.config").read_text()
+
+
+def test_an_xnat_call_reads_status_and_body_and_keeps_the_credential_off_the_command_line(tmp_path):
+    cluster = ShellCluster(tmp_path, body='{"a": 1}', code="201")
+
+    status, body = selftest.XnatPod(cluster, "xnat-web-0").request("POST", "/data/projects", "<x/>", "application/xml")
+
+    assert (status, body) == (201, '{"a": 1}')
+    assert "pa" not in cluster.args()
+    assert 'user = "svc:pa\\"ss\\\\word"' in cluster.config(), "curl's config quoting escapes \\ and \""
+    assert "http://127.0.0.1:8080/data/projects" in cluster.args()
+
+
+def test_the_smallest_series_is_chosen_and_orthancs_credential_goes_on_stdin(tmp_path):
+    found = [{"ID": "big", "Instances": ["1", "2", "3"]}, {"ID": "small", "Instances": ["1"]}, {"ID": "empty"}]
+    cluster = ShellCluster(tmp_path, find_answer=json.dumps(found))
+
+    series = selftest.XnatPod(cluster, "xnat-web-0").smallest_series("flip:s3cret")
+
+    assert series == ("small", 1)
+    assert "s3cret" not in cluster.args()
+    assert 'user = "flip:s3cret"' in cluster.config()
+
+
+def test_the_import_posts_the_series_zip_into_the_project(tmp_path):
+    cluster = ShellCluster(tmp_path, body="/data/archive/projects/FLIPSELFTEST", code="200")
+
+    status, _ = selftest.XnatPod(cluster, "xnat-web-0").import_series("flip:s3cret", "series-a", "FLIPSELFTEST")
+
+    assert status == 200
+    args = cluster.args()
+    assert "http://orthanc:8042/series/series-a/archive" in args
+    assert "import-handler=DICOM-zip&PROJECT_ID=FLIPSELFTEST" in args
+    assert "inbody=true" in args
+    assert "s3cret" not in args
+    assert "pa" not in args
+
+
+def test_no_answer_from_xnat_is_status_zero(tmp_path):
+    cluster = ShellCluster(tmp_path)
+    cluster.env["PATH"] = "/nonexistent"
+
+    status, _ = selftest.XnatPod(cluster, "xnat-web-0").request("GET", "/xapi/commands")
+
+    assert status == 0
 
 
 # ── the report ──────────────────────────────────────────────────────────────────────
