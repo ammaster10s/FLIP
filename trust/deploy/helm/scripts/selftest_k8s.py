@@ -46,8 +46,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 ORTHANC_URL = "http://orthanc:8042"
 # XNAT as the xnat-web pod reaches itself.
 XNAT_URL = "http://127.0.0.1:8080"
-# The throwaway project the conversion check imports into, deleted when the check ends.
+# The throwaway project the conversion check imports into, deleted when the check ends. Its name
+# marks it as the check's own, so a later run clears it only if the check created it.
 SELFTEST_PROJECT = "FLIPSELFTEST"
+SELFTEST_NAME = "FLIP self-test"
 # How many Orthanc series the conversion check looks at to pick the smallest one to convert.
 SERIES_SAMPLE = 50
 # How long XNAT may take to move the imported session from the prearchive into the archive.
@@ -300,13 +302,17 @@ def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
     return Check("xnat c-store", code == 0, last_line(stdout) or last_line(stderr) or f"smoke-cstore exited {code}")
 
 
-# A curl config line naming a credential. Every call below runs in the xnat-web pod and hands curl
-# its credential this way, through a pipe, so no process list in the pod shows it. XNAT's comes
-# from the service user the pod already holds in its environment and never crosses kubectl;
-# Orthanc's arrives on stdin.
-CURL_USER = r"""curl_user() { printf 'user = "%s"\n' "$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')"; }"""
-XNAT_CURL = 'curl_user "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" | curl -sS -K - --max-time 300 -w "\\n%{http_code}"'
-ORTHANC_CURL = 'curl_user "$ocreds" | curl -fsS -K - --max-time 300'
+# A curl config line carrying a credential as a Basic auth header. Every call below runs in the
+# xnat-web pod and hands curl its credential this way, through a pipe, so no process list in the
+# pod shows it. XNAT's comes from the service user the pod already holds in its environment and
+# never crosses kubectl; Orthanc's arrives on stdin. Base64 leaves nothing to quote: a credential
+# holding a quote or a newline cannot end the config line early, so curl never parses part of it
+# as a directive or echoes it back in a warning, which would land in the report.
+CURL_AUTH = (
+    r"""curl_auth() { printf 'header = "Authorization: Basic %s"\n' "$(printf '%s' "$1" | base64 | tr -d '\n')"; }"""
+)
+XNAT_CURL = 'curl_auth "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" | curl -sS -K - --max-time 300 -w "\\n%{http_code}"'
+ORTHANC_CURL = 'curl_auth "$ocreds" | curl -fsS -K - --max-time 300'
 
 
 class XnatPod:
@@ -318,7 +324,7 @@ class XnatPod:
 
     def _xnat(self, curl_args: str, before: str = "", stdin: str | None = None) -> tuple[int, str]:
         """Run one XNAT call: (HTTP status, body), status 0 when XNAT gave no answer."""
-        ok, out = self.cluster.exec(self.pod, f"{CURL_USER}\n{before}{XNAT_CURL} {curl_args}", stdin=stdin)
+        ok, out = self.cluster.exec(self.pod, f"{CURL_AUTH}\n{before}{XNAT_CURL} {curl_args}", stdin=stdin)
         if not ok:
             return 0, out
         body, _, code = out.rpartition("\n")
@@ -332,7 +338,7 @@ class XnatPod:
         """The Orthanc series with the fewest instances among the first SERIES_SAMPLE, and its size."""
         query = json.dumps({"Level": "Series", "Query": {}, "Limit": SERIES_SAMPLE, "Expand": True})
         script = (
-            f"{CURL_USER}\nread -r ocreds\n{ORTHANC_CURL} -X POST --data-binary {shlex.quote(query)} "
+            f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} -X POST --data-binary {shlex.quote(query)} "
             f"{ORTHANC_URL}/tools/find"
         )
         ok, out = self.cluster.exec(self.pod, script, stdin=orthanc_creds)
@@ -381,7 +387,7 @@ def _project_xml(project: str) -> str:
     root = ET.Element(f"{{{XNAT_URL}/data/projects}}projectData")
     ET.SubElement(root, "ID").text = project
     ET.SubElement(root, "secondary_ID").text = project
-    ET.SubElement(root, "name").text = "FLIP self-test"
+    ET.SubElement(root, "name").text = SELFTEST_NAME
     ET.SubElement(root, "description").text = "Created and deleted by make selftest (selftest_k8s.py)"
     return ET.tostring(root, encoding="unicode", short_empty_elements=False)
 
@@ -416,8 +422,22 @@ def check_conversion(
     if series is None:
         return Check(name, False, "Orthanc lists no series to convert")
 
-    # A project left behind by an interrupted run would hold its old scan; start from nothing.
-    xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
+    # A project left behind by an interrupted run would hold its old scan, so clear it first. Only
+    # one this check created, though: the service user is an XNAT administrator, and a project
+    # that merely shares the id is someone else's to remove.
+    status, body = xnat.request("GET", "/data/projects?format=json")
+    if status != 200:
+        return Check(name, False, f"could not list XNAT's projects (HTTP {status}: {body[:120]})")
+    existing = next((p for p in _results(body) if p.get("ID") == SELFTEST_PROJECT), None)
+    if existing is not None:
+        if existing.get("name") != SELFTEST_NAME:
+            return Check(
+                name,
+                False,
+                f"XNAT already holds a {SELFTEST_PROJECT} project this self-test did not create "
+                f"(named {existing.get('name')!r}); remove or rename it, then rerun",
+            )
+        xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
     status, body = xnat.request("POST", "/data/projects", _project_xml(SELFTEST_PROJECT), "application/xml")
     if status != 200:
         return Check(name, False, f"could not create the {SELFTEST_PROJECT} project (HTTP {status}: {body[:120]})")

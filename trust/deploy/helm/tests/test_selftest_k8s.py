@@ -16,6 +16,7 @@ this is its Kubernetes form. Each check is a pure judgement over what the cluste
 fake below stands in for kubectl and helm and the tests pin what passes and what fails.
 """
 
+import base64
 import importlib.util
 import json
 import subprocess
@@ -288,6 +289,7 @@ class FakeXnat:
     def __init__(self, **overrides):
         self.routes = {
             ("GET", "/xapi/commands?name=dcm2niix"): (200, json.dumps([{"id": 7, "xnat": [{"name": WRAPPER}]}])),
+            ("GET", "/data/projects?format=json"): (200, json.dumps({"ResultSet": {"Result": [{"ID": "a-uuid"}]}})),
             ("DELETE", "/data/projects/FLIPSELFTEST?removeFiles=true"): (200, ""),
             ("POST", "/data/projects"): (200, ""),
             ("PUT", "/data/projects/FLIPSELFTEST/prearchive_code/4"): (200, ""),
@@ -363,7 +365,7 @@ def test_a_series_converted_to_nifti_passes_and_the_project_is_deleted():
     assert check.ok, check.detail
     assert "selftest_1.nii.gz" in check.detail
     deletes = [c for c in xnat.calls if c[0] == "DELETE"]
-    assert len(deletes) == 2, "a stale project is cleared before the run and the new one after it"
+    assert len(deletes) == 1, "only the project this run created is deleted"
     assert xnat.calls[-1][0] == "DELETE"
     assert ("IMPORT", "series-a", "FLIPSELFTEST") in xnat.calls
 
@@ -484,7 +486,7 @@ def test_a_failed_import_fails_and_the_project_is_still_deleted():
 
 def test_a_project_that_cannot_be_deleted_is_reported_without_changing_the_verdict():
     xnat = FakeXnat()
-    answers = iter([(200, ""), (500, "boom")])
+    answers = iter([(500, "boom")])
     real = xnat.request
 
     def request(method, path, body=None, content_type=""):
@@ -501,6 +503,43 @@ def test_a_project_that_cannot_be_deleted_is_reported_without_changing_the_verdi
     assert "could not delete the FLIPSELFTEST project" in check.detail
 
 
+def _listing(*projects):
+    return 200, json.dumps({"ResultSet": {"Result": list(projects)}})
+
+
+def test_a_project_left_by_an_interrupted_run_is_cleared_first():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/projects?format=json")] = _listing({"ID": "FLIPSELFTEST", "name": "FLIP self-test"})
+
+    assert _convert(xnat).ok
+    methods = [c[0] for c in xnat.calls]
+    assert methods.index("DELETE") < methods.index("POST"), "the stale project goes before the new one is made"
+    assert methods.count("DELETE") == 2
+
+
+def test_a_project_of_the_same_id_the_check_did_not_create_is_left_alone():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/projects?format=json")] = _listing({"ID": "FLIPSELFTEST", "name": "Real study"})
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "did not create" in check.detail
+    assert "Real study" in check.detail
+    assert not [c for c in xnat.calls if c[0] in ("POST", "DELETE")]
+
+
+def test_an_unreadable_project_listing_creates_and_deletes_nothing():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/projects?format=json")] = (401, "login page")
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "could not list" in check.detail
+    assert not [c for c in xnat.calls if c[0] in ("POST", "DELETE")]
+
+
 def test_no_orthanc_credential_or_no_series_fails_before_anything_is_created():
     assert not _convert(FakeXnat(), creds=None).ok
     xnat = FakeXnat(series=None)
@@ -510,7 +549,9 @@ def test_no_orthanc_credential_or_no_series_fails_before_anything_is_created():
 
 
 # The shell XnatPod hands the pod, run for real against a stub curl: the scripts parse, and no
-# credential appears on a command line.
+# credential appears on a command line. The password holds a quote, a backslash and a newline,
+# the characters that would end a quoted curl config line early.
+PASSWORD = 'n0t"a\\real\npassword'
 STUB_CURL = """#!/bin/sh
 printf '%s\\n' "$*" >> "$CURL_LOG.args"
 cat >> "$CURL_LOG.config"
@@ -535,7 +576,7 @@ class ShellCluster:
         self.env = {
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "XNAT_SERVICE_USER": "svc",
-            "XNAT_SERVICE_PASSWORD": 'pa"ss\\word',
+            "XNAT_SERVICE_PASSWORD": PASSWORD,
             "CURL_LOG": str(self.log),
             "BODY": body,
             "CODE": code,
@@ -552,6 +593,14 @@ class ShellCluster:
     def config(self):
         return Path(f"{self.log}.config").read_text()
 
+    def credential(self):
+        """The one config line curl was handed, decoded back to the credential it carries."""
+        (line,) = self.config().splitlines()
+        prefix, suffix = 'header = "Authorization: Basic ', '"'
+        assert line.startswith(prefix), line
+        assert line.endswith(suffix), line
+        return base64.b64decode(line[len(prefix) : -len(suffix)]).decode()
+
 
 def test_an_xnat_call_reads_status_and_body_and_keeps_the_credential_off_the_command_line(tmp_path):
     cluster = ShellCluster(tmp_path, body='{"a": 1}', code="201")
@@ -559,8 +608,8 @@ def test_an_xnat_call_reads_status_and_body_and_keeps_the_credential_off_the_com
     status, body = selftest.XnatPod(cluster, "xnat-web-0").request("POST", "/data/projects", "<x/>", "application/xml")
 
     assert (status, body) == (201, '{"a": 1}')
-    assert "pa" not in cluster.args()
-    assert 'user = "svc:pa\\"ss\\\\word"' in cluster.config(), "curl's config quoting escapes \\ and \""
+    assert "password" not in cluster.args()
+    assert cluster.credential() == f"svc:{PASSWORD}"
     assert "http://127.0.0.1:8080/data/projects" in cluster.args()
 
 
@@ -572,7 +621,7 @@ def test_the_smallest_series_is_chosen_and_orthancs_credential_goes_on_stdin(tmp
 
     assert series == ("small", 1)
     assert "s3cret" not in cluster.args()
-    assert 'user = "flip:s3cret"' in cluster.config()
+    assert cluster.credential() == "flip:s3cret"
 
 
 def test_the_import_posts_the_series_zip_into_the_project(tmp_path):
@@ -586,7 +635,7 @@ def test_the_import_posts_the_series_zip_into_the_project(tmp_path):
     assert "import-handler=DICOM-zip&PROJECT_ID=FLIPSELFTEST" in args
     assert "inbody=true" in args
     assert "s3cret" not in args
-    assert "pa" not in args
+    assert "password" not in args
 
 
 def test_no_answer_from_xnat_is_status_zero(tmp_path):
