@@ -115,6 +115,9 @@ than its ``min_clients`` (both retried as above). The hub is told about none of 
 ``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. A hub-side check of in-flight models
 against the FL net's own state is tracked in `FLIP#727 <https://github.com/londonaicentre/FLIP/issues/727>`__.
 
+**Abort job** also takes a job that is still waiting out of the FL server's queue (NVFLARE marks it
+``FINISHED:ABORTED``), so it cannot start later, or report to the model once it has been queued again.
+
 To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
 Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.
 
