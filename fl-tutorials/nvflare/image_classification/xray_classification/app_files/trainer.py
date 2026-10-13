@@ -193,7 +193,7 @@ def epoch_loop(
                     batch_info += f"{lesion.lesion}: all masked; "
             logger.info(batch_info)
 
-            context = f"Epoch {epoch + 1}, {phase} batch {i + 1}/{len(dataloader)}"
+            context = f"{phase} batch {i + 1}/{len(dataloader)}"
             if skip_degenerate_batch(labels, log=logger.warning, context=context):
                 continue
 
@@ -207,8 +207,8 @@ def epoch_loop(
 
             if is_train:
                 loss.backward()
-                # Deliberate fixed L2-norm cap, shared with the Flower X-ray tutorial:
-                # bounds exploding gradients without adding a per-backend tuning knob.
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 

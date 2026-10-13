@@ -29,6 +29,8 @@ def skip_degenerate_batch(
     again with the computed loss before backward or metric accumulation, so a
     NaN/Inf loss cannot poison weights or the reported average (FLIP#764).
     Partially masked batches still carry supervision and are kept.
+    Fully masked batches have a clamped loss of 0.0 that trains nothing and drags
+    the epoch mean down; before clamping, their NaN was dropped by ``np.nanmean``.
 
     Args:
         labels (torch.Tensor): Batch labels; ``-1`` means unknown/unannotated.

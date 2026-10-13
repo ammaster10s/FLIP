@@ -95,8 +95,8 @@ def train_func(
             continue
 
         loss.backward()
-        # Deliberate fixed L2-norm cap, shared with the NVFLARE X-ray tutorial:
-        # bounds exploding gradients without adding a per-backend tuning knob.
+        # Gradient clipping bounds the update so an exploding gradient on one batch
+        # can't diverge the model to NaN within a single optimizer step.
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 

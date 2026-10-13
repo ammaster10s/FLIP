@@ -78,10 +78,6 @@ The ``flip`` package is organized into logical modules:
      backward or metric accumulation. ``log`` accepts a warning callback such as
      ``logger.warning``; ``context`` names the phase and batch position.
 
-   The Flower and NVFLARE X-ray tutorials share this guard. Both deliberately use
-   a fixed gradient L2-norm cap of ``1.0`` to bound exploding gradients; it is a
-   stability constant, not a per-backend configuration option.
-
 ``flip.nvflare``
    NVFLARE-specific components:
 

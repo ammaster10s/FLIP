@@ -36,12 +36,11 @@ def task(monkeypatch):
 
 
 @pytest.mark.parametrize("phase", ["Train", "Val"])
-@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
 @pytest.mark.parametrize("all_invalid", [False, True], ids=["valid-batch-survives", "all-invalid"])
-def test_batch_guards_keep_supervised_metrics(task, phase, non_finite, all_invalid, monkeypatch):
+def test_batch_guards_keep_supervised_metrics(task, phase, all_invalid, monkeypatch, caplog):
     def run_pass(model, batches, lesions, optimizer):
         if phase == "Train":
             return task.train_func(model, batches, optimizer, torch.device("cpu"), lesions)
         return task.validate_func(model, batches, torch.device("cpu"), lesions)
 
-    check_batch_guards(task, run_pass, phase, monkeypatch, non_finite, all_invalid=all_invalid)
+    check_batch_guards(task, run_pass, phase, monkeypatch, caplog, all_invalid=all_invalid)
