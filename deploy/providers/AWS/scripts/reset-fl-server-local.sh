@@ -33,6 +33,8 @@ set -euo pipefail
 cluster="${1:?Usage: reset-fl-server-local.sh <ecs cluster> <fl-server ecs service>}"
 service="${2:?Usage: reset-fl-server-local.sh <ecs cluster> <fl-server ecs service>}"
 family="efs-provision-certs"
+# The task definition's one container (ecs_efs_provision.tf).
+container="provision-efs-certs"
 
 fail() {
     echo "❌ $1" >&2
@@ -64,7 +66,10 @@ esac
 
 aws ecs wait tasks-stopped --cluster "${cluster}" --tasks "${task_arn}" \
     || fail "The ${family} task (${task_arn}) had not stopped when the wait gave up."
+# By name, never containers[0]: GuardDuty Runtime Monitoring adds a sidecar to every Fargate task, and it often
+# sorts first, so index 0 can be the agent's exit code rather than the task's (AGENTS.md, TROUBLESHOOTING.md 1.9).
 exit_code="$(aws ecs describe-tasks --cluster "${cluster}" --tasks "${task_arn}" \
-    --query 'tasks[0].containers[0].exitCode' --output text)" || fail "Could not read the ${family} task's exit code."
+    --query "tasks[0].containers[?name=='${container}'].exitCode | [0]" --output text)" \
+    || fail "Could not read the ${family} task's exit code."
 [ "${exit_code}" = "0" ] || fail "The ${family} task (${task_arn}) exited with code ${exit_code}."
 echo "   ✅ local/ holds the kit again, without flip__p_resources.json."

@@ -41,7 +41,9 @@ mkdir -p "${MOCKBIN}"
 #   ${FIXTURE_DIR}/families     — list-task-definition-families output (tab-separated, as --output text)
 #   ${FIXTURE_DIR}/network      — describe-services networkConfiguration JSON ("null" when the service has none)
 #   ${FIXTURE_DIR}/task-arn     — run-task's tasks[0].taskArn ("None" when ECS started nothing)
-#   ${FIXTURE_DIR}/exit-code    — describe-tasks' tasks[0].containers[0].exitCode
+#   ${FIXTURE_DIR}/exit-code    — describe-tasks' exit code for the task's own container, selected by name
+#   ${FIXTURE_DIR}/sidecar-exit-code — what selecting containers[0] reads instead: GuardDuty Runtime Monitoring's
+#                                 sidecar, which often sorts first (AWS AGENTS.md, "Verifying a Central-Hub FL redeploy")
 #   ${FIXTURE_DIR}/fail-<call>  — present: that call fails the way an API error does
 cat >"${MOCKBIN}/aws" <<'MOCK_AWS'
 #!/usr/bin/env bash
@@ -56,7 +58,12 @@ case "${call}" in
     describe-services) cat "${FIXTURE_DIR}/network" ;;
     run-task) cat "${FIXTURE_DIR}/task-arn" ;;
     wait) ;;
-    describe-tasks) cat "${FIXTURE_DIR}/exit-code" ;;
+    describe-tasks)
+        case "$*" in
+            *"containers[?name=='provision-efs-certs']"*) cat "${FIXTURE_DIR}/exit-code" ;;
+            *"containers[0]"*) cat "${FIXTURE_DIR}/sidecar-exit-code" ;;
+            *) echo "unexpected describe-tasks query: $*" >&2; exit 1 ;;
+        esac ;;
     *) echo "unexpected aws call: $*" >&2; exit 1 ;;
 esac
 MOCK_AWS
@@ -88,6 +95,7 @@ fixture() {
     printf '%s\n' "${NETWORK}" >"${FIXTURE_DIR}/network"
     printf '%s\n' "${TASK_ARN}" >"${FIXTURE_DIR}/task-arn"
     printf '0\n' >"${FIXTURE_DIR}/exit-code"
+    printf '143\n' >"${FIXTURE_DIR}/sidecar-exit-code"
     : >"${FIXTURE_DIR}/calls"
     export FIXTURE_DIR
 }
@@ -155,6 +163,14 @@ run_reset "the provisioning task exits non-zero" flip-cluster fl-server-net-1
 expect_rc 1 "fails"
 expect_text "exited with code 1" "says how the task ended"
 
+# 2b. GuardDuty's sidecar sorts first and exits 0 while the task fails: the task's own exit code decides.
+fixture
+printf '1\n' >"${FIXTURE_DIR}/exit-code"
+printf '0\n' >"${FIXTURE_DIR}/sidecar-exit-code"
+run_reset "the provisioning task fails beside a GuardDuty sidecar that exits 0" flip-cluster fl-server-net-1
+expect_rc 1 "fails"
+expect_text "exited with code 1" "reports the task's own exit code"
+
 # 3. No EFS, no task definition: local/ is not persistent, so there is nothing to reset.
 fixture
 printf 'efs-provision-certs-legacy\tflip-api\n' >"${FIXTURE_DIR}/families"
@@ -197,6 +213,16 @@ fixture
 run_reset "called without the service" flip-cluster
 expect_rc 1 "fails"
 expect_no_call "ecs" "makes no aws call"
+
+# 9. The container the script reads is the one Terraform defines in the efs-provision-certs family.
+echo ""
+echo "-- the container name matches ecs_efs_provision.tf"
+container="$(sed -n 's/^container="\(.*\)"$/\1/p' "${SCRIPT}")"
+if [[ -n "${container}" ]] && grep -Fq "name = \"${container}\"" "${HERE}/../../ecs_efs_provision.tf"; then
+    ok "${container} is the task definition's container"
+else
+    no "the script's container ('${container}') is not a container in ecs_efs_provision.tf"
+fi
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="
