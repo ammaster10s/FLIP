@@ -53,7 +53,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
         self,
         model: torch.nn.Module | str | dict[str, Any] | None = None,
         model_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Args:
