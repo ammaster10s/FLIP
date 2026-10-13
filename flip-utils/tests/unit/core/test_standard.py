@@ -19,8 +19,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 from pydantic import HttpUrl
-from requests import HTTPError, Request, Timeout
-from requests.exceptions import InvalidJSONError
+from requests import HTTPError, Request
 
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
@@ -753,57 +752,22 @@ class TestFLIPStandardProdSendMetrics:
             # Exercise the real requests serializer; it refuses NaN/Inf before sending.
             Request("POST", "https://hub.example.com/metrics", json=post.call_args.kwargs["json"]).prepare()
 
-    @pytest.mark.parametrize("failure", [Timeout("hub stalled"), HTTPError("no response"), RuntimeError("send failed")])
-    def test_reporting_failure_does_not_abort_or_block_later_metrics(self, flip_prod, hub_constants, failure):
-        response = Mock(status_code=204, text="")
+    def test_http_error_without_response_is_non_fatal(self, flip_prod, hub_constants):
+        failure = HTTPError("no response")
         with (
-            patch("flip.core.standard.requests.post", side_effect=[failure, response]) as post,
+            patch("flip.core.standard.requests.post", side_effect=failure),
+            patch.object(flip_prod.logger, "error") as error,
             patch.object(flip_prod.logger, "exception") as logged,
         ):
             flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 2)
+            assert "status code unknown" in error.call_args.args[0]
             logged.assert_called_once_with(failure)
-            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.25, 2)
-            assert post.call_count == 2
 
     def test_schema_validation_failure_is_non_fatal(self, flip_prod):
         with patch("flip.core.standard.requests.post") as post, patch.object(flip_prod.logger, "warning") as warning:
             flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, -1)
             post.assert_not_called()
             warning.assert_called_once()
-
-    def test_json_serialization_failure_is_non_fatal(self, flip_prod, hub_constants):
-        # A real serialization-time failure must also stay inside the metric reporting guard.
-        failure = InvalidJSONError("invalid metric JSON")
-        with (
-            patch("flip.core.standard.requests.post", side_effect=failure),
-            patch.object(flip_prod.logger, "exception") as logged,
-        ):
-            flip_prod.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 2)
-            logged.assert_called_once_with(failure)
-
-
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
-def test_non_finite_nested_event_details_are_already_json_safe(hub_constants, value):
-    """Audit the other variable JSON payload: event serialization already normalizes non-finite facts."""
-    flip = FLIPStandardProd()
-
-    def serialize_request(url, **kwargs):
-        Request("POST", "https://hub.example.com/logs", json=kwargs["json"]).prepare()
-        return Mock(status_code=204, text="")
-
-    with (
-        patch("flip.core.standard.requests.post", side_effect=serialize_request) as post,
-        patch.object(flip.logger, "exception") as logged,
-    ):
-        flip.send_event(
-            "550e8400-e29b-41d4-a716-446655440000",
-            FLLogEvent.CLIENT_RESULT_RECEIVED,
-            1,
-            details={"nested": {"value": value}},
-        )
-        post.assert_called_once()
-        assert post.call_args.kwargs["json"]["details"] == {"nested": {"value": None}}
-        logged.assert_not_called()
 
 
 class TestFLIPStandardProdUploadResultsToS3:

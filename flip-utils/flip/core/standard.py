@@ -349,7 +349,8 @@ class FLIPStandardProd(FLIPBase):
             global_round (int): Provenance — the FL global round the metric is reported in (never the
                 plot coordinate).
             x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
-                ``global_round`` (the schema backfills it).
+                ``global_round`` (the schema backfills it). A non-finite value drops the whole
+                point here; the backend handlers sanitize it to ``None`` before calling.
             x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
         try:
