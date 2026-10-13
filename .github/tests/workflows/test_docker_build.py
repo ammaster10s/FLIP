@@ -27,10 +27,10 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from fnmatch import fnmatchcase
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 
 from image_workflows import (  # noqa: E402
     DOCKER_BUILD_WORKFLOWS,
@@ -40,6 +40,7 @@ from image_workflows import (  # noqa: E402
     code_text,
     step_block,
 )
+from pr_paths_changed import glob_to_regex  # noqa: E402
 
 
 class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
@@ -104,8 +105,11 @@ class XnatBuildTriggers(unittest.TestCase):
     def test_changed_paths_select_the_required_images(self) -> None:
         cases: tuple[tuple[list[str], set[str]], ...] = (
             (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
-            (["trust/xnat/nginx/nginx.conf"], {"nginx", "web"}),
+            (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
+            (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
+            (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
             (["trust/xnat/xnat/Dockerfile"], {"web"}),
+            (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
             (["trust/xnat/.env"], {"web"}),
             (["trust/xnat/dcm2niix/Dockerfile"], set()),
             (
@@ -115,18 +119,23 @@ class XnatBuildTriggers(unittest.TestCase):
             (["flip-api/src/flip_api/main.py"], set()),
         )
         for changed_paths, expected in cases:
+            for changed_path in changed_paths:
+                if changed_path != "flip-api/src/flip_api/main.py":
+                    assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
             selected = set()
             for image in self.workflows:
                 text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
-                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", text)
+                push = re.search(r"\n  push:\n((?: {4}[^\n]*\n|\n)+)", text)
+                assert push, image
+                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", "\n" + push[1])
                 assert paths, image
                 patterns = re.findall(r"      - [\"\']([^\"\']+)[\"\']", paths[1])
                 # GitHub evaluates positive/negative path filters in order; any included
-                # changed file starts the workflow. These globs use only * and **.
+                # changed file starts the workflow. Reuse the service gate's GitHub matcher.
                 for changed_path in changed_paths:
                     included = False
                     for pattern in patterns:
-                        if fnmatchcase(changed_path, pattern.removeprefix("!")):
+                        if glob_to_regex(pattern.removeprefix("!")).match(changed_path):
                             included = not pattern.startswith("!")
                     if included:
                         selected.add(image)
@@ -146,13 +155,14 @@ class XnatBuildTriggers(unittest.TestCase):
             with self.subTest(image=image):
                 assert "workflow_run" not in text, image
                 assert "GH_WR_" not in text, image
-                assert 'if [[ "$GH_EVENT_NAME" == "push" ]]; then' in text, image
 
     def test_tag_generation_preserves_push_and_dispatch_behavior(self) -> None:
         sha = "1234567890abcdef"  # pragma: allowlist secret (synthetic commit ID)
         cases = (
             ("push", "main", [sha, "sha-1234567", "main", "prod"]),
             ("push", "develop", [sha, "sha-1234567", "develop", "stag"]),
+            ("workflow_dispatch", "main", [sha, "sha-1234567", "main"]),
+            ("workflow_dispatch", "develop", [sha, "sha-1234567", "develop"]),
             ("workflow_dispatch", "feature/foo", [sha, "sha-1234567", "feature-foo"]),
             ("push", "v1.2.3", ["v1.2.3"]),
             ("workflow_dispatch", "v1.2.3", ["v1.2.3"]),

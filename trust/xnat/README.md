@@ -108,7 +108,10 @@ On `main`/`develop` pushes, the database and nginx image workflows watch only th
 `postgres/` and `nginx/` build contexts, plus their workflow files. The web workflow keeps the
 broad `trust/xnat/` filter except for tool-only edits under `dcm2niix/`. A dcm2niix version bump
 still rebuilds the web image because it also updates the baked-in
-`xnat/config/dcm2niix_command.json`. Release tags and manual dispatches still build every image.
+`xnat/config/dcm2niix_command.json`. Release tags rebuild every image; a manual dispatch builds
+its own image whatever changed. The three XNAT images share one `XNAT_TAG` pin, but their
+path-filtered builds no longer share `sha-` tags. When moving a site to a `sha-` tag, set
+`XNAT_TAG` to a release tag (or `stag`/`prod`) published for all three images.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
