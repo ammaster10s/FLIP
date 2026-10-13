@@ -138,6 +138,6 @@ variable "operator_ip" {
 
   validation {
     condition     = !var.kit_drop_enabled || can(cidrhost("${var.operator_ip}/32", 0))
-    error_message = "operator_ip must be an IPv4 address when the kit drop is on, or uploads are refused by its firewall."
+    error_message = "operator_ip must be an IPv4 address when the kit drop is on, or uploads are refused by its firewall. The Makefile looks it up from api.ipify.org: if that failed, pass OPERATOR_IP=<your public IPv4>."
   }
 }

@@ -27,21 +27,28 @@ FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
 LINES ?= 80
 # The public IP kits are uploaded from: the kit drop's firewall admits only it and the node
-# subnet. Looked up lazily, by the first target that uses it, and then fixed: the answer reaches
-# a shell, so it is looked up once (a check is worthless if a second lookup can differ) and only
-# an IPv4 address is kept.
+# subnet. Looked up lazily, once per make run, so every use in a run sees the same answer. Only a
+# line shaped like an IPv4 address is kept, because the answer reaches a shell; a failed lookup is
+# empty, and curl's own error is left on the terminal.
 IPV4_PATTERN := [0-9]{1,3}(\.[0-9]{1,3}){3}
-OPERATOR_IP ?= $(eval OPERATOR_IP := $$(shell curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null | grep -Ex '$(IPV4_PATTERN)' | head -n1))$(OPERATOR_IP)
+OPERATOR_IP ?= $(eval OPERATOR_IP := $$(shell curl -fsS --max-time 10 https://api.ipify.org | grep -Ex '$(IPV4_PATTERN)' | head -n1))$(OPERATOR_IP)
 
-# Resolved lazily, only by the targets that need Azure.
-SUB_ID = $(shell az account show --subscription "$(AZ_SUBSCRIPTION)" --query id -o tsv 2>/dev/null)
+# Resolved lazily, only by the targets that need Azure, and once per make run: az given an empty
+# --subscription silently uses the CLI default, so every call must get the id that was checked.
+SUB_ID = $(eval SUB_ID := $$(shell az account show --subscription "$(AZ_SUBSCRIPTION)" --query id -o tsv 2>/dev/null))$(SUB_ID)
+GUID_PATTERN := [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}
 BOOT = $(TF) -chdir=bootstrap output -raw
 NODE_RG = $(NAME_PREFIX)-node-rg
 NODE_VM = $(NAME_PREFIX)-node
 
+# Destroy only deletes, so the kit drop's firewall is never applied: a documentation address
+# (TEST-NET-1) satisfies the variable's check without looking the operator's IP up, so a blocked
+# api.ipify.org never stands between the operator and a teardown.
+DESTROY_OPERATOR_IP := 192.0.2.1
+
 define require_subscription
 	@[ -n "$(AZ_SUBSCRIPTION)" ] || { echo "❌ AZ_SUBSCRIPTION=<trial subscription name or id> is required (never the CLI default)."; exit 1; }
-	@[ -n "$(SUB_ID)" ] || { echo "❌ Cannot read subscription '$(AZ_SUBSCRIPTION)'. Run: az login"; exit 1; }
+	@[[ "$(SUB_ID)" =~ ^$(GUID_PATTERN)$$ ]] || { echo "❌ Cannot read subscription '$(AZ_SUBSCRIPTION)'. Run: az login"; exit 1; }
 endef
 
 # Run Command: the node's only way in. flip-node does the work; long steps run as units.
@@ -115,7 +122,7 @@ destroy: ## Destroy the node, keep bootstrap and the outbound IP (asks first)
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
-		-var "operator_ip=$(OPERATOR_IP)"
+		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node exists; asks first)
 	$(require_subscription)

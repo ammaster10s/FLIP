@@ -181,11 +181,10 @@ def test_bootstrap_keeps_its_region_and_puts_the_ip_with_the_node():
     assert "egress_location=$(LOCATION)" in recipe, "the outbound IP must sit in the node's region"
 
 
-def test_plan_and_destroy_let_the_operator_through_the_kit_drop_firewall():
-    text = MAKEFILE.read_text()
-    for target in ("plan", "destroy"):
-        body = text.split(f"\n{target}:", 1)[1].split("\n\n", 1)[0]
-        assert "operator_ip=$(OPERATOR_IP)" in body, f"{target} must pass operator_ip"
+def test_plan_lets_the_operator_through_the_kit_drop_firewall():
+    # destroy passes a fixed placeholder instead: test_makefile_operator_ip.py
+    body = MAKEFILE.read_text().split("\nplan:", 1)[1].split("\n\n", 1)[0]
+    assert "operator_ip=$(OPERATOR_IP)" in body, "plan must pass operator_ip"
 
 
 def test_kit_upload_uses_entra_never_a_key():
