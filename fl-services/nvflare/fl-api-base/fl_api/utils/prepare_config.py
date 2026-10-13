@@ -397,7 +397,7 @@ def configure_server(
         job_dir (Path): directory where the job is stored (includes the application name)
         app_name (str): application name
         global_rounds (int): number of global rounds
-        trusts (List[str]): list of trusts that will be part of the job
+        trusts (list[str]): list of trusts that will be part of the job
         ignore_result_error (bool): whether to ignore result errors
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
@@ -518,7 +518,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     Args:
         job_dir (Path): job directory
         app_name (str): name of this specific application, under which the config and custom folders will be saved.
-        trusts (List[str]): list of trusts that are part of this training (site names)
+        trusts (list[str]): list of trusts that are part of this training (site names)
 
     Returns:
         Path: path to the meta file that was created.
@@ -605,7 +605,7 @@ def validate_config(config: dict) -> IOverridableConfig:
     Validate the provided configuration dictionary.
 
     Args:
-        config (IOverridableConfig): The configuration dictionary to validate.
+        config (dict): The configuration dictionary to validate.
 
     Returns:
         IOverridableConfig: The validated configuration dictionary.
