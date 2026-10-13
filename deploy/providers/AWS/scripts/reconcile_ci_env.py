@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+from typing import Any
 
 # Written to the output file, never echoed. Anything whose name matches is
 # summarised as a digest.
@@ -86,11 +87,22 @@ class State:
     def __init__(self, doc: dict) -> None:
         self.doc = doc
 
-    def attrs(self, rtype: str, name: str) -> dict:
-        # `mode` matters: a `data` source and a `managed` resource can share a
-        # type and name (aws_ecs_task_definition.flip_api is both, by design —
-        # see the revision-tracking block in ecs_services.tf). Matching without
-        # it silently returns whichever came first in the file.
+    def attrs(self, rtype: str, name: str) -> dict[str, Any]:
+        """Attributes of a managed resource's first instance, by type and name.
+
+        `mode` matters: a `data` source and a `managed` resource can share a
+        type and name (aws_ecs_task_definition.flip_api is both, by design —
+        see the revision-tracking block in ecs_services.tf). Matching without
+        it silently returns whichever came first in the file.
+
+        Args:
+            rtype (str): Terraform resource type, e.g. `aws_ecs_task_definition`.
+            name (str): Resource name, e.g. `flip_api`.
+
+        Returns:
+            dict[str, Any]: The first instance's attributes, or `{}` when the resource
+                is absent from state or has no instances.
+        """
         for r in self.doc.get("resources", []):
             if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
                 instances = r.get("instances") or []
@@ -105,12 +117,20 @@ class State:
                 return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
         return []
 
-    def data_attrs(self, rtype: str, name: str) -> dict:
+    def data_attrs(self, rtype: str, name: str) -> dict[str, Any]:
         """Attributes of a `data` source — the mirror of `attrs`.
 
         Needed where the deployed value only exists as a lookup: the Ark+ demo
         bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
         the only record of the name that was passed in.
+
+        Args:
+            rtype (str): Terraform data source type, e.g. `aws_s3_bucket`.
+            name (str): Data source name, e.g. `demo_assets`.
+
+        Returns:
+            dict[str, Any]: The first instance's attributes, or `{}` when the data
+                source is absent from state or has no instances.
         """
         for r in self.doc.get("resources", []):
             if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:
@@ -119,7 +139,7 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
-    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict:
+    def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict[str, Any]:
         """Attributes of a managed resource inside a specific module instance.
 
         `attrs` ignores the module an address sits in, which is fine while the
@@ -129,6 +149,14 @@ class State:
         the four buckets state happens to list first. The module is the only
         thing that distinguishes them, so it is matched — on a module boundary,
         exactly as `has_module_resource` does.
+
+        Args:
+            module_prefix (str): Module address to match, e.g. `module.flip_demo_assets_bucket`.
+            rtype (str): Terraform resource type, e.g. `aws_s3_bucket`.
+            name (str): Resource name within the module, e.g. `this`.
+
+        Returns:
+            dict[str, Any]: Attributes of the first instance, or an empty dict when none matches.
         """
         for r in self.doc.get("resources", []):
             if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
@@ -177,7 +205,7 @@ class State:
         raw = self.attrs("aws_ecs_task_definition", task_family).get("container_definitions")
         return json.loads(raw) if raw else []
 
-    def container(self, task_family: str, container_name: str) -> dict:
+    def container(self, task_family: str, container_name: str) -> dict[str, Any]:
         for c in self.containers(task_family):
             if c.get("name") == container_name:
                 return c
@@ -194,12 +222,23 @@ def first_port(container: dict) -> str:
 
 
 def split_image(image: str) -> tuple[str, str]:
-    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag'). Digest refs yield no tag."""
-    if not image or "@" in image:
+    """`ghcr.io/org/name:tag` -> ('ghcr.io/org/', 'tag').
+
+    A release apply pins `ghcr.io/org/name:v<X.Y.Z>@sha256:…` (FLIP#1283): the
+    tag part comes back whole, digest included, because that whole string is what
+    Terraform must re-emit to keep the pin. A digest-ONLY reference has no tag to
+    report and yields none.
+    """
+    if not image:
         return "", ""
-    repo, _, tag = image.rpartition(":")
+    name, _, digest = image.partition("@")
+    if digest and ":" not in name.rsplit("/", 1)[-1]:
+        return "", ""
+    repo, sep, tag = name.rpartition(":")
+    if not sep or "/" in tag:
+        return "", ""
     prefix = repo.rsplit("/", 1)[0] + "/" if "/" in repo else ""
-    return prefix, tag
+    return prefix, f"{tag}@{digest}" if digest else tag
 
 
 def live_image_tag(service: str, container: str, cluster: str, profile: str, region: str) -> str:
@@ -243,7 +282,16 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
         profile,
         region,
     )
-    return split_image(image)[1] if image and image != "None" else ""
+    tag = split_image(image)[1] if image and image != "None" else ""
+    # Strip any digest: `v<X.Y.Z>@sha256:…` is the pin a release APPLY writes
+    # into a task definition (FLIP#1283), but this value goes into the operator
+    # env file, where the Makefile reuses DOCKER_TAG for the three TRUST_IMAGES
+    # and for `-e omop_db_tag` (the omop-db and orthanc images). Those are
+    # different repositories, so flip-api's digest makes every one of them
+    # unpullable — `make deploy-trust` reports them all missing and
+    # seed-trust-data / ansible-init fail. The tag alone is the right record
+    # here; CI re-resolves the digest pin from live ECS on every run.
+    return tag.partition("@")[0]
 
 
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
@@ -309,7 +357,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
-        "VPC_NAME": st.attrs("aws_vpc", "this").get("tags", {}).get("Name", ""),
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
         # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
@@ -332,13 +379,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
-        "DB_PORT": api_env.get("DB_PORT", ""),
-        # Not deployed anywhere — no resource in this root references UI_PORT.
-        # It still has to be present and numeric: the Makefile exports it
-        # unconditionally and Terraform rejects "" for a number variable.
-        "UI_PORT": "443",
-        "API_PORT": first_port(api),
-        "FL_API_PORT": first_port(fl_api),
         "FL_SERVER_PORT": first_port(fl_server),
         "INTERNAL_SERVICE_KEY_HEADER": api_env.get("INTERNAL_SERVICE_KEY_HEADER", ""),
         "TRUST_API_KEY_HEADER": api_env.get("TRUST_API_KEY_HEADER", ""),

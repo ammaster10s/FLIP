@@ -279,6 +279,49 @@ class TestSplitImage:
     def test_empty_image_is_safe(self):
         assert rce.split_image("") == ("", "")
 
+    def test_release_digest_pin_comes_back_whole(self):
+        # A release apply pins `:v<X.Y.Z>@sha256:…` (FLIP#1283). The tag part is
+        # the whole `v<X.Y.Z>@sha256:…` string, because that is what Terraform
+        # has to re-emit to keep the pin: reporting only `v1.2.3` would silently
+        # un-pin the digest on the next apply.
+        assert rce.split_image("ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == (
+            "ghcr.io/londonaicentre/",
+            "v1.2.3@sha256:" + "a" * 64,
+        )
+
+    def test_untagged_reference_yields_no_tag(self):
+        # The only colon here is the registry port, and there is none at all in
+        # the first form — neither carries a tag to reuse.
+        assert rce.split_image("ghcr.io/londonaicentre/flip-api") == ("", "")
+        assert rce.split_image("registry.example:5000/flip-api") == ("", "")
+
+
+class TestLiveImageTag:
+    """The env-file value, which is NOT the task definition's reference.
+
+    `DOCKER_TAG` in an operator env file is reused by the Makefile for the three
+    TRUST_IMAGES (trust-api, imaging-api, data-access-api) and for `-e
+    omop_db_tag` (omop-db + orthanc). A digest belongs to one repository, so
+    writing flip-api's `v1.2.3@sha256:…` there makes every one of those images
+    unpullable. CI re-resolves the digest pin from live ECS on every run, so the
+    tag alone is the right record here.
+    """
+
+    @staticmethod
+    def _tag(monkeypatch, image: str) -> str:
+        calls = iter(["arn:aws:ecs:::task-definition/flip-api:41", image])
+        monkeypatch.setattr(rce, "aws", lambda *a, **k: next(calls))
+        return rce.live_image_tag("flip-api", "flip-api", "flip-cluster", "p", "r")
+
+    def test_plain_tag_is_unchanged(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:sha-badcff1") == "sha-badcff1"
+
+    def test_release_digest_pin_is_written_as_the_tag_alone(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64) == "v1.2.3"
+
+    def test_bare_digest_reference_yields_nothing(self, monkeypatch):
+        assert self._tag(monkeypatch, "ghcr.io/londonaicentre/flip-api@sha256:" + "a" * 64) == ""
+
 
 class TestContainerHelpers:
     def test_env_of_flattens_the_name_value_pairs(self, state):
@@ -303,7 +346,7 @@ class TestRedaction:
         assert out.startswith("sha256:")
 
     def test_non_secret_values_are_shown_verbatim(self):
-        assert rce.shown("VPC_NAME", "flip-vpc") == "flip-vpc"
+        assert rce.shown("SES_VERIFIED_EMAIL", "noreply@example.com") == "noreply@example.com"
 
     def test_empty_is_labelled_not_digested(self):
         assert rce.shown("AES_KEY_BASE64", "") == "(empty)"
@@ -534,7 +577,7 @@ class TestMain:
         "FLARE_KIT_DATE": "20260512",
         "FLOWER_KIT_DATE": "",
         "ENFORCE_MFA": "",
-        "VPC_NAME": "flip-vpc",
+        "SES_VERIFIED_EMAIL": "noreply@example.com",
         "DEMO_ASSETS_BUCKET_NAME": "",
     }
 
@@ -555,10 +598,10 @@ class TestMain:
         # Only one backend is ever provisioned, so the other's kit date is
         # legitimately empty. A genuinely missing key alongside it proves the
         # warning block is being produced at all.
-        values = {**self.BASE, "VPC_NAME": ""}
+        values = {**self.BASE, "SES_VERIFIED_EMAIL": ""}
         self._run(monkeypatch, "stag", values)
         warning = capsys.readouterr().out.split("Not recovered", 1)[1]
-        assert "VPC_NAME" in warning
+        assert "SES_VERIFIED_EMAIL" in warning
         assert "FLOWER_KIT_DATE" not in warning
 
     def test_out_omits_an_unrecovered_prod_demo_bucket(self, monkeypatch, tmp_path):

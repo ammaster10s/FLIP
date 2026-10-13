@@ -463,7 +463,7 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 | `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
 | `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
 
-All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
+All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438. On an LZA estate the same module also renders the Ark+ demo-assets bucket (`module.flip_demo_assets_bucket`, `services.tf`), the one exception to the SSE-KMS rule above: it uses SSE-S3 (`sse_algorithm = "AES256"`) and grants the edge distribution's CloudFront OAC read access to `ark_demo/assets/*` through `extra_bucket_policy_statements_json`.
 
 **Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
 
@@ -683,9 +683,6 @@ roll the sha-pinned image forward again. And because `make apply` applies the sa
 a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
 the image back — re-run `make plan` after any `make deploy-centralhub`.
 
-> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
-> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
-
 ### Changing the browser CORS allowlist (Cognito `callback_urls`)
 
 The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
@@ -885,6 +882,24 @@ See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the de
 
 ### Deploying onto an LZA estate (PROD=lza)
 
+> [!IMPORTANT]
+> **This estate is applied by CI, not from a laptop.** `terraform_plan.yml` plans LZA staging on every PR
+> into `main` or `develop` touching `deploy/providers/AWS/**`, `terraform_apply.yml` applies `PROD=lza-stag`
+> on push to `develop` and `PROD=lza` on push to `main`, and `terraform_drift.yml` plans nightly — all
+> through OIDC, with no long-lived keys. See
+> [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for how an environment is pointed
+> at an account, and [Terraform CI](#terraform-ci-plan-on-pr-apply-on-merge) for the pipeline itself.
+>
+> **Both estates are on LZA.** `aws-stag` carries `TF_PROD=lza-stag` and `aws-prod` carries `TF_PROD=lza`
+> (repointed 2026-10-06, [FLIP#1199](https://github.com/londonaicentre/FLIP/issues/1199)), so a merge to
+> `develop` applies to the LZA staging account and a merge to `main` applies to LZA production. The first
+> CI-applied production apply is the next `develop`→`main` release.
+>
+> The `make init` / `make plan` / `make apply PROD=lza` runbook below is therefore **break-glass**: read it
+> for what the mode does and what the account must provide, and run it by hand only under the conditions in
+> [Break-glass](#break-glass). A laptop apply against a CI-applied account is reverted by the next CI run and
+> shows up as drift in between.
+
 This Terraform root supports **two deployment modes**, both permanently:
 
 | Mode | Selected by | Network | Ingress |
@@ -900,7 +915,7 @@ the network, guardrails and edge are owned by the accelerator pipeline rather th
 The two are one root module, not a fork: every LZA adaptation is gated behind `var.lza_managed_network` (set from
 the LZA `PROD` values), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the
 self-contained environments are never touched by LZA work. The AI Centre's own LZA targets are the
-**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias, running alongside legacy prod)
+**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias)
 and a staging workload account reached as `lza-stag`.
 
 Environment (prod vs stag semantics) and network mode are **orthogonal axes**, and the two `PROD` values set them
@@ -1040,7 +1055,8 @@ DOCKER_REGISTRY=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre
 EFS_PROVISION_IMAGE=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
 
 # Bucket names are globally unique and the legacy flipprod-* names stay taken
-# while the old account lives — the LZA env uses its own flip-lza-* namespace.
+# while the old account's buckets are being released — the LZA env uses its own
+# flip-lza-* namespace.
 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=flip-lza-model-files-uploads
 FLIP_FL_RESULTS_BUCKET_NAME=flip-lza-fl-results
 FLIP_APP_BUNDLES_BUCKET_NAME=flip-lza-app-bundles
@@ -1140,6 +1156,10 @@ nightly drift job in between. It is deliberately a separate switch from `MANAGE_
 window instead of whenever a release reaches production.
 
 > [!IMPORTANT]
+> **Done for both estates** — staging 2026-09-28, production 2026-10-06, both legacy accounts now closed. The
+> section is kept as the order of operations for any future estate move; there is no legacy account left to run
+> it against here.
+>
 > **Release the alias before repointing CI.** The alias lives on the *legacy* distribution, so the apply that drops
 > it has to target the legacy account. `TF_PROD` on a GitHub environment selects the estate that environment
 > applies (see "Repointing CI at the LZA accounts" below); unset, it falls back to the legacy pair. Once
@@ -1204,8 +1224,20 @@ IP) — and the parent domain's DNS host delegates the subdomain to the zone's f
 servers. The FL name (`fl.app.flip.example.org`) is the same shape aliasing the edge NLB. The
 concrete cutover runbook stays in the private platform repos.
 
-**State of the LZA path** (tracked on #749):
+**State of the LZA path** (tracked on #749 and, for the CI legs, [#1199](https://github.com/londonaicentre/FLIP/issues/1199)):
 
+- **LZA staging is CI-applied** (since 2026-10-05). `aws-stag` carries `TF_PROD=lza-stag` and the LZA staging
+  plan/apply/drift roles, so PR plans, `develop` applies and the nightly drift run all target the LZA staging
+  account, with both apply guards intact (`resolve-image-tags.sh` sha pinning and the
+  `check-fl-plan-impact.sh` FL-quiesce hold). `TF_STAG_DISABLED` was deleted at the repoint.
+- **LZA production is CI-applied** (repointed 2026-10-06). `aws-prod` carries `TF_PROD=lza` and the LZA
+  production plan/apply/drift roles, so a merge to `main` applies to the LZA production account and the
+  nightly `main` drift leg plans LZA prod. The legacy production account was closed the same day (legacy
+  staging on 2026-09-28). How an environment is pointed at an account is in
+  [Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts).
+- **No LZA-production plan on release PRs.** `terraform_plan.yml` is staging-only by construction, so a PR
+  into `main` gets a staging diff, not a production one; the nightly `main` drift run is the only production
+  plan anyone reads.
 - **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
   `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the live
   `flip-db-subnet-group` spans both AZs, and the TGW attachment now rides `tgw-a` **and** `tgw-b`, so traffic
@@ -1385,13 +1417,10 @@ CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FL
   rationale; classes deliberately *not* promoted are recorded in the script.
 
 ```bash
-make checkov-lint                          # from the REPO ROOT (env-free)
+make checkov-lint                          # here or from the repo root; no env file needed
+make lint                                  # here: terraform fmt, tflint and checkov together
 bash scripts/checkov_lint.sh               # or directly, from this directory
 ```
-
-(The `checkov-lint` target in *this* directory's Makefile works too, but only with a populated deploy env
-file — the Makefile's parse-time `FL_KIT_DATE` guard fires before any target runs. The repo-root target and
-the direct script invocation need nothing.)
 
 Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
 globally — add inside the flagged resource/data block:
@@ -1415,6 +1444,27 @@ PATH, no install or network) that CI runs in the same `Deploy script tests` job 
 harness; it also runs standalone with plain `bash`. Known limitation: the IAM checks only catch a
 **literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
 needs human review.
+
+## TFLint
+
+`terraform validate` checks syntax and schema; tflint catches what it accepts — a variable nothing reads, a
+module with no provider version constraint, an AWS argument value the API would reject at apply time. CI runs it
+in the `TFLint` job of `validate_terraform.yml`; the configuration is [`.tflint.hcl`](.tflint.hcl) (the bundled
+`terraform` ruleset with the recommended preset, plus the pinned AWS ruleset).
+
+```bash
+make tflint-lint                           # here or from the repo root; no env file needed
+bash scripts/tflint_lint.sh                # or directly, from this directory
+```
+
+It needs tflint at the version pinned in [`scripts/tflint_lint.sh`](scripts/tflint_lint.sh) (GitHub release
+binaries; Homebrew no longer packages it) and downloads the AWS ruleset plugin on first run (`GITHUB_TOKEN`
+lifts the anonymous rate limit). Every directory holding `.tf` files — both roots, `ci/` and each module — is
+linted on its own. A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on
+the line above the flagged block, never by disabling the rule (any separator other than that second `#`, such as
+`-- why`, makes tflint ignore the annotation). Like the checkov lint, the script
+first asserts tflint still flags a canary fixture (`scripts/tests/tflint_canary/`), and its guards are
+regression-tested by `scripts/tests/test_tflint_lint.sh` (tflint stubbed) in the `Deploy script tests` job.
 
 ## Hybrid Deployment: Adding an On-Premises Trust
 
@@ -1465,7 +1515,7 @@ GitHub:
 
 | Workflow | Trigger | Role | What it does |
 | --- | --- | --- | --- |
-| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment |
+| `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — exits 0 on every readable plan, and `continue-on-error` keeps an unreadable one from failing the check) |
 | `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
@@ -1640,9 +1690,9 @@ was deleted about an hour later and the staging secrets it contained were
 rotated. Every `tf-via-pr` step now sets `upload-plan: false`, and
 `scripts/tests/test_compose_ci_env.sh` fails the build if any step omits it.
 
-`preserve-plan` is a *different* input and stays `true` in the apply workflow: it
-keeps the plan on the runner's disk so the FL gate and the apply step can read
-it. That never leaves the job.
+`preserve-plan` is a *different* input and stays `true` in both workflows: it
+keeps the plan on the runner's disk so the FL gate and the apply step (apply) and
+the plan-time advisory (plan) can read it. That never leaves the job.
 
 ### Reading a red Terraform CI run
 
@@ -1704,13 +1754,13 @@ stale in this README.
 Run against staging this found a batch of differences from the checked-out
 `.env.stag`, including a renamed UI bucket (`flipstag` → `flip-ui-stag`) that
 plans as `must be replaced` against a `prevent_destroy` lifecycle rule, a stale
-`FLARE_KIT_DATE`, an out-of-date `API_PORT`, and rotated service keys. Several
+`FLARE_KIT_DATE`, and rotated service keys. Several
 were not stale but **absent**, which is worse: the Makefile exports
 `DEPLOY_TRUST_EC2`, `LOCAL_TRUST_PUBLIC_IPS`, `K8S_TRUST_PUBLIC_IPS`,
 `JOB_RESOURCE_SPEC_*` and `FL_KIT_SLOT_NAMES` either unconditionally or behind a
 `?=` default, so an absent key arrives at Terraform as `""` or as the Makefile's
-own default and **does not** fall back to the `variables.tf` one — the same trap
-as `UI_PORT`. `LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
+own default and **does not** fall back to the `variables.tf` one.
+`LOCAL_TRUST_PUBLIC_IPS` empty would have dropped the on-prem
 trust's NLB ingress rule.
 
 The three whose Makefile default is *destructive* rather than merely wrong —
@@ -1759,8 +1809,8 @@ AWS_PROFILE=stag LOCK=false make plan \
 ```bash
 # 1. Nothing to publish by hand: /flip/ci/host_aws_public_key, the EC2 keypair
 #    public key CI writes to ~/.ssh before planning, is declared in
-#    parameter_store.tf and created by the main root's own apply. In these two
-#    accounts it already existed from the retired seed-ci-keypair-param target;
+#    parameter_store.tf and created by the main root's own apply. Where the
+#    parameter already exists (an account seeded out of band, or a re-apply),
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
@@ -1779,10 +1829,12 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    ARNs it writes are read from IAM.
 #    --mode is the same PROD token the workflows read as TF_PROD, and this script
 #    sets that variable: it is what selects the env file, the profile and the keys
-#    the run requires. See "Repointing CI at the LZA accounts" for the LZA pair.
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag
-bash scripts/setup-github-environments.sh --mode true --env-file ../../../.env.production
+#    the run requires. Both FLIP environments run on LZA accounts; see "Repointing
+#    CI at the LZA accounts" for the full per-account order these two commands sit
+#    at the end of.
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag
+bash scripts/setup-github-environments.sh --mode lza --env-file ../../../.env.lza-prod
 ```
 
 Requires repo admin. It prints key names only — values go from the local env file
@@ -1871,19 +1923,17 @@ apply run:
   passes; from the second apply onward it behaves as on any other estate.
 - Every name in `.env.lza-stag` is reused from the legacy estate
   (`flip-terraform-state-stag`, `flipstag-*`, `flip-access-logs-*`) — bucket names
-  are globally unique, and reusing them works **only because the legacy accounts are
-  being emptied and closed**. If the two estates have to coexist, each of those names
-  needs changing in the env file *and* on the environment, `FLIP_TFSTATE_BUCKET_NAME`
-  included, or the first apply stops on
+  are globally unique, and reusing them worked **only because the legacy accounts were
+  emptied and closed** (staging 2026-09-28, production 2026-10-06). If two estates have
+  to coexist, each of those names needs changing in the env file *and* on the
+  environment, `FLIP_TFSTATE_BUCKET_NAME` included, or the first apply stops on
   `BucketAlreadyExists`/`AlreadyExists`.
 
-**Rollback is `TF_PROD`.** Setting it back to the legacy token (with the
-account-scoped values put back) returns the pipeline to the old estate; the
-workflows take effect on their next run, and no code changes either way. Record the
-legacy values *before* overwriting them: variables can be read back
-(`gh variable list --env aws-stag`), secrets cannot — `gh secret list` shows names
-only, so their values have to come from the operator's `.env.stag` /
-`.env.production`.
+**`TF_PROD` was the rollback, while there was something to roll back to.** Setting
+it back to the legacy token returned the pipeline to the old estate with no code
+change either way. Both legacy accounts are now closed (staging 2026-09-28,
+production 2026-10-06), so that route is gone: a repoint today is forward-only, and
+recovery is the break-glass laptop apply against the LZA account.
 
 **Two things the Terraform pipeline does not cover.** `docker_build_xnat_web.yml`
 assumes the older, over-broad role `GitHubAction-AssumeRoleWithAction-FLIP`
@@ -1942,6 +1992,52 @@ or service), or deletes any EFS resource, the job **holds** and names what it
 found. Everything else — VPC, IAM, S3, SSM, CloudFront, ALB, and a plain
 `flip-api` roll — applies unattended.
 
+**It will warn — but not hold — when the plan touches the LZA FL ingress**
+(FLIP#1199). The internal FL NLB (`module.fl_server_internal_nlb`, its static
+per-subnet private IPs and its listeners), its security group, the two
+internal-NLB ingress rules, and the `/flip/networking/*` SSM handoff parameters
+(`aws_ssm_parameter.lza_*`) are the workload half of a cross-repo contract: the
+networking account (`aicentre-lza-iac`) reads those parameters and registers those
+IPs as targets on the edge NLB's FL listener and the web relay target group.
+Change one side alone and FL ingress breaks in a way no plan in this repo can see.
+So the gate emits a GitHub **warning annotation plus a job summary** naming the
+changed addresses and the required order:
+
+- **Adding or widening** ingress (new IP, new subnet, new listener/port) — apply
+  FLIP first, then point the networking account at the new values.
+- **Removing or replacing** ingress (dropped IP/subnet, NLB replacement, port
+  change) — update the networking account off the old values **first**, or the
+  edge targets something that no longer exists.
+
+The exit code is unchanged: ordering is a question for a human, not a correctness
+failure, and holding would wedge every LZA ingress PR behind a quiesce that has
+nothing to do with the change. Legacy (non-LZA) estates never see it — those
+addresses are `count = 0` without `lza_managed_network`. Confirm the handoff
+afterwards with `aws ssm get-parameters-by-path --path /flip/networking --recursive`.
+
+**The advisory runs before the merge, and on a quiesced re-dispatch.** An advisory
+that only appears mid-apply arrives too late for the half of the advice that
+matters most: *removing or replacing* ingress is supposed to be sequenced by
+updating `aicentre-lza-iac` **first**, and by the time the apply is running that
+ordering is no longer available. So the same script runs in an **advisory-only**
+mode (`ADVISORY_ONLY=true`, or `--advisory-only`) in two more places:
+
+- **`terraform_plan.yml`, on the pull request.** The PR plan is the last point at
+  which the two repositories can be sequenced. The warning annotation lands on the
+  PR's checks beside the tf-via-pr plan comment, with the changed addresses and the
+  ordering in the job summary. (`preserve-plan: true` is what keeps the plan file on
+  the runner for it; `upload-plan` stays `false` — see the warning above.)
+- **`terraform_apply.yml`, on an `fl_quiesced=true` re-dispatch.** That input skips
+  the gate step, and with it the advisory — precisely on the apply that most needs
+  it, since an NLB replacement is both FL-disruptive and ingress-changing. A second
+  step runs the script in advisory-only mode on exactly the runs the gate skips.
+
+Advisory-only never holds: it exits 0 on any readable plan, and on an FL-disruptive
+diff it says what the apply *will* do rather than doing it. It is not a relaxation
+of the input guard — a document that is not a `terraform show -json` plan is still
+an error (exit 2), because "no advisory" from an unreadable plan is
+indistinguishable from "no ingress change". The hold remains the apply's alone.
+
 When it holds:
 
 1. Enable deployment mode on the hub (pauses FL job pickup; queued jobs hold, the
@@ -1957,22 +2053,113 @@ the same FL change and holds again, indefinitely. `fl_quiesced: true` skips the
 gate, and nothing verifies it: the runner cannot reach `GET /fl/quiesce`, so it is
 an operator attestation, recorded as a warning annotation naming whoever
 dispatched the run. Setting it when FL is *not* quiesced kills the in-flight
-training run, which is exactly what the gate exists to prevent.
+training run, which is exactly what the gate exists to prevent. What it does
+**not** skip is the LZA ingress advisory: a separate advisory-only step runs on
+exactly these re-dispatches, because quiescing FL says nothing about whether
+`aicentre-lza-iac` has been updated.
 
 `flip-api` is deliberately outside the watch list: its deploy is a rolling
 replacement (`desired_count` 1, `deployment_minimum_healthy_percent` 100) and the
 run is held by fl-server, not the hub. Watching it would hold nearly every apply,
 since any image-tag change updates the task definition.
 
+### Release applies: pinning `v<X.Y.Z>` instead of the sha (FLIP#1283)
+
+A release merge to `main` is applied twice, and the second apply is the one that
+makes production name its release.
+
+The image a service reports as its version is baked at build time
+(`FLIP_RELEASE`). The `main` build of a release commit is triggered by a branch
+event, so it bakes `sha-<short7>`; the `:v<X.Y.Z>` images — same source, same
+content, `FLIP_RELEASE=v<X.Y.Z>` — are a *separate* set of builds that
+`release.yml` dispatches at the tag. They do not exist when the push-triggered
+apply runs, so the resolver cannot discover the release by looking. It has to be
+told:
+
+1. The push to `main` runs `terraform_apply.yml` as usual and pins
+   `sha-<short7>`.
+2. `release.yml` creates the tag, dispatches the twelve image builds at it, then
+   **waits** for those runs to conclude (bounded by the repository variable
+   `RELEASE_BUILD_WAIT_SECONDS`, default 5400s; polled every
+   `RELEASE_BUILD_POLL_SECONDS`, default 30s). A red build or an expired budget
+   fails the release job and names what to re-run — production is simply left on
+   the sha pin, never moved to a release that did not build.
+3. On success it dispatches `terraform_apply.yml` with
+   `release_tag: v<X.Y.Z>`, which the workflow forwards to
+   `resolve-image-tags.sh` as `RELEASE_TAG`. The resolver then pins
+   `v<X.Y.Z>@sha256:…` and **fails closed** if the release image is absent,
+   rather than falling back to the sha or the configured tag — a silent fallback
+   would leave production on the *previous* release with a green run.
+
+Three constraints are easy to break and worth keeping in mind:
+
+- **The dispatch ref is `refs/heads/main`, never the tag.** The apply role's
+  trust policy pins `job_workflow_ref` to this workflow at
+  `refs/heads/{develop,main}`; a dispatch at `refs/tags/v<X.Y.Z>` cannot assume
+  it. `.github/tests/workflows/test_release.py` holds the ref.
+- **`release_tag` is a `main`/prod input.** The estate is chosen by the ref
+  (`develop` → stag, `main` → prod), and a release is a prod event by
+  definition, so the workflow rejects `release_tag` on any other ref.
+- **A running apply is never interrupted — a queued one can be.** Both applies
+  land in the concurrency group `tf-apply-main` with `cancel-in-progress:
+  false`, so the release dispatch queues behind an in-flight push apply and
+  applies second, which is the order that matters since it pins the release over
+  the sha. In practice the push apply is long finished by then: the wait in step
+  2 has just spent the builds' lifetime.
+
+  `cancel-in-progress: false` only protects the run that is already *running*.
+  GitHub keeps one pending run per group, so a run queued later on `main`
+  replaces one queued earlier. **If you re-dispatch `terraform_apply.yml` while a
+  release is in flight — most often the `fl_quiesced: true` re-dispatch of a held
+  apply — pass `release_tag: v<X.Y.Z>` as well.** Without it your run takes the
+  queued release apply's place, `release.yml` stays green and production is left
+  on the previous release. `release.yml` now watches for exactly that: its
+  "Confirm the release apply actually ran" step re-dispatches the apply once if
+  the queued one was cancelled before it started, and fails the release if it
+  happens twice.
+
+It also bypasses the `deploy/providers/AWS/**` path filter, which is the point: a
+release that touches no infrastructure would otherwise never re-pin the hub.
+
+A release apply that changes the FL task-definition tag trips the FL gate above
+and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any other
+FL-affecting apply does. That is deliberate — a platform release is an attended
+event — and the gate is not weakened for it.
+
 ### Break-glass
 
 The pipeline is additive — the laptop workflow is unchanged and remains the
-recovery path.
+recovery path, for the legacy **and** the LZA accounts. Use the profile and `PROD`
+token of the estate you mean (see
+[Repointing CI at the LZA accounts](#repointing-ci-at-the-lza-accounts) for the
+full mode table):
 
-- **CI is wedged / the role is broken.** `AWS_PROFILE=stag make init plan apply`
-  as before. The CI roles are owned by the platform repositories, outside this
-  root's state, so a bad main-state apply cannot lock CI out of the apply that
-  would fix it; a broken role is fixed there.
+| Estate | Break-glass command |
+| --- | --- |
+| LZA staging | `AWS_PROFILE=lza-stag make init plan apply PROD=lza-stag` |
+| LZA production | `AWS_PROFILE=lza-prod make init plan apply PROD=lza` |
+
+The legacy staging and legacy production rows are gone: those accounts are closed
+(staging 2026-09-28, production 2026-10-06), so `PROD=stag` / `PROD=true` have no
+estate to reach (removal of the modes themselves is tracked on
+[FLIP#1377](https://github.com/londonaicentre/FLIP/issues/1377)). Each remaining row
+needs that estate's env file (`.env.lza-stag` / `.env.lza-prod`) present locally; the
+Makefile's guard refuses to run on a mismatched `AWS_PROFILE`.
+
+**A laptop apply is only ever a recovery action on a CI-applied account.** Both
+LZA estates are applied by CI, so a hand-run there is
+reverted by the next run and reported by the nightly drift job meanwhile. Run one
+only when:
+
+- **CI is wedged / the role is broken.** The CI roles are owned by the platform
+  repositories, outside this root's state, so a bad main-state apply cannot lock CI
+  out of the apply that would fix it; a broken role is fixed there.
+- **The change must not go through CI at all** — the targeted one-offs the repoint
+  runbook calls for, such as creating `/flip/ci/host_aws_public_key` in a new LZA
+  account before CI can plan there.
+
+Two more pipeline-level escapes:
+
 - **A plan is stuck on the state lock.** PR plans run with `-lock=false` and never
   take it. An apply does; `make force-unlock LOCK_ID=<id>` releases it.
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
@@ -2189,7 +2376,7 @@ Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in priva
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
 
 - **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
-- **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
+- **8000** — `fl-api-net-1` ECS task port (`local.api_container_port`). Cloud Map internal only; no LB and no external ingress.
 - **5432** — RDS PostgreSQL. Reachable only from the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
 
@@ -2221,7 +2408,7 @@ parallelism and never converges on re-runs.
 
 | Rule (protocol/port → destination) | Scope | What it carries, and why |
 |---|---|---|
-| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); Ubuntu apt + `esm.ubuntu.com` over HTTPS; **PyPI and `download.pytorch.org`** (documented trust requirement in `admin-platform-support.rst`; also Flower's per-run `uv sync`); the **CloudWatch agent `.deb`** from `s3.amazonaws.com/amazoncloudwatch-agent/…` — us-east-1 S3, *outside* the regional prefix list, so it survives only on this floor; and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
+| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); Ubuntu apt + `esm.ubuntu.com` over HTTPS; **PyPI** (the seeding step's `uv run` in `trust/seed_trust.sh`; Flower runs install nothing at run time, FLIP#1418); the **CloudWatch agent `.deb`** from `s3.amazonaws.com/amazoncloudwatch-agent/…` — us-east-1 S3, *outside* the regional prefix list, so it survives only on this floor; and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
 | TCP 80 → `0.0.0.0/0` | any host | Ubuntu apt mirrors over HTTP (package install/upgrade). |
 | TCP 443 → S3 managed prefix list | `com.amazonaws.<region>.s3` | S3, for the AI Centre FL kit sync. A prefix list rather than a raw CIDR because S3's edge IPs rotate. Shadowed by the 443 floor — intent, not enforcement. |
 | TCP 443 → `aws_security_group.vpc_endpoints` | peer SG | SSM control plane (`ssm`) and CloudWatch Logs (`logs`) via the VPC interface endpoints — one rule, since both share an endpoint SG and port. Shadowed by the 443 floor — intent, not enforcement. Gated on `var.enable_ecs_endpoints` (default `true`); when it is `false` the endpoints do not exist and this rule is omitted entirely rather than restated as a public rule, which would collide with the floor on the same tuple. |

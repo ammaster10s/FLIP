@@ -194,7 +194,6 @@ REQUIRED_KEYS=(
     # Backend + provider wiring (Makefile `init`, TF_VAR_AWS_REGION)
     AWS_REGION
     FLIP_TFSTATE_BUCKET_NAME
-    VPC_NAME
 
     # Buckets — all four carry Makefile placeholder guards
     AICENTRE_BUCKET_NAME
@@ -217,23 +216,11 @@ REQUIRED_KEYS=(
     POSTGRES_USER
 
     # Service wiring baked into the ECS task definitions (locals.tf)
-    API_PORT
-    DB_PORT
     FL_ADMIN_DIRECTORY
-    FL_API_PORT
     FL_SERVER_PORT
     INTERNAL_SERVICE_KEY_HEADER
     SES_VERIFIED_EMAIL
     TRUST_API_KEY_HEADER
-    # UI_PORT is referenced by no resource in this root (the UI is served from S3
-    # via CloudFront, not a port), so it looks omittable — but the Makefile exports
-    # it unconditionally, which turns an absent key into TF_VAR_UI_PORT="" and
-    # Terraform rejects that for a `number` variable:
-    #     Unsuitable value for var.UI_PORT … a number is required
-    # Verified against a real prod plan. The same reasoning keeps every other
-    # numeric key required; only JOB_RESOURCE_SPEC_* may be absent, because the
-    # Makefile guards those exports behind `ifneq`.
-    UI_PORT
 
     # DNS
     ALB_SUBDOMAIN
@@ -272,6 +259,13 @@ OPTIONAL_KEYS=(
     FLIP_BUCKET_NAME
     JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
+
+    # Not stored in either GitHub environment and not normally in an env file:
+    # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile
+    # exports TF_VAR_fl_api_image_tag only when it is set (FLIP#1283). Listed as
+    # optional so the Makefile/manifest drift guard is satisfied and so an
+    # operator CAN pin it by hand if they ever need to.
+    DOCKER_FL_API_TAG
 
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
