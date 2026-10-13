@@ -60,7 +60,8 @@ Prerequisites
   ``az vm list-skus --subscription "<name>" --location <region> --size Standard_D4 --all -o table``.
 - On your machine: Azure CLI (logged in with ``az login``), Terraform 1.13 or newer, GNU make,
   ``uv`` and ``yq`` (the self-test kit is provisioned on your machine, never on the node), and an
-  SSH public key (Azure requires one; nothing listens for SSH).
+  SSH public key at ``~/.ssh/id_ed25519.pub``, or pass ``SSH_PUBLIC_KEY_FILE=<path>`` to ``plan``
+  and ``destroy``. Azure requires one, but nothing listens for SSH, so a throwaway key will do.
 - The FLIP commit you deploy pushed to GitHub: the VM clones it.
 
 **************************
@@ -71,16 +72,26 @@ Build the node and test it
 
    cd deploy/providers/azure
    SUB="<subscription name>"
+   REGION=<region>   # the node's region; bootstrap creates the outbound IP there, so pass it to both
 
-   make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   make bootstrap AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
    make init      AZ_SUBSCRIPTION="$SUB"
-   make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=<region>
+   make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION
    make apply     AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make status    AZ_SUBSCRIPTION="$SUB"      # repeat until "provisioned: <time>"
 
+``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
+your access to the new state storage; run it again. First boot takes a few minutes.
+
+A **second node in the same subscription** needs its own name and its own checkout: give every
+command the same ``NAME_PREFIX=<prefix>`` (default ``flipaz``), and run them from a separate clone.
+The bootstrap keeps its Terraform state in the checkout, so a different prefix in the same checkout
+would rename, and so replace, the first node's bootstrap.
+
 Then run the **hubless self-test** on both FL backends. ``selftest-kit`` provisions a throwaway FL
-kit on your machine, packs only the client's files and puts them in the kit drop; ``selftest``
-has the node fetch that kit, bring the trust stack up with no hub, check it and tear it down:
+kit on your machine, packs only the client's files and puts them in the kit drop, so it can run while
+the node is still booting; ``selftest`` has the node fetch that kit, bring the trust stack up with
+no hub, check it and tear it down:
 
 .. code-block:: bash
 
@@ -94,6 +105,15 @@ the stack starting, the three API health endpoints, the OMOP and Orthanc seed ma
 refusing anonymous requests, a real DICOM C-STORE from Orthanc into XNAT, and the FL client
 staying up. An unreachable hub is expected at this stage, not a failure. Repeat with
 ``FL_BACKEND=flower``.
+
+On a new node the first self-test takes about 20 minutes, most of it loading the mock OMOP and
+Orthanc data; later runs reuse that data and take about 10. ``make report`` shows the last finished run (nothing yet on a
+new node), so check its start time. The node runs one Run Command at a time, so let one ``make`` call return before
+starting the next: a second one is refused with ``Conflict: Run command extension execution is in
+progress``.
+
+The reports stay on the node, under ``/opt/flip/selftest/`` (``selftest-<backend>-<time>.md`` and
+``.json``), and ``make destroy`` deletes them: keep a copy of each ``make report`` first.
 
 **********
 Join a hub
