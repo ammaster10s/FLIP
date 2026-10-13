@@ -491,7 +491,8 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
+        IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
+            answers with an error status.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
@@ -499,7 +500,10 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     # be slower than httpx's 5s default.
     try:
         response = http_get(url, timeout=30)
-    except httpx.RequestError as e:
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline.
         logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"Server status response: {response}")
@@ -518,7 +522,8 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
+            reached or answers with an error status.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
@@ -527,7 +532,10 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
     try:
         response = http_get(url, timeout=30)
-    except httpx.RequestError as e:
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline.
         logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"Client status response: {response}")

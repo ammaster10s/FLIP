@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException, Request
 
@@ -259,3 +260,58 @@ def test_get_status_endpoint_reports_offline_net_without_failing_others(
     assert down.registered_clients == 0
     assert down.clients == []
     assert up.online is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=httpx.Request("GET", "http://down-endpoint/check_server_status"),
+            response=httpx.Response(500),
+        ),
+    ],
+    ids=["fl-api-unreachable", "fl-api-answers-500"],
+)
+def test_get_status_endpoint_survives_a_failing_fl_api(
+    error,
+    fake_request,
+    mock_db,
+    mock_get_trusts,
+    mock_get_slot_names_by_trust_ids,
+):
+    """One net's FL API failing over HTTP shows that net offline instead of failing the whole response.
+
+    Drives the real check_server_status / check_client_status: only the HTTP call is patched.
+    """
+
+    class Net:
+        def __init__(self, name, endpoint, fl_backend):
+            self.name = name
+            self.endpoint = endpoint
+            self.fl_backend = fl_backend
+
+    def fake_http_get(url, *args, **kwargs):
+        if url.startswith("down-endpoint/"):
+            raise error
+        if url.endswith("/check_server_status"):
+            return {"status": "started"}
+        return [{"name": "trust-1", "status": "no_jobs"}, {"name": "trust-2", "status": "no_jobs"}]
+
+    with (
+        patch("flip_api.fl_services.get_status.get_nets") as mock_get_nets,
+        patch("flip_api.fl_services.services.fl_service.http_get", side_effect=fake_http_get),
+    ):
+        mock_get_nets.return_value = [
+            Net("down-net", "down-endpoint", FLBackend.NVFLARE),
+            Net("up-net", "up-endpoint", FLBackend.NVFLARE),
+        ]
+        result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
+
+    down = next(net for net in result if net.name == "down-net")
+    up = next(net for net in result if net.name == "up-net")
+    assert down.online is False
+    assert down.clients == []
+    assert up.online is True
+    assert {c.name for c in up.clients} == {"trust-1", "trust-2"}
