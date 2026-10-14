@@ -25,12 +25,15 @@ and time comes from the caller's :class:`StudyTags`, never the clock; the file m
 runs on the same input write the same bytes.
 
 Geometry follows the NIfTI affine. nibabel hands back a RAS affine and an ``(i, j, k)`` array; DICOM
-wants LPS positions and a ``(row, column)`` pixel plane. Rows run along ``j`` and columns along
-``i``, so slice ``k`` is written as ``volume[:, :, k].T``, ``ImageOrientationPatient`` is the
-LPS-flipped direction of the ``i`` axis then of the ``j`` axis, ``ImagePositionPatient`` is the LPS
-position of voxel ``(0, 0, k)``, and ``PixelSpacing`` is ``[row spacing (along j), column spacing
-(along i)]``. ``dcm2niix`` — which XNAT runs on every pulled series — rebuilds the same affine from
-those tags.
+wants LPS positions and a ``(row, column)`` pixel plane. ``i`` and ``j`` are first flipped as needed
+so the pixels are stored the way DICOM displays them — along a row toward the patient's left (or
+posterior), down a column toward posterior (or the feet) — because a 2-D viewer shows pixels as stored:
+a RAS-ordered source, which is all of MSD, would otherwise render rotated 180° (FLIP#1495). Every voxel
+keeps its world position. Rows then run along ``j`` and columns along ``i``, so slice ``k`` is written
+as ``volume[:, :, k].T``, ``ImageOrientationPatient`` is the LPS direction of the ``i`` axis then of
+the ``j`` axis, ``ImagePositionPatient`` is the LPS position of voxel ``(0, 0, k)``, and
+``PixelSpacing`` is ``[row spacing (along j), column spacing (along i)]``. ``dcm2niix`` — which XNAT
+runs on every pulled series — rebuilds the same affine from those tags.
 """
 
 from __future__ import annotations
@@ -48,10 +51,13 @@ from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, MRImageStorage, 
 # characters — exactly the OMOP `image_study_uid` / `image_series_uid` column width — so never lengthen it.
 UID_PREFIX = "1.2.826.0.1.3680043.2.1125."
 IMPLEMENTATION_CLASS_UID = UID_PREFIX + "1"
-IMPLEMENTATION_VERSION_NAME = "FLIP_DICOM_W1"
+IMPLEMENTATION_VERSION_NAME = "FLIP_DICOM_W2"
 
 SOP_CLASS_UIDS = {"MR": MRImageStorage, "CT": CTImageStorage}
 _RAS_TO_LPS = np.array([-1.0, -1.0, 1.0])
+# The LPS sign each in-plane axis is stored toward, by its dominant component: x toward the patient's
+# left, y toward posterior, z toward the feet — the order a scanner writes and a viewer displays.
+_DISPLAY_SIGN = np.array([1.0, 1.0, -1.0])
 
 # Type 1/2 attributes of the MR and CT Image modules a caller may not care about; `SeriesTags.extra`
 # overrides any of them. Empty strings are the type-2 "present, no value".
@@ -151,6 +157,19 @@ class _Geometry:
         return float(np.dot(self.position(k), self.slice_direction))
 
 
+def _to_display_order(volume: np.ndarray, affine: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Flip ``i`` and/or ``j`` so each in-plane axis points toward its display sign; ``k`` is untouched."""
+    affine = affine.copy()
+    for axis in (0, 1):
+        lps = affine[:3, axis] * _RAS_TO_LPS
+        dominant = int(np.argmax(np.abs(lps)))
+        if np.sign(lps[dominant]) != _DISPLAY_SIGN[dominant]:
+            volume = np.flip(volume, axis=axis)
+            affine[:3, 3] += affine[:3, axis] * (volume.shape[axis] - 1)
+            affine[:3, axis] *= -1
+    return volume, affine
+
+
 def _encode(volume: np.ndarray, modality: str) -> tuple[np.ndarray, dict[str, Any]]:
     """The stored pixel array (little-endian 16-bit) and the pixel-module tags that describe it.
 
@@ -223,6 +242,7 @@ def write_series(
     series_entropy = [*entropy, "series", str(series.series_number)]
     series_uid = generate_uid(prefix=UID_PREFIX, entropy_srcs=series_entropy)
 
+    volume, affine = _to_display_order(volume, affine)
     geometry = _Geometry.from_affine(affine)
     pixels, pixel_tags = _encode(volume, series.modality)
     sop_class_uid = SOP_CLASS_UIDS[series.modality]
