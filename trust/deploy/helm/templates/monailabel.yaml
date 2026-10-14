@@ -71,7 +71,7 @@ spec:
       {{- end }}
       containers:
         - name: monailabel
-          image: "{{ .Values.monailabel.image.repository }}:{{ .Values.monailabel.image.tag }}"
+          image: "{{ .Values.monailabel.image.repository }}:{{ include "flip-trust.imageTag" (dict "global" .Values.global.image.tag "own" .Values.monailabel.image.tag) }}"
           imagePullPolicy: {{ .Values.monailabel.image.pullPolicy }}
           {{- /*
             Same chart-global container hardening the other network-facing services apply
