@@ -197,8 +197,11 @@ hand:
 
 ``aks-join`` unpacks the tarball under ``build/kits/``, installs the kit file as
 ``trust/.env.<slot>.<env>``, generates the chart's ``values-secrets.yaml`` from it and puts the FL
-kit in a Secret, because a managed node can be replaced at any time. It then deploys the chart
-with ``values-aks.yaml`` and ``values-small-node.yaml``. The first install takes up to half an
+kit in a Secret, because a managed node can be replaced at any time. A Flower kit's Secret holds only
+``ca.crt`` and the slot's own SuperNode credential: the tarball's ``certificates/`` also carries the
+SuperLink's ``server.key``, which never belongs on a trust. It then deploys the chart with
+``values-aks.yaml`` and ``values-small-node.yaml``, and records them in the kit file as
+``K8S_PLATFORM_VALUES``, so a later deploy or upgrade of that slot keeps them. The first install takes up to half an
 hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
 chart's Orthanc, which a test node needs for an imaging pull and for the self-test.
 

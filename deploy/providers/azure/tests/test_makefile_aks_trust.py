@@ -23,13 +23,12 @@ from conftest import AZURE_DIR, REPO_ROOT, run_make
 HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE=flip-trust"
 
 
-def test_deploy_layers_the_aks_overlays_and_keeps_the_vocabulary_load_off(tmp_path):
+def test_deploy_layers_the_aks_overlays(tmp_path):
     result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == (
-        f"{HELM} deploy-trust-k8s KIT=Trust_3 PROD=lza-stag NO_VOCAB_LOAD=1"
-        " PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
+        f"{HELM} deploy-trust-k8s KIT=Trust_3 PROD=lza-stag PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
     )
 
 
@@ -62,14 +61,56 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
     kit_dir = "build/kits/flip-trust-kit-Trust_3-20261009"
     steps = [
         f'install -m 0600 "{kit_dir}/.env.Trust_3" "{REPO_ROOT}/trust/.env.Trust_3.lza-stag"',
+        "K8S_PLATFORM_VALUES=%s",
         f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
         "kubectl --context flipaz-aks create namespace flip-trust",
-        f"{HELM} kit-secret KIT_SRC=",
+        "make _aks-fl-kit",
+        f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/{kit_dir}/fl-kit-secret"',
         "make aks-deploy KIT=Trust_3 PROD=lza-stag",
     ]
     positions = [out.find(s) for s in steps]
     assert -1 not in positions, (steps[positions.index(-1)], out)
     assert positions == sorted(positions), out
+
+
+def _kit(root, files: dict[str, str]):
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+
+
+FLOWER_TARBALL = {
+    "fl-kit/net-1/certificates/ca.crt": "ca",
+    "fl-kit/net-1/certificates/server.pem": "pem",
+    "fl-kit/net-1/certificates/server.key": "superlink private key",
+    "fl-kit/net-1/keys/supernode_credentials_3": "slot key",
+    "fl-kit/net-1/keys/supernode_credentials_3.pub": "slot pub",
+}
+
+
+def test_a_flower_kit_secret_holds_only_what_the_supernode_reads(tmp_path):
+    """The hub's tarball ships the whole certificates/ (with the SuperLink's server.key); kit-secret
+    refuses that, so aks-join hands it ca.crt and the slot's credential only."""
+    kit = tmp_path / "kit"
+    _kit(kit, FLOWER_TARBALL)
+
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), KIT="Trust_3")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    secret = kit / "fl-kit-secret"
+    staged = sorted(str(p.relative_to(secret)) for p in secret.rglob("*") if p.is_file())
+    assert staged == ["certificates/ca.crt", "keys/supernode_credentials_3"]
+
+
+def test_an_nvflare_kit_secret_is_the_slots_directory(tmp_path):
+    kit = tmp_path / "kit"
+    _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}", "fl-kit/net-1/services/Trust_1/x": "no"})
+
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), KIT="Trust_3")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (kit / "fl-kit-secret/startup/fed_client.json").read_text() == "{}"
+    assert not (kit / "fl-kit-secret/x").exists()
 
 
 def _job(name: str, cpu_limit: str | None) -> dict:

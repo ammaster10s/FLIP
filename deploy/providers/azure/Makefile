@@ -87,7 +87,7 @@ define require_operator_ip
 		echo "   Pass yours: make $@ OPERATOR_IP=<your public IPv4>"; exit 1; }
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip aks-join aks-deploy aks-selftest aks-clear-jobs logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip aks-join _aks-fl-kit aks-deploy aks-selftest aks-clear-jobs logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -286,16 +286,28 @@ aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (T
 	@rm -rf "$(AKS_KIT_DIR)" && mkdir -p -m 700 "$(AKS_KIT_DIR)" && tar -xzf "$(TARBALL)" -C "$(AKS_KIT_DIR)" --no-same-owner
 	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT); is KIT the slot it was packaged for?"; exit 1; }
 	install -m 0600 "$(AKS_KIT_DIR)/.env.$(KIT)" "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
+	@# The chart's own deploy and upgrade targets read the overlays from the kit file, so a plain
+	@# upgrade-trust-k8s keeps them too (without values-aks.yaml PGDATA and the kit would move).
+	printf 'K8S_PLATFORM_VALUES=%s\n' "$(AKS_VALUES)" >> "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
 	python3 $(HELM_DIR)/scripts/generate_values.py --env-file "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)" \
 		--output-dir "$(AKS_KIT_DIR)" --secrets-file $(HELM_DIR)/values-secrets.yaml
 	$(KUBECTL) create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	@# An NVFLARE kit is the slot's services/<slot>/; a Flower kit is net-1/ itself.
-	$(CHART) kit-secret KIT_SRC="$$(k=$(AKS_KIT_DIR)/fl-kit/net-1; [ -d $$k/services/$(KIT) ] && k=$$k/services/$(KIT); echo $(CURDIR)/$$k)"
+	$(MAKE) _aks-fl-kit AKS_KIT_DIR="$(AKS_KIT_DIR)" KIT=$(KIT)
+	$(CHART) kit-secret KIT_SRC="$(abspath $(AKS_KIT_DIR))/fl-kit-secret"
 	$(MAKE) aks-deploy KIT=$(KIT) PROD=$(PROD)
+
+# What goes into the FL kit Secret. NVFLARE: the slot's services/<slot>/ as shipped. Flower: only what
+# the SuperNode reads, ca.crt and this slot's credential; the tarball's certificates/ also holds the
+# SuperLink's server.key, which kit-secret refuses to put in a trust's Secret.
+_aks-fl-kit:
+	@k="$(AKS_KIT_DIR)/fl-kit/net-1"; s="$(AKS_KIT_DIR)/fl-kit-secret"; rm -rf "$$s"; \
+	if [ -d "$$k/services/$(KIT)" ]; then cp -Rp "$$k/services/$(KIT)" "$$s"; \
+	else mkdir -p -m 700 "$$s/certificates" "$$s/keys" && cp -p "$$k/certificates/ca.crt" "$$s/certificates/" && \
+	  for f in "$$k"/keys/supernode_credentials_*; do case "$$f" in *.pub) ;; *) cp -p "$$f" "$$s/keys/" ;; esac; done; fi
 
 aks-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<slot> PROD=<env> [MOCK_PACS=1])
 	@[ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ KIT=<slot> PROD=<env> are required."; exit 1; }
-	$(CHART) deploy-trust-k8s KIT=$(KIT) PROD=$(PROD) NO_VOCAB_LOAD=1 PLATFORM_VALUES="$(AKS_VALUES)"
+	$(CHART) deploy-trust-k8s KIT=$(KIT) PROD=$(PROD) PLATFORM_VALUES="$(AKS_VALUES)"
 
 aks-selftest: ## Run the trust self-test against the deployed release (report under build/selftest/)
 	$(CHART) selftest
