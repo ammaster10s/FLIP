@@ -264,14 +264,9 @@ class Study(BaseModel):
 
 
 class StudyQuery(BaseModel):
-    """Represents a study query for PACS through XNAT DQR.
-
-    ``pacs_id`` is optional. Left unset and serialised with ``exclude_none=True``, the query carries no
-    ``pacsId`` and DQR runs it against its default query/retrieve PACS; set, it names that registration.
-    """
+    """Represents a study query for PACS through XNAT DQR. It names no PACS, so DQR uses its default one."""
 
     accession_number: str = Field(..., alias="accessionNumber")
-    pacs_id: int | None = Field(default=None, alias="pacsId")
     modality: str | None = Field(default="", alias="modality")
 
 

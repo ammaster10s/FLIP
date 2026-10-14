@@ -32,6 +32,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_token import SESSION_CHECK_TIMEOUT_SECONDS
 from imaging_api.utils.xnat_url import xnat_url
 
 # Get download directory
@@ -303,8 +304,8 @@ def get_resource_stats(experiment_id: str, resource_type: str, headers: dict[str
         requests.RequestException: If the request fails or times out.
     """
     url = xnat_url("data", "experiments", experiment_id, "scans", "ALL", "resources", query={"format": "json"})
-    # 5 s, like the session check: a hit holds imaging-api's single event loop for as long as this takes.
-    response = requests.get(url, headers=headers, timeout=5)
+    # Short, like the session check: a hit holds imaging-api's single event loop for as long as this takes.
+    response = requests.get(url, headers=headers, timeout=SESSION_CHECK_TIMEOUT_SECONDS)
     if response.status_code == 404:
         raise NotFoundError(f"XNAT experiment {experiment_id} not found")
     if response.status_code != 200:

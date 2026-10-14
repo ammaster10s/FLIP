@@ -14,12 +14,13 @@ import requests
 from fastapi import HTTPException, status
 
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT
 
 # Bound both calls to XNAT: without a timeout a hung XNAT holds open every request that needs a
 # session. The session check is a one-line answer, so it fails fast and falls through to a login;
 # the login gets the same bound as imaging-api's other metadata calls to XNAT.
 SESSION_CHECK_TIMEOUT_SECONDS = 5
-LOGIN_TIMEOUT_SECONDS = 30
+LOGIN_TIMEOUT_SECONDS = XNAT_REQUEST_TIMEOUT
 
 
 class XnatTokenFactory:
@@ -31,7 +32,7 @@ class XnatTokenFactory:
         self.url = url
         self.username = username
         self.password = password
-        self.xnat_cookie: dict[str, str] = {}
+        self.token = ""
 
     def get_xnat_cookie(self) -> str:
         """
@@ -45,8 +46,8 @@ class XnatTokenFactory:
             HTTPException: If there is an error during the authentication process or if the token cannot be retrieved.
         """
         # Check token validity by making a lightweight request to XNAT
-        if self.is_token_valid(self.xnat_cookie.get("token", "")):
-            return self.xnat_cookie["token"]
+        if self.is_token_valid(self.token):
+            return self.token
 
         # Request a new token from XNAT
         session_url = f"{self.url}/data/JSESSION"
@@ -72,8 +73,7 @@ class XnatTokenFactory:
                 detail=f"Invalid authentication response from XNAT: {response.text}",
             )
 
-        self.xnat_cookie = {"token": token_value}
-
+        self.token = token_value
         return token_value
 
     def is_token_valid(self, token: str) -> bool:

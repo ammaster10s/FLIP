@@ -337,7 +337,7 @@ def test_get_command_info_takes_ids_from_the_sites_dcm2niix_row(mock_get, header
         _available(command_id=1, wrapper_id=3),
     )
 
-    assert get_command_info("TEST", _PIN, headers) == (1, "dcm2niix-scan", 3)
+    assert get_command_info("TEST", _PIN, headers) == (1, 3)
     url = urlsplit(mock_get.call_args[0][0])
     # The site listing: the project's own can come back empty for a project created moments ago.
     assert url.path.endswith("/xapi/commands/available/site")
@@ -420,7 +420,7 @@ def test_get_wrapper_action_key_takes_the_key_xnat_lists_for_the_wrapper(mock_ge
     ]
     mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=actions))
 
-    key = get_wrapper_action_key(5, "dcm2niix-scan", headers)
+    key = get_wrapper_action_key(5, headers)
 
     assert key == f"{_PROVIDER}5"
     assert mock_get.call_args[0][0].endswith("/xapi/events/allactions")
@@ -446,7 +446,7 @@ def test_get_wrapper_action_key_refuses_anything_but_one_match(mock_get, headers
     mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=actions))
 
     with pytest.raises(Exception, match="expected exactly one"):
-        get_wrapper_action_key(5, "dcm2niix-scan", headers)
+        get_wrapper_action_key(5, headers)
 
 
 @patch("imaging_api.services.projects.requests.get")
@@ -454,7 +454,7 @@ def test_get_wrapper_action_key_listing_failure(mock_get, headers):
     mock_get.return_value = MagicMock(status_code=403, text="Forbidden")
 
     with pytest.raises(Exception, match="action listing failed: 403"):
-        get_wrapper_action_key(5, "dcm2niix-scan", headers)
+        get_wrapper_action_key(5, headers)
 
 
 # ===========================================================================
@@ -465,7 +465,7 @@ def test_get_wrapper_action_key_listing_failure(mock_get, headers):
 @patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.get_command_info")
 def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_post, mock_key, headers):
-    mock_cmd_info.return_value = (1, "dcm2niix-scan", 3)
+    mock_cmd_info.return_value = (1, 3)
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=200)
 
@@ -481,7 +481,7 @@ def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_
     assert call_payload["active"] is True
     assert call_payload["name"] == "DICOM-NIfTI Conversion"
     # The key XNAT lists for the wrapper (id 3), not one formatted from the command id (1).
-    mock_key.assert_called_once_with(3, "dcm2niix-scan", headers)
+    mock_key.assert_called_once_with(3, headers)
     assert call_payload["action-key"] == f"{_PROVIDER}3"
 
 
@@ -490,7 +490,7 @@ def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_
 @patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.get_command_info")
 def test_create_project_event_subscription_inactive(mock_cmd_info, mock_put, mock_post, mock_key, headers):
-    mock_cmd_info.return_value = (1, "dcm2niix-scan", 3)
+    mock_cmd_info.return_value = (1, 3)
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=200)
 
@@ -504,7 +504,7 @@ def test_create_project_event_subscription_inactive(mock_cmd_info, mock_put, moc
 @patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.get_command_info")
 def test_create_project_event_subscription_enable_command_failure(mock_cmd_info, mock_put, headers):
-    mock_cmd_info.return_value = (1, "dcm2niix-scan", 3)
+    mock_cmd_info.return_value = (1, 3)
     mock_put.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="Enabling command"):
@@ -516,7 +516,7 @@ def test_create_project_event_subscription_enable_command_failure(mock_cmd_info,
 @patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.get_command_info")
 def test_create_project_event_subscription_failure(mock_cmd_info, mock_put, mock_post, mock_key, headers):
-    mock_cmd_info.return_value = (1, "dcm2niix-scan", 3)
+    mock_cmd_info.return_value = (1, 3)
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
@@ -995,7 +995,7 @@ async def test_delete_project_keeps_a_hostile_id_out_of_the_query(sent_xnat_requ
 def test_command_lookup_is_the_site_listing_with_one_query_value(sent_xnat_requests):
     listing = [{"command-id": 7, "wrapper-id": 7, "wrapper-name": "dcm2niix-scan", "image-name": "img:1.0"}]
     with patch.object(requests.Response, "json", return_value=listing):
-        assert get_command_info(_PROJECT_ID, "img:1.0", {}) == (7, "dcm2niix-scan", 7)
+        assert get_command_info(_PROJECT_ID, "img:1.0", {}) == (7, 7)
 
     parsed = urlsplit(sent_xnat_requests[0].url)
     assert parsed.path == "/xapi/commands/available/site"
@@ -1017,7 +1017,7 @@ def test_command_lookup_never_puts_the_project_id_in_the_url(sent_xnat_requests,
 def test_project_scoped_urls_are_unchanged_for_an_ordinary_project_id(sent_xnat_requests):
     with (
         patch("imaging_api.services.projects.get_project"),
-        patch("imaging_api.services.projects.get_command_info", return_value=(7, "dcm2niix-scan", 7)),
+        patch("imaging_api.services.projects.get_command_info", return_value=(7, 7)),
         patch("imaging_api.services.projects.get_wrapper_action_key", return_value="provider:7"),
         patch.object(requests.Response, "json", return_value={"ResultSet": {"Result": []}}),
     ):

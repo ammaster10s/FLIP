@@ -321,12 +321,10 @@ class CommandInfo(NamedTuple):
 
     Attributes:
         command_id (int): The id of the wrapper's command, which the per-project enable URL names.
-        wrapper_name (str): The wrapper's name (``DCM2NIIX_WRAPPER_NAME``).
         wrapper_id (int): The wrapper's id, which a subscription's action key names.
     """
 
     command_id: int
-    wrapper_name: str
     wrapper_id: int
 
 
@@ -346,15 +344,14 @@ DCM2NIIX_OUTPUT_RESOURCE = "NIFTI"
 _RERUN_CONFIGURE = "Re-run configure-dcm2niix.sh (compose) or the xnat-init job (k8s)"
 
 
-def get_wrapper_action_key(wrapper_id: int, wrapper_name: str, headers: dict[str, str]) -> str:
-    """Returns the event-service action key XNAT offers for a Container Service wrapper.
+def get_wrapper_action_key(wrapper_id: int, headers: dict[str, str]) -> str:
+    """Returns the event-service action key XNAT offers for the dcm2niix wrapper.
 
     ``GET /xapi/events/allactions`` lists one action per wrapper, named after it and keyed
     ``<provider class>:<wrapper id>``; the key is taken from there rather than built here.
 
     Args:
         wrapper_id (int): The wrapper's id, from ``get_command_info``.
-        wrapper_name (str): The wrapper's name, from ``get_command_info``.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -371,12 +368,12 @@ def get_wrapper_action_key(wrapper_id: int, wrapper_name: str, headers: dict[str
     keys = [
         str(action.get("action-key"))
         for action in response.json() or []
-        if action.get("display-name") == wrapper_name
+        if action.get("display-name") == DCM2NIIX_WRAPPER_NAME
         and str(action.get("action-key")).rsplit(":", 1)[-1] == str(wrapper_id)
     ]
     if len(keys) != 1:
         raise Exception(
-            f"XNAT lists {len(keys)} event-service actions for wrapper {wrapper_name!r} (id {wrapper_id}), "
+            f"XNAT lists {len(keys)} event-service actions for wrapper '{DCM2NIIX_WRAPPER_NAME}' (id {wrapper_id}), "
             "expected exactly one, so no DICOM->NIfTI trigger can be created for it."
         )
     return keys[0]
@@ -395,7 +392,7 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        CommandInfo: The command id, and the wrapper's name and id.
+        CommandInfo: The command id and the wrapper id.
 
     Raises:
         Exception: If the listing fails, or holds no single site-enabled dcm2niix wrapper on ``container``.
@@ -427,11 +424,11 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
             f"XNAT's '{DCM2NIIX_WRAPPER_NAME}' wrapper is not enabled site-wide, so project {project_id}'s "
             f"DICOM->NIfTI trigger would be invalid. {_RERUN_CONFIGURE}, which enables it."
         )
-    return CommandInfo(command_id=row["command-id"], wrapper_name=DCM2NIIX_WRAPPER_NAME, wrapper_id=row["wrapper-id"])
+    return CommandInfo(command_id=row["command-id"], wrapper_id=row["wrapper-id"])
 
 
-def enable_wrapper_for_project(project_id: str, command_id: int, wrapper_name: str, headers: dict[str, str]) -> None:
-    """Enables a Container Service wrapper in one project, as project creation does for dcm2niix.
+def enable_wrapper_for_project(project_id: str, command_id: int, headers: dict[str, str]) -> None:
+    """Enables the dcm2niix wrapper in one project, as project creation does.
 
     Enablement is held per wrapper id (container-service 3.8.1 ContainerConfigServiceImpl.java:74-143),
     so a project created before a pre-FLIP#1451 re-registration is enabled only for the deleted wrapper.
@@ -440,19 +437,20 @@ def enable_wrapper_for_project(project_id: str, command_id: int, wrapper_name: s
     Args:
         project_id (str): XNAT project ID.
         command_id (int): The wrapper's command id, from ``get_command_info``.
-        wrapper_name (str): The wrapper's name, from ``get_command_info``.
         headers (dict[str, str]): XNAT authentication headers.
 
     Raises:
         Exception: If XNAT does not answer with 200.
     """
     response = requests.put(
-        xnat_url("xapi", "projects", project_id, "commands", str(command_id), "wrappers", wrapper_name, "enabled"),
+        xnat_url(
+            "xapi", "projects", project_id, "commands", str(command_id), "wrappers", DCM2NIIX_WRAPPER_NAME, "enabled"
+        ),
         headers=headers,
     )
     if response.status_code != 200:
         raise Exception(
-            f"Error: Enabling command {command_id} ('{wrapper_name}') for project '{project_id}' failed: "
+            f"Error: Enabling command {command_id} ('{DCM2NIIX_WRAPPER_NAME}') for project '{project_id}' failed: "
             f"{response.status_code} - {_bounded_body(response.text)}"
         )
 
@@ -475,14 +473,14 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     Raises:
         Exception: If the subscription creation fails.
     """
-    command_id, wrapper_name, wrapper_id = get_command_info(project_id, container, headers)
+    command_id, wrapper_id = get_command_info(project_id, container, headers)
 
     # Enable the command at the project level — required by XNAT to validate the action key
     # in project-scoped event subscriptions
-    enable_wrapper_for_project(project_id, command_id, wrapper_name, headers)
+    enable_wrapper_for_project(project_id, command_id, headers)
 
     # The key names the wrapper, not the command: formatting the command id only worked while the two were equal.
-    action_key = get_wrapper_action_key(wrapper_id, wrapper_name, headers)
+    action_key = get_wrapper_action_key(wrapper_id, headers)
 
     subscription_payload = {
         "name": DCM2NIIX_SUBSCRIPTION_NAME,

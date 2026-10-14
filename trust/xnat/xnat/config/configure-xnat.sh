@@ -247,6 +247,13 @@ xnat_curl() {
   fi
 }
 
+# An id XNAT returns goes into a URL. XNAT generates it, but check it is a plain number before using it.
+require_numeric_id() {  # require_numeric_id <what XNAT returned> <id>
+  [[ "$2" =~ ^[0-9]+$ ]] && return
+  echo "ERROR: $1 with id '$2'" >&2
+  exit 1
+}
+
 # Which admin password this XNAT accepts decides the mode. FIRST BOOT: the initial password still
 # authenticates — activate with it, then rotate it. CONVERGE: only the configured (rotated) password
 # does — an instance a prior run configured, or one just migrated from 1.9, which re-reports itself
@@ -557,11 +564,7 @@ scp_keep=$(printf '%s' "$response" | jq -c --arg ae "${XNAT_AETITLE}" --argjson 
 scp_keep_id=""
 if [[ -n "$scp_keep" ]]; then
     scp_keep_id=$(printf '%s' "$scp_keep" | jq -r '.id')
-    # The id goes into a URL. XNAT generates it, but check it is a plain number before using it.
-    if ! [[ "$scp_keep_id" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: XNAT listed the DICOM SCP receiver with id '${scp_keep_id}'" >&2
-        exit 1
-    fi
+    require_numeric_id "XNAT listed the DICOM SCP receiver" "$scp_keep_id"
 fi
 
 stale_ids=$(printf '%s' "$response" | jq -r --argjson keep "${scp_keep_id:-null}" "$scp_jq_defs"'
@@ -570,10 +573,7 @@ stale_ids=$(printf '%s' "$response" | jq -r --argjson keep "${scp_keep_id:-null}
 scp_written=false
 while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
     [[ -n "$scp_receiver_id" ]] || continue
-    if ! [[ "$scp_receiver_id" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: XNAT listed a DICOM SCP receiver with id '${scp_receiver_id}'" >&2
-        exit 1
-    fi
+    require_numeric_id "XNAT listed a DICOM SCP receiver" "$scp_receiver_id"
     echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
     xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
         -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
@@ -843,11 +843,7 @@ fi
 avail_wrote=false
 while IFS=$'\t' read -r avail_op avail_day avail_id avail_detail; do
   [[ -n "$avail_op" ]] || continue
-  # The id goes into a URL. XNAT generates it, but check it is a plain number before using it.
-  if [[ "$avail_op" != "create" ]] && ! [[ "$avail_id" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: DQR reported an availability interval for ${avail_day} with id '${avail_id}'" >&2
-    exit 1
-  fi
+  [[ "$avail_op" == "create" ]] || require_numeric_id "DQR reported an availability interval for ${avail_day}" "$avail_id"
   case "$avail_op" in
     remove|remove-extra)
       if [[ "$avail_op" == "remove" ]]; then

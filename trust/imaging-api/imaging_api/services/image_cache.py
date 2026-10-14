@@ -187,18 +187,6 @@ def clear_resource(accession_dir_abs: str, assessor_type: str, resource_type: st
         shutil.rmtree(target_abs, onexc=_ignore_missing)
 
 
-def remove_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:
-    """
-    Removes one completeness sentinel; a no-op if it does not exist.
-
-    Args:
-        accession_dir_abs (str): Absolute accession directory the sentinel lives in.
-        assessor_type (str): The assessor type of the sentinel to remove.
-        resource_type (str): The resource type of the sentinel to remove.
-    """
-    Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).unlink(missing_ok=True)
-
-
 def invalidate_accession(base_dir: str, central_hub_project_id: str, accession_id: str) -> int:
     """
     Removes every completeness sentinel for (project, accession) across all net directories.

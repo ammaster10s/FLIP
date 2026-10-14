@@ -21,7 +21,6 @@ from imaging_api.services.image_cache import (
     clear_resource,
     invalidate_accession,
     read_sentinel,
-    remove_sentinel,
     sentinel_path,
     write_sentinel,
 )
@@ -67,7 +66,7 @@ class TestSentinelPath:
             sentinel_path(str(tmp_path), "../" * 20 + "etc", "passwd")
 
 
-# ── write_sentinel / remove_sentinel ──
+# ── write_sentinel ──
 
 
 class TestWriteRemoveSentinel:
@@ -100,14 +99,6 @@ class TestWriteRemoveSentinel:
     def test_anything_but_a_record_reads_as_none(self, tmp_path, content):
         (tmp_path / f"{SENTINEL_PREFIX}scan-NIFTI").write_text(content)
         assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
-
-    def test_remove_is_idempotent(self, tmp_path):
-        accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
-        os.makedirs(accession_dir)
-        write_sentinel(accession_dir, "scan", "NIFTI", RECORD)
-        remove_sentinel(accession_dir, "scan", "NIFTI")
-        remove_sentinel(accession_dir, "scan", "NIFTI")  # second removal must not raise
-        assert not os.path.exists(os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI"))
 
 
 # ── invalidate_accession ──

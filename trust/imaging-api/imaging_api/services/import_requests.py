@@ -210,6 +210,22 @@ def _updated_before(horizon_ms: int, request: dict[str, Any]) -> bool:
     return isinstance(t := request.get("timestamp"), int) and t < horizon_ms
 
 
+def _dqr_requests(
+    listing: str,
+    project_id: str,
+    headers: dict[str, str],
+    stop_after: Callable[[dict[str, Any]], bool] | None = None,
+) -> list[PacsRequest]:
+    """Lists the project's requests in DQR's import ``listing`` (``queue`` or ``history``), newest first."""
+    records = _project_records(
+        lambda page_number: _dqr_page(listing, page_number, headers),
+        lambda request: request.get("xnatProject") == project_id,
+        f"DQR import {listing}",
+        stop_after,
+    )
+    return [PacsRequest.model_validate(request) for request in records]
+
+
 def get_queued_import_requests(project_id: str, headers: dict[str, str]) -> list[PacsRequest]:
     """Lists the project's requests in DQR's import queue (``GET /xapi/dqr/import/queue``).
 
@@ -223,13 +239,9 @@ def get_queued_import_requests(project_id: str, headers: dict[str, str]) -> list
     Raises:
         XnatFetchError: If the queue cannot be read.
     """
-    queue = _project_records(
-        lambda page_number: _dqr_page("queue", page_number, headers),
-        lambda request: request.get("xnatProject") == project_id,
-        "DQR import queue",
-    )
+    queue = _dqr_requests("queue", project_id, headers)
     logger.info(f"Found {len(queue)} queued PACS requests for project {project_id}")
-    return [PacsRequest.model_validate(request) for request in queue]
+    return queue
 
 
 def get_executed_import_requests(project_id: str, headers: dict[str, str]) -> list[PacsRequest]:
@@ -251,14 +263,11 @@ def get_executed_import_requests(project_id: str, headers: dict[str, str]) -> li
         XnatFetchError: If the history, or the project's creation date, cannot be read.
     """
     horizon_ms = _history_horizon_ms(project_id, headers)
-    history = _project_records(
-        lambda page_number: _dqr_page("history", page_number, headers),
-        lambda request: request.get("xnatProject") == project_id,
-        "DQR import history",
-        None if horizon_ms is None else partial(_updated_before, horizon_ms),
+    history = _dqr_requests(
+        "history", project_id, headers, None if horizon_ms is None else partial(_updated_before, horizon_ms)
     )
     logger.info(f"Found {len(history)} executed PACS requests for project {project_id}")
-    return [PacsRequest.model_validate(request) for request in history]
+    return history
 
 
 def get_direct_archive_sessions(project_id: str, headers: dict[str, str]) -> list[DirectArchiveSession]:

@@ -217,7 +217,8 @@ def test_the_init_job_delegates_dcm2niix_to_configure_dcm2niix() -> None:
     assert "cd /data/xnat/config" in container
     assert "bash configure-dcm2niix.sh" in container
     image = next(line for line in container.splitlines() if line.strip().startswith("image:"))
-    assert ".Values.xnat.web.image.repository" in image, f"not run from the xnat-web image: {image.strip()}"
+    assert "$xnatWebImage" in image, f"not run from the xnat-web image: {image.strip()}"
+    assert re.search(r"\$xnatWebImage := printf .*\.Values\.xnat\.web\.image\.repository", text)
     assert re.search(r'- name: XNAT_CS_BACKEND\n\s+value: "kubernetes"', container), "the backend switch is not set"
     for variable in ("XNAT_URL", "XNAT_CS_PVC_NAME", "XNAT_ADMIN_USER"):
         assert f"- name: {variable}\n" in container, f"configure-dcm2niix.sh reads {variable}, which the Job never sets"

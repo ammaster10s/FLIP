@@ -83,7 +83,7 @@ class TestGetXnatCookie:
     @patch("imaging_api.utils.xnat_token.requests.post")
     @patch("imaging_api.utils.xnat_token.requests.get")
     def test_valid_session_is_reused_without_a_login(self, mock_get, mock_post, factory):
-        factory.xnat_cookie = {"token": CACHED_TOKEN}
+        factory.token = CACHED_TOKEN
         mock_get.return_value = _response(200, USERNAME)
 
         assert factory.get_xnat_cookie() == CACHED_TOKEN
@@ -98,7 +98,7 @@ class TestGetXnatCookie:
     @patch("imaging_api.utils.xnat_token.requests.post")
     @patch("imaging_api.utils.xnat_token.requests.get")
     def test_unusable_session_triggers_exactly_one_login(self, mock_get, mock_post, factory, session_check):
-        factory.xnat_cookie = {"token": CACHED_TOKEN}
+        factory.token = CACHED_TOKEN
         if isinstance(session_check, Exception):
             mock_get.side_effect = session_check
         else:
@@ -108,7 +108,7 @@ class TestGetXnatCookie:
         assert factory.get_xnat_cookie() == NEW_TOKEN
         mock_get.assert_called_once()
         mock_post.assert_called_once_with(LOGIN_URL, auth=(USERNAME, PASSWORD), timeout=LOGIN_TIMEOUT_SECONDS)
-        assert factory.xnat_cookie == {"token": NEW_TOKEN}
+        assert factory.token == NEW_TOKEN
 
     @patch("imaging_api.utils.xnat_token.requests.post")
     @patch("imaging_api.utils.xnat_token.requests.get")
@@ -136,7 +136,7 @@ class TestGetXnatCookie:
         assert exc_info.value.status_code == 504
         assert exc_info.value.detail.startswith("Failed to authenticate with XNAT: ")
         assert mock_post.call_args.kwargs["timeout"] == LOGIN_TIMEOUT_SECONDS
-        assert factory.xnat_cookie == {}
+        assert factory.token == ""
 
     @patch("imaging_api.utils.xnat_token.requests.post")
     @patch("imaging_api.utils.xnat_token.requests.get")
@@ -169,7 +169,7 @@ class TestSessionTokenIsNeverLogged:
     @patch("imaging_api.utils.xnat_token.requests.get")
     def test_no_part_of_either_token_reaches_the_log(self, mock_get, mock_post, factory, session_check, caplog):
         caplog.set_level(logging.DEBUG)
-        factory.xnat_cookie = {"token": CACHED_TOKEN}
+        factory.token = CACHED_TOKEN
         if isinstance(session_check, Exception):
             mock_get.side_effect = session_check
         else:

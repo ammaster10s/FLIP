@@ -140,14 +140,9 @@ def test_import_study_request_deduplicates_studies():
     assert import_request.studies[0].accession_number == "SecondAccessionNumber"
 
 
-def test_study_query_names_no_pacs_unless_given_one():
-    """Unset, the query body has no pacsId, so DQR uses its default PACS; a caller can still name one."""
-    assert StudyQuery(accessionNumber="ACC1").model_dump(by_alias=True, exclude_none=True) == {
-        "accessionNumber": "ACC1",
-        "modality": "",
-    }
-    named = StudyQuery(accessionNumber="ACC1", pacsId=5).model_dump(by_alias=True, exclude_none=True)
-    assert named["pacsId"] == 5
+def test_study_query_names_no_pacs():
+    """The query body has no pacsId, so DQR uses its default PACS."""
+    assert StudyQuery(accessionNumber="ACC1").model_dump(by_alias=True) == {"accessionNumber": "ACC1", "modality": ""}
 
 
 def test_import_study_request_has_no_static_pacs_default():

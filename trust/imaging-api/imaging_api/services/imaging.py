@@ -203,14 +203,12 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
     Raises:
         Exception: If there is an error during the query request.
     """
-    # No pacsId, so DQR queries its default PACS. exclude_none drops the key: DQR would parse a null
-    # pacsId as a number and fail.
     study_query = StudyQuery(accessionNumber=accession_number)
 
     response = requests.post(
         xnat_url("xapi", "dqr", "query", "studies"),
         headers=headers,
-        json=study_query.model_dump(by_alias=True, exclude_none=True),
+        json=study_query.model_dump(by_alias=True),
         timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
     # Status and reason only. The DQR query response body is a study list carrying patient id, name,

@@ -47,6 +47,7 @@ from imaging_api.services.projects import (
     DCM2NIIX_INPUT_RESOURCE,
     DCM2NIIX_OUTPUT_RESOURCE,
     DCM2NIIX_ROOT_ELEMENT,
+    DCM2NIIX_WRAPPER_NAME,
     _bounded_body,
     enable_wrapper_for_project,
     get_command_info,
@@ -348,20 +349,18 @@ def run(
     waiting = sum(len(ready) for _, ready, _ in to_launch)
     if waiting:
         try:
-            command_id, wrapper_name, wrapper_id = get_command_info(
-                to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers
-            )
+            command_id, wrapper_id = get_command_info(to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers)
         except Exception as exc:  # e.g. the wrapper runs another image than this imaging-api's pin
             tally["failed"] += waiting
             out(f"Cannot launch {waiting}: {exc}")
             to_launch = []
         if to_launch and not args.launch:
             tally["would"] += waiting
-            out(f"Would launch {waiting} ('{wrapper_name}', wrapper {wrapper_id}).")
+            out(f"Would launch {waiting} ('{DCM2NIIX_WRAPPER_NAME}', wrapper {wrapper_id}).")
             to_launch = []
     for project, ready, before in to_launch:
         try:
-            enable_wrapper_for_project(project.ID, command_id, wrapper_name, headers)
+            enable_wrapper_for_project(project.ID, command_id, headers)
             bulk_id, refused = bulk_launch(project.ID, wrapper_id, ready, headers)
         except Exception as exc:
             tally["failed"] += len(ready)
@@ -415,7 +414,10 @@ def _follow(
     while clock() < deadline and any(s in (NO_CONTAINER, CONVERTING) for s in state.values()):
         sleep(POLL_SECONDS)
         for project_id in dict.fromkeys(p for p, _, _ in launched):
-            mine = [(scan, before) for p, scan, before in launched if p == project_id]
+            # A converted scan stays converted, so only the rest are read again.
+            mine = [(scan, b) for p, scan, b in launched if p == project_id and state[scan.uri] != CONVERTED]
+            if not mine:
+                continue
             try:
                 by_scan = containers_by_scan(project_id, headers)  # before the scans, as in run()
                 converted = {

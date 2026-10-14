@@ -587,9 +587,7 @@ reload-governance: check-governance
 # ACTIVE/INACTIVE/REST; see trust/xnat/README.md, "Restoring missing DICOM->NIfTI triggers".
 restore-nifti-triggers:
 	$(require_kit_file)
-	@c=$(call trust_container,imaging-api); \
-	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
-	docker exec "$$c" python -m imaging_api.scripts.restore_nifti_triggers \
+	@$(call imaging_api_script,restore_nifti_triggers) \
 	  $(foreach id,$(ACTIVE),--active $(id)) $(foreach id,$(INACTIVE),--inactive $(id)) \
 	  $(if $(REST),--rest $(REST)) $(if $(DRY_RUN),--dry-run)
 
@@ -598,9 +596,7 @@ restore-nifti-triggers:
 # seed). See trust/deploy/helm/TROUBLESHOOTING.md §2.3f.
 reconvert-nifti:
 	$(require_kit_file)
-	@c=$(call trust_container,imaging-api); \
-	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
-	docker exec "$$c" python -m imaging_api.scripts.reconvert_nifti \
+	@$(call imaging_api_script,reconvert_nifti) \
 	  $(foreach id,$(PROJECT),--project $(id)) $(if $(LAUNCH),--launch) $(if $(WAIT),--wait $(WAIT)) \
 	  $(if $(MAX_ATTEMPTS),--max-attempts $(MAX_ATTEMPTS)) $(if $(RELAUNCH_UNFINISHED),--relaunch-unfinished)
 
@@ -763,6 +759,10 @@ TRUST_DATA_REVISION = $(or $(HF_TRUST_DATA_REVISION),$(shell tr -d ' \n\r\t' < .
 # The containers are found by their compose labels rather than by name, so this works
 # on a second FLIP_INSTANCE too (container names are never set, see AGENTS.md).
 trust_container = $$(docker ps -q -f label=com.docker.compose.project=$(TRUST_PROJECT) -f label=com.docker.compose.service=$(1) | head -1)
+# Runs a module of imaging_api.scripts in this trust's imaging-api container: $(call imaging_api_script,<module>) <args>
+imaging_api_script = c=$(call trust_container,imaging-api); \
+	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
+	docker exec "$$c" python -m imaging_api.scripts.$(1)
 
 # omop-db is ready once its FINAL server answers over TCP: during a first-start init the
 # entrypoint runs a temporary server on the unix socket only, so a TCP pg_isready stays
