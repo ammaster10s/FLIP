@@ -190,10 +190,10 @@ environment of the one-off ``flip-api`` Fargate task
 (``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
 comprehension that silently skips absent keys), and that task definition
 (``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
-``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at
+``FL_BACKEND`` of the ten: ``AES_KEY_BASE64`` is read from Secrets Manager at
 use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
-image registries/tags, the two kit dates, ``NLB_SUBDOMAIN`` and
-``FL_SERVER_PORT`` are not in the task definition at all. Those ten stay at their
+image tags, the two kit dates, ``NLB_SUBDOMAIN`` and
+``FL_SERVER_PORT`` are not in the task definition at all. Those eight stay at their
 placeholder until the next step. The hub stores only SHA-256 hashes of the
 credentials and cannot re-emit them, so the credentials half is write-once —
 re-register to rotate.
