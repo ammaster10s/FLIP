@@ -170,6 +170,7 @@ COMPLETE_ENV = {
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -221,6 +222,9 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
         ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
         ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
+        # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
+        ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
+        ({"MANAGE_DNS": "yes"}, "MANAGE_DNS must be true or false"),
     ],
 )
 def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None], named: str, tmp_path: Path) -> None:

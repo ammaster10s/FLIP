@@ -44,6 +44,7 @@ STUB_ENV = {
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",

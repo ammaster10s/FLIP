@@ -149,6 +149,9 @@ ifeq ($(LZA_VPC_NAME),)
 $(error "For staging deployments, LZA_VPC_NAME must be set in $(MAIN_ENV_FILE) (the Name tag of the staging platform VPC)")
 endif
 endif
+# No default either way: true on an account without a Route 53 zone fails the zone lookup, and
+# false on one with it plans the certificate and its records away.
+$(if $(filter true false,$(MANAGE_DNS)),,$(error MANAGE_DNS must be true or false in $(MAIN_ENV_FILE) — false while the account has no Route 53 hosted zone (FLIP#749); got '$(MANAGE_DNS)'))
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
@@ -218,8 +221,7 @@ export TF_VAR_AWS_REGION=${AWS_REGION}
 # DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
 # (no custom certs/records) and flips it to true once the zone exists there.
-# Unset ⇒ true.
-MANAGE_DNS ?= true
+# Required, no default (the env guards above).
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}

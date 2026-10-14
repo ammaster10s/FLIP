@@ -850,6 +850,7 @@ account reached as `lza-stag`.
 | `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable |
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
+| `MANAGE_DNS` | **required**, `true` or `false` (`false` while the account has no Route 53 zone) | the same |
 
 Everything below reads naturally for either value; where it says `HUB=prod`, staging substitutes `HUB=stag` and
 its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL); the raw

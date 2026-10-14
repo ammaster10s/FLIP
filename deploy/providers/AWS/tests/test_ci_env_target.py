@@ -50,6 +50,7 @@ HUBS = ["stag", "prod"]
 # purpose: one stub, one maintenance point.
 STUB_ENV = {
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
