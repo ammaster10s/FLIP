@@ -129,7 +129,7 @@ variable "AES_KEY_BASE64" {
 }
 
 variable "deploy_trust_ec2" {
-  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
+  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts as usual."
   type        = bool
   default     = true
 }

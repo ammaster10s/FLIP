@@ -23,10 +23,6 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
   }
 }
 
@@ -709,7 +705,7 @@ moved {
 module "trust_ec2" {
   # Optional: a hub-only deployment (var.deploy_trust_ec2=false, `make
   # full-deploy-hub-only`) provisions no cloud trust host — every trust then
-  # runs on-prem and joins via register-trusts + allow-local-trust-nlb.
+  # runs on-prem and joins via register-trusts.
   count  = var.deploy_trust_ec2 ? 1 : 0
   source = "./modules/trust_ec2"
 

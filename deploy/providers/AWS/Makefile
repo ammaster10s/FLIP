@@ -498,19 +498,6 @@ destroy-cert: ## Destroy only the ACM certificate (use with caution - will break
 	@$(_TF) destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
-.PHONY: plan-cloudfront-certs
-plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1)
-	@echo "📋 Planning CloudFront viewer certificate..."
-	@$(_TF) plan \
-		-target=aws_acm_certificate.flip_cloudfront \
-		-out=plan-cloudfront-certs.tfplan
-
-.PHONY: apply-cloudfront-certs
-apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1)
-	@echo "🔒 Applying CloudFront viewer certificate (Step 1/2 for CloudFront)..."
-	@$(_TF) apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
-	@echo "✅ Certificate created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
-
 .PHONY: refresh
 refresh: ## Refresh Terraform state to sync with actual AWS resources
 	@echo "🔄 Refreshing Terraform state..."
@@ -522,11 +509,6 @@ refresh: ## Refresh Terraform state to sync with actual AWS resources
 apply: ## Apply Terraform configuration to update AWS infrastructure (with environment file loaded)
 	@echo "🛠️ Applying Terraform configuration..."
 	@$(_TF) apply plan.tfplan
-
-.PHONY: import-cloudfront
-import-cloudfront: ## Import existing CloudFront distribution into terraform state
-	@echo "🔗 Importing existing CloudFront distribution..."
-	@$(_TF) import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
 
 .PHONY: forward-trust
 forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+C to stop)
@@ -581,7 +563,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 # a pointer to the on-prem flow instead of an obscure SSH/inventory error.
 .PHONY: check-trust-ec2-enabled
 check-trust-ec2-enabled:
-	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP + Orthanc from the canonical dataset, then load the vocabulary (re-run after a data version bump; requires KIT=)
@@ -903,8 +885,8 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
-	@# There is no workload distribution to invalidate (cloudfront.tf gates it off; the
-	@# networking account's edge distribution serves the bucket) and no cross-account
+	@# There is no workload distribution to invalidate (the networking account's edge
+	@# distribution serves the bucket) and no cross-account
 	@# invalidation permission -- BY DESIGN (FLIP#749): the hashed bundles are immutable
 	@# and index.html/window.js carry no-cache metadata, so a deploy is visible on the
 	@# next index.html fetch with no invalidation at all.
@@ -1118,8 +1100,6 @@ endif
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
 	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
-	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
-	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
 .PHONY: down
 down:
