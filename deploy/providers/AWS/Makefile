@@ -15,6 +15,7 @@
 # Makefile, an unset HUB is no estate here: every goal but the static ones below
 # refuses to run without HUB=stag|prod (FLIP#1377). Every estate is an LZA one; see
 # "Deploying onto an LZA estate" in README.md.
+READS_HUB_ENV_FILE := yes
 include ../../env_mode.mk
 
 # Goals that need no env file and call no AWS API. When every goal on the command line is one of

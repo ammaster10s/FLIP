@@ -23,7 +23,9 @@
 # deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
 # targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
 # name the AWS Makefile and register-trusts.sh use; KIT= finds a kit under its
-# pre-FLIP#1479 name too (env_mode.mk's kit_file).
+# pre-FLIP#1479 name too (env_mode.mk's kit_file). The hub env-file check runs for every
+# goal but the on-prem trust verbs, which read only the trust's kit.
+READS_HUB_ENV_FILE := $(if $(MAKECMDGOALS),$(filter-out up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust,$(MAKECMDGOALS)),yes)
 include deploy/env_mode.mk
 MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
@@ -43,6 +45,12 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
+# Staging is the LZA staging account, whose env file names its VPC (the AWS Makefile requires
+# LZA_VPC_NAME too). One without it is the retired self-contained account's .env.stag, and its
+# values must not reach a kit (FLIP#1479).
+ifneq ($(and $(READS_HUB_ENV_FILE),$(filter stag,$(ENV))),)
+$(if $(strip $(LZA_VPC_NAME)),,$(error $(MAIN_ENV_FILE) sets no LZA_VPC_NAME: it is not the LZA staging hub's env file. A .env.stag left from the retired self-contained staging account must be deleted))
+endif
 endif
 
 include deploy/fl_backend.mk

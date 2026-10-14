@@ -337,6 +337,32 @@ class MakeKitSelection(unittest.TestCase):
                 result = self.make("down-fl-clients-kit", "KIT=SITE", "HUB=prod", subdir="trust")
                 assert (result.returncode == 0) == allowed, result.stdout + result.stderr
 
+    def test_trust_commands_ignore_an_old_named_hub_env_file(self):
+        """They read only the kit, so a hub admin's .env.lza-prod must not stop them; a hub command still refuses."""
+        self.write_kits(".env.SITE.prod")
+        (self.root / ".env.lza-prod").write_text("")
+        self.check_selected(".env.SITE.prod", "prod")
+        self.run_make("upgrade-onprem-trust", "prod", dry=True)
+        for target, subdir in (("down-fl-clients-kit", "trust"), ("upgrade-trust-k8s", "trust/deploy/helm")):
+            with self.subTest(target=target):
+                result = self.make(target, "KIT=SITE", "HUB=prod", dry=True, subdir=subdir)
+                assert result.returncode == 0, result.stdout + result.stderr
+        result = self.make("sync-trust-kits", "HUB=prod", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert ".env.lza-prod is the hub env file's pre-FLIP#1479 name" in result.stderr, result.stderr
+
+    def test_a_staging_hub_env_file_must_name_the_lza_vpc(self):
+        """A .env.stag left from the retired self-contained staging account must not reach a kit."""
+        self.write_kits(".env.SITE.stag")
+        env_file = self.root / ".env.stag"
+        env_file.write_text("CENTRAL_HUB_API_URL=https://retired.example/api\n")
+        result = self.make("sync-trust-kits", "HUB=stag", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert ".env.stag sets no LZA_VPC_NAME" in result.stderr, result.stderr
+        env_file.write_text("LZA_VPC_NAME=probe-vpc\n")
+        result = self.make("sync-trust-kits", "HUB=stag", dry=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+
     def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
         self.check_selected(".env.SITE.prod")
 

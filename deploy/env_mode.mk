@@ -58,10 +58,12 @@ OLD_ENV_NAMES := $(if $(filter prod,$(ENV)),lza-prod production,$(if $(filter st
 OLD_KIT_ENVS := $(if $(filter prod,$(ENV)),production lza-prod,$(if $(filter stag,$(ENV)),lza-stag))
 
 # A hub env file under an old name, beside .env.$(ENV) or instead of it, stops make: two
-# candidates is how a stale AES key nearly reached a site's kit. Not checked when
-# MAIN_ENV_FILE names the file outright (the root Makefile passes it on to its sub-makes).
+# candidates is how a stale AES key nearly reached a site's kit. Checked only for the
+# Makefiles that read the hub env file (they set READS_HUB_ENV_FILE before including this
+# one; the trust-side ones never read it), and not when the command line names the file
+# (MAIN_ENV_FILE=…).
 _REPO_ROOT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))../
-ifneq ($(and $(IS_DEPLOYED),$(filter undefined,$(origin MAIN_ENV_FILE))),)
+ifneq ($(and $(READS_HUB_ENV_FILE),$(IS_DEPLOYED),$(filter-out command line,$(origin MAIN_ENV_FILE))),)
 _HUB_ENV_FILES := $(patsubst $(_REPO_ROOT_DIR)%,%,$(wildcard $(addprefix $(_REPO_ROOT_DIR).env.,$(ENV) $(OLD_ENV_NAMES))))
 ifneq ($(word 2,$(_HUB_ENV_FILES)),)
 $(error $(_HUB_ENV_FILES) are all hub env files for HUB=$(HUB) (FLIP#1479): keep the one holding the live values as $(ENV_FILE_NAME) and delete the others)

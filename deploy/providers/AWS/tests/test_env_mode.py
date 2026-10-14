@@ -35,6 +35,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ENV_MODE_MK = REPO_ROOT / "deploy" / "env_mode.mk"
 AWS_DIR = Path(__file__).resolve().parents[1]
+#: The Makefiles that read the hub env file, and what each sets before including env_mode.mk.
+HUB_ENV_MAKEFILES = (
+    "Makefile",
+    "deploy/providers/AWS/Makefile",
+    "flip-ui/Makefile",
+    "fl-services/nvflare/Makefile",
+    "fl-services/flower/Makefile",
+)
+READS = "READS_HUB_ENV_FILE=yes"
 
 _PROBE = """\
 .DEFAULT_GOAL := __probe
@@ -182,7 +191,7 @@ def test_a_sweep_names_the_old_kits_it_skips_in_one_line(root: Path, tmp_path: P
 def test_an_old_named_hub_env_file_is_refused(root: Path, hub: str, present: list[str], message: str) -> None:
     for name in present:
         (root / name).touch()
-    result = _run(root, f"HUB={hub}")
+    result = _run(root, f"HUB={hub}", READS)
     assert result.returncode != 0
     assert message in result.stderr, result.stderr
 
@@ -190,16 +199,37 @@ def test_an_old_named_hub_env_file_is_refused(root: Path, hub: str, present: lis
 @pytest.mark.parametrize(
     ("variables", "present"),
     [
-        (("HUB=prod",), [".env.prod", ".env.lza-stag", ".env.stag"]),
-        ((), [".env.development", ".env.lza-prod", ".env.production"]),
-        (("HUB=prod", "MAIN_ENV_FILE=.env.prod"), [".env.prod", ".env.lza-prod"]),
+        (("HUB=prod", READS), [".env.prod", ".env.lza-stag", ".env.stag"]),
+        ((READS,), [".env.development", ".env.lza-prod", ".env.production"]),
+        (("HUB=prod", READS, "MAIN_ENV_FILE=.env.prod"), [".env.prod", ".env.lza-prod"]),
+        # The trust-side Makefiles never read a hub env file, so an admin box's old one must not stop them.
+        (("HUB=prod",), [".env.prod", ".env.lza-prod"]),
     ],
 )
 def test_the_hub_env_check_stays_out_of_the_way(root: Path, variables: tuple[str, ...], present: list[str]) -> None:
-    """Another hub's files, development, or a MAIN_ENV_FILE naming the file outright pass."""
+    """Another hub's files, development, a MAIN_ENV_FILE named on the command line, or a Makefile
+    that reads no hub env file pass."""
     for name in present:
         (root / name).touch()
     assert _run(root, *variables).returncode == 0
+
+
+def test_an_exported_main_env_file_does_not_switch_the_check_off(root: Path) -> None:
+    """The Makefiles load .env.<hub> whatever the environment says, so the environment cannot vouch for it."""
+    for name in (".env.prod", ".env.lza-prod"):
+        (root / name).touch()
+    result = _run(root, "HUB=prod", READS, env={"MAIN_ENV_FILE": ".env.prod"})
+    assert result.returncode != 0
+    assert "keep the one holding the live values as .env.prod" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("makefile", HUB_ENV_MAKEFILES)
+def test_a_makefile_that_reads_the_hub_env_file_opts_in_and_exports_real_keys_only(makefile: str) -> None:
+    """`sed 's/=.*//'` also emits `# KEY=`, and a bare `export KEY` defines KEY empty, defeating `KEY ?=`."""
+    text = (REPO_ROOT / makefile).read_text()
+    assert re.search(r"^READS_HUB_ENV_FILE :=.*\ninclude .*env_mode\.mk$", text, re.M), makefile
+    assert "export $(shell sed -n 's/^[[:space:]]*\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'" in text, makefile
+    assert "export $(shell sed 's/=.*//'" not in text, makefile
 
 
 def test_kit_hint_names_the_rename(root: Path) -> None:
