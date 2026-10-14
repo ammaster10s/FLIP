@@ -22,14 +22,14 @@ import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
 from imaging_api.config import get_settings
 from imaging_api.routers.schemas import Project
-from imaging_api.scripts.reconvert_nifti import POLL_SECONDS, run
+from imaging_api.scripts.reconvert_nifti import POLL_SECONDS, run, triggers_by_project
 from imaging_api.services.projects import DCM2NIIX_SUBSCRIPTION_NAME
 
 HUB_A = "0b9a4c3e-1d2f-4a5b-8c6d-7e8f9a0b1c2d"
@@ -77,7 +77,6 @@ class FakeXnat:
         self.triggers: list[dict[str, Any]] = []
         self.outcomes: dict[str, list[str]] = {}  # scan URI -> what each launch does: ok | fail | hang | lost
         self.launches: list[tuple[str, int, list[str]]] = []  # (project, wrapper id, targets) per bulk launch
-        self.enabled: list[str] = []
         self.image = get_settings().DCM2NIIX_IMAGE
         self.refuse: set[str] = set()  # targets a bulk launch reports as failures
         self.errors: dict[str, int] = {}  # path -> how many more times it answers 500
@@ -170,13 +169,6 @@ class FakeXnat:
             return Response(200, [row])
         raise AssertionError(f"unexpected GET {path}")
 
-    def put(self, url: str, headers: Any = None, **_: Any) -> Response:
-        path, _ = self._split(url)
-        self.calls.append(("PUT", path))
-        assert path.endswith(f"/commands/{COMMAND_ID}/wrappers/dcm2niix-scan/enabled"), path
-        self.enabled.append(path.split("/")[3])
-        return Response(200, None, "")
-
     def post(self, url: str, headers: Any = None, **kwargs: Any) -> Response:
         path, _ = self._split(url)
         self.calls.append(("POST", path))
@@ -209,7 +201,7 @@ def xnat() -> Iterator[FakeXnat]:
     fake = FakeXnat()
     with (
         patch("requests.get", side_effect=fake.get),
-        patch("requests.put", side_effect=fake.put),
+        patch("requests.put", side_effect=AssertionError("reconvert-nifti makes no PUT")),
         patch("requests.post", side_effect=fake.post),
     ):
         yield fake
@@ -264,8 +256,6 @@ def test_launch_converts_them_in_one_bulk_launch_per_project_and_follows_them(xn
     assert code == 0, lines
     assert xnat.launches == [("XA", WRAPPER_ID, [uri("E1", "1"), uri("E1", "2")]), ("XB", WRAPPER_ID, [uri("E2", "1")])]
     assert xnat.calls.count(("GET", SITE_LISTING)) == 1, "the wrapper is the site's: one lookup per run"
-    enable = xnat.calls.index(("PUT", f"/xapi/projects/XA/commands/{COMMAND_ID}/wrappers/dcm2niix-scan/enabled"))
-    assert enable < xnat.calls.index(("POST", f"/xapi/projects/XA/wrappers/{WRAPPER_ID}/root/scan/bulklaunch"))
     assert all(xnat.sessions["E1"]["scans"][s] == {"DICOM", "NIFTI"} for s in ("1", "2"))
     assert "XA: launched 2 (bulk launch bulk-svc123)." in lines
     assert waited == POLL_SECONDS
@@ -451,7 +441,6 @@ def test_a_wrapper_on_another_image_is_named_once_and_nothing_is_launched(xnat):
 
     assert code == 1
     assert xnat.launches == []
-    assert xnat.enabled == []
     assert (
         sum(
             line.startswith("Cannot launch 2: XNAT has 0 'dcm2niix-scan' wrappers on the pinned")
@@ -510,3 +499,17 @@ def test_an_unknown_or_foreign_project_launches_nothing(xnat, argv):
 def test_bounds_are_validated(argv):
     with pytest.raises(SystemExit):
         run(argv, {}, out=lambda _: None)
+
+
+@pytest.mark.parametrize(
+    ("response", "refusal"),
+    [
+        (MagicMock(status_code=403, text="<html>Forbidden</html>"), "event subscriptions failed: 403"),
+        # XNAT lists null while the Event Service is off, which is not "no triggers".
+        (MagicMock(status_code=200, json=MagicMock(return_value=None)), "Event Service is off"),
+    ],
+    ids=["refused", "event-service-off"],
+)
+def test_a_subscription_listing_it_cannot_read_is_an_error(response, refusal):
+    with patch("requests.get", return_value=response), pytest.raises(Exception, match=refusal):
+        triggers_by_project({})

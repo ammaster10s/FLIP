@@ -19,11 +19,12 @@ bulk launcher, and the batch-launch plugin's Processing Dashboard through it, po
     python -m imaging_api.scripts.reconvert_nifti [--project ID ...] [--launch [--wait MINUTES]]
 
 What it selects, what it will not launch, and its exit codes: trust/deploy/helm/TROUBLESHOOTING.md
-§2.3f. On Compose, ``make -C trust reconvert-nifti KIT=<CODE>`` runs this.
+§2.3e. On Compose, ``make -C trust reconvert-nifti KIT=<CODE>`` runs this.
 """
 
 import argparse
 import json
+import re
 import sys
 import time
 from collections import Counter
@@ -36,25 +37,91 @@ import requests
 
 from imaging_api.config import get_settings
 from imaging_api.routers.schemas import Project
-from imaging_api.scripts.restore_nifti_triggers import (
-    describe,
-    flip_projects,
-    resolve_ids,
-    trigger_state,
-    triggers_by_project,
-)
 from imaging_api.services.projects import (
     DCM2NIIX_INPUT_RESOURCE,
     DCM2NIIX_OUTPUT_RESOURCE,
     DCM2NIIX_ROOT_ELEMENT,
+    DCM2NIIX_SUBSCRIPTION_NAME,
     DCM2NIIX_WRAPPER_NAME,
     _bounded_body,
-    enable_wrapper_for_project,
+    get_all_projects,
     get_command_info,
     get_experiments,
 )
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.xnat_url import xnat_url
+
+# FLIP's XNAT projects carry their hub project id, a UUID, as secondary_ID (to_create_project).
+HUB_PROJECT_ID = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+
+
+def flip_projects(headers: dict[str, str]) -> list[Project]:
+    """The XNAT projects FLIP created, name-ordered.
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        list[Project]: Every visible project whose secondary_ID is a hub project id.
+    """
+    return sorted(
+        (p for p in get_all_projects(headers) if HUB_PROJECT_ID.match(p.secondary_ID)),
+        key=lambda p: (p.name, p.ID),
+    )
+
+
+def triggers_by_project(headers: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
+    """FLIP's DICOM->NIfTI subscriptions, grouped by the projects they filter on.
+
+    One ``GET /xapi/events/subscriptions``, which needs the site administrator role configure-xnat.sh
+    gives the service account.
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        dict[str, list[dict[str, Any]]]: XNAT project ID -> its subscriptions named
+        ``DCM2NIIX_SUBSCRIPTION_NAME``.
+
+    Raises:
+        Exception: If XNAT does not answer the listing with 200, or answers null (the Event Service is off).
+    """
+    response = requests.get(xnat_url("xapi", "events", "subscriptions"), headers=headers)
+    if response.status_code != 200:
+        raise Exception(
+            f"Error: listing XNAT event subscriptions failed: {response.status_code} - {_bounded_body(response.text)}"
+        )
+    subscriptions = response.json()
+    # XNAT lists null rather than the triggers while the Event Service is off, which is not "no triggers".
+    if subscriptions is None:
+        raise Exception("Error: XNAT's Event Service is off; run the configure step, which turns it on, then retry.")
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for sub in subscriptions:
+        if sub.get("name") == DCM2NIIX_SUBSCRIPTION_NAME:
+            for project_id in (sub.get("event-filter") or {}).get("project-ids") or []:
+                grouped.setdefault(project_id, []).append(sub)
+    return grouped
+
+
+def resolve_ids(ids: list[str], projects: list[Project]) -> tuple[set[str], list[str]]:
+    """Maps hub or XNAT project ids to XNAT IDs, returning the unknown ones separately."""
+    by_any = {p.ID: p.ID for p in projects} | {p.secondary_ID: p.ID for p in projects}
+    known = {by_any[i] for i in ids if i in by_any}
+    return known, [i for i in ids if i not in by_any]
+
+
+def describe(project: Project) -> str:
+    """How a report line names a project: its XNAT ID, its hub project id and its name."""
+    return f"{project.ID} (hub project {project.secondary_ID}, {project.name!r})"
+
+
+def trigger_state(trigger: dict[str, Any]) -> str:
+    """A trigger's state for a report line: active or inactive, and why XNAT calls it invalid."""
+    state = "active" if trigger.get("active") else "inactive"
+    if trigger.get("valid") is False:
+        return f"{state}, INVALID: {trigger.get('validation-message') or 'no message'}"
+    return state
+
 
 POLL_SECONDS = 30
 # A session archived this recently may have its trigger's conversion still on the way to a container,
@@ -221,7 +288,7 @@ def _not_launchable(project: Project, triggers: list[dict[str, Any]], named: set
         return None
     if triggers:
         return "its trigger is inactive, so its 'DICOM to NIfTI' setting on the hub is off"
-    return "it has no trigger, so this trust does not know its 'DICOM to NIfTI' setting (restore_nifti_triggers)"
+    return "it has no trigger, so this trust does not know its 'DICOM to NIfTI' setting"
 
 
 def _at_least(least: int) -> Callable[[str], int]:
@@ -349,7 +416,7 @@ def run(
     waiting = sum(len(ready) for _, ready, _ in to_launch)
     if waiting:
         try:
-            command_id, wrapper_id = get_command_info(to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers)
+            wrapper_id = get_command_info(to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers).wrapper_id
         except Exception as exc:  # e.g. the wrapper runs another image than this imaging-api's pin
             tally["failed"] += waiting
             out(f"Cannot launch {waiting}: {exc}")
@@ -360,7 +427,6 @@ def run(
             to_launch = []
     for project, ready, before in to_launch:
         try:
-            enable_wrapper_for_project(project.ID, command_id, headers)
             bulk_id, refused = bulk_launch(project.ID, wrapper_id, ready, headers)
         except Exception as exc:
             tally["failed"] += len(ready)

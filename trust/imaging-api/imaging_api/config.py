@@ -41,8 +41,7 @@ class Settings(BaseSettings):
     XNAT_AETITLE: str = "XNAT"
     # No PACS id setting. Queries name no PACS, so DQR uses its default query/retrieve PACS, and each
     # import reads that PACS's id from XNAT (services/imaging.py) — the id is XNAT's to assign, so a
-    # configured one could only be a guess. A PACS_ID still set in an older kit or Helm values file is
-    # ignored, not an error.
+    # configured one could only be a guess.
 
     # Internal trust-network URLs: docker service name + the service's container
     # port. Fixed by the compose topology, so they default here rather than being

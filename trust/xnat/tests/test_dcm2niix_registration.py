@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""dcm2niix registration and project-trigger repair, on both Container Service backends (FLIP#1451).
+"""dcm2niix registration, on both Container Service backends (FLIP#1451).
 
 Configuring an XNAT used to delete the dcm2niix command and register it again, which gave its wrapper
 a new id and so invalidated every project's DICOM->NIfTI trigger. Each test runs
@@ -20,7 +20,6 @@ a new id and so invalidated every project's DICOM->NIfTI trigger. Each test runs
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import re
@@ -40,7 +39,6 @@ CONFIG_DIR = XNAT_DIR / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-dcm2niix.sh"
 COMMAND_FILE = CONFIG_DIR / "dcm2niix_command.json"
 IMAGING_API_PROJECTS = REPO_ROOT / "trust" / "imaging-api" / "imaging_api" / "services" / "projects.py"
-RESTORE_CLI = REPO_ROOT / "trust" / "imaging-api" / "imaging_api" / "scripts" / "restore_nifti_triggers.py"
 FAKE_XNAT = TESTS_DIR / "fake_xnat.py"
 
 TIMEOUT_SECONDS = 120
@@ -55,7 +53,6 @@ WRAPPER = "dcm2niix-scan"
 OLD_IMAGE = "xnat/dcm2niix:latest"
 HUB_P = "0b9a4c3e-1d2f-4a5b-8c6d-7e8f9a0b1c2d"
 HUB_Q = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
-HUB_R = "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a"
 
 
 def command_file() -> dict[str, Any]:
@@ -345,197 +342,12 @@ def test_fails_when_the_pinned_image_does_not_reach_the_command(tmp_path: Path) 
 
 
 # --------------------------------------------------------------------------------------------------
-# Repairing triggers an earlier configure broke
-# --------------------------------------------------------------------------------------------------
-
-
-def test_triggers_left_on_a_deleted_wrapper_are_repointed(tmp_path: Path) -> None:
-    """Wrapper 4 deleted by an earlier configure, dcm2niix re-registered as 5."""
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=[
-            subscription(1, 4, ["P"]),
-            subscription(2, 5, ["Q"]),
-            subscription(3, 4, ["R"], active=False, attributes={"note": "kept"}),
-        ],
-        # P and R were enabled for the deleted wrapper only; Q was created after the re-register.
-        project_enabled={"P": [4], "Q": [5], "R": [4]},
-        projects={"P": HUB_P, "Q": HUB_Q, "R": HUB_R},
-    )
-    assert not is_valid(state, state["subscriptions"][0]), "fixture: the stale trigger must start invalid"
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    for sub_id in (1, 2, 3):
-        assert run.subscription(sub_id)["action-key"] == f"{PROVIDER}5"
-        assert is_valid(run.state, run.subscription(sub_id)), f"subscription {sub_id} is still invalid"
-    assert run.subscription(3)["active"] is False, "an inactive trigger was switched on"
-    assert run.subscription(3)["attributes"] == {"note": "kept"}
-    assert run.subscription(3)["act-as-event-user"] is False
-    assert {r["path"] for r in run.made("PUT", r"/xapi/events/subscription/\d+")} == {
-        "/xapi/events/subscription/1",
-        "/xapi/events/subscription/3",
-    }, "only the stale triggers may be rewritten"
-    for project in ("P", "R"):
-        assert f"Repaired the DICOM->NIfTI trigger of project {project}" in run.output
-    assert "WARNING: invalid DICOM->NIfTI trigger" not in run.output
-
-
-def test_the_project_is_enabled_before_its_trigger_is_updated(tmp_path: Path) -> None:
-    """XNAT validates on update, and the project's old enablement belongs to the deleted wrapper."""
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())], subscriptions=[subscription(1, 4, ["P"])], project_enabled={"P": [4]}
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    order = [r["path"] for r in run.requests if r["method"] == "PUT"]
-    enable = order.index("/xapi/projects/P/commands/5/wrappers/dcm2niix-scan/enabled")
-    assert enable < order.index("/xapi/events/subscription/1")
-
-
-def test_the_repair_names_the_wrapper_id_not_the_command_id(tmp_path: Path) -> None:
-    """imaging-api used to write the command id, which only worked while the two were equal."""
-    state = xnat_state(
-        [command(9, 12, image=pinned_image())], subscriptions=[subscription(1, 9, ["P"])], project_enabled={"P": [9]}
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert run.subscription(1)["action-key"] == f"{PROVIDER}12"
-    assert is_valid(run.state, run.subscription(1))
-
-
-def test_a_flip_trigger_on_another_live_wrapper_is_left_alone(tmp_path: Path) -> None:
-    """Only a trigger whose action XNAT no longer offers is FLIP's to repair; a live one is someone's choice."""
-    other = command(6, 6, name="dcm2niix-gpu")
-    other["xnat"][0]["name"] = "dcm2niix-gpu-scan"
-    state = xnat_state(
-        [command(5, 5, image=pinned_image()), other],
-        subscriptions=[subscription(1, 6, ["P"])],
-        project_enabled={"P": [6]},
-    )
-    before = copy.deepcopy(state["subscriptions"])
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert not run.made("PUT", r"/xapi/events/subscription/\d+")
-    assert run.state["subscriptions"] == before
-
-
-def test_other_subscriptions_are_left_alone(tmp_path: Path) -> None:
-    """Another name is not FLIP's, and a site-wide one revived would convert every project's scans."""
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=[subscription(1, 4, ["P"], name="Someone else's trigger"), subscription(2, 4, [])],
-    )
-    before = copy.deepcopy(state["subscriptions"])
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert not run.made("PUT", r"/xapi/events/subscription/\d+")
-    assert run.state["subscriptions"] == before
-
-
-def test_a_trigger_whose_project_is_gone_is_skipped_not_fatal(tmp_path: Path) -> None:
-    """One deleted project must not wedge every later deploy."""
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=[subscription(1, 4, ["GONE"]), subscription(2, 4, ["P"])],
-        project_enabled={"P": [4]},
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert "Skipped subscription 1" in run.output
-    assert run.subscription(1)["action-key"] == f"{PROVIDER}4"
-    assert run.subscription(2)["action-key"] == f"{PROVIDER}5"
-    assert "WARNING: invalid DICOM->NIfTI trigger: subscription 1" in run.output, "still invalid, and said so"
-
-
-def test_flip_projects_with_no_trigger_are_named(tmp_path: Path) -> None:
-    """A Compose site upgraded before the fix lost every trigger; the deploy log must say which."""
-    state = xnat_state(
-        [command(7, 7, image=pinned_image())],
-        projects={"P": HUB_P, "Q": HUB_Q, "OPERATOR": "not-a-hub-id"},
-        subscriptions=[subscription(1, 7, ["Q"])],
-        project_enabled={"Q": [7]},
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert f"WARNING: project P (hub project {HUB_P}) has no DICOM->NIfTI trigger" in run.output
-    assert "WARNING: project Q " not in run.output
-    assert "OPERATOR" not in run.output, "a project FLIP did not create was reported"
-    assert not run.made("POST", r"/xapi/(projects/[^/]+/)?events/subscription"), "the configure step created a trigger"
-
-
-def test_the_script_deletes_no_subscription(tmp_path: Path) -> None:
-    """The legacy cleanup selected on a field no subscription has, so it deleted every project's trigger."""
-    state = xnat_state(
-        [command(4, 4)],
-        subscriptions=[
-            subscription(1, 4, ["P"]),
-            subscription(2, 4, [], name="DICOM-NifTi Conversion"),
-            subscription(3, 4, [], name="An operator's site-wide subscription"),
-        ],
-        project_enabled={"P": [4]},
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert not run.made("DELETE", r"/xapi/(projects/[^/]+/)?events/subscription/\d+")
-    assert {s["id"] for s in run.state["subscriptions"]} == {1, 2, 3}
-
-
-def test_listings_over_the_argument_limit_still_configure(tmp_path: Path) -> None:
-    """Listings over 1 MiB, past Linux's 128 KiB per-argument and macOS's 1 MiB argv caps (a 3,500-project site)."""
-    projects = {f"P{i:05d}": f"{i:08x}-1d2f-4a5b-8c6d-7e8f9a0b1c2d" for i in range(3500)}
-    subscriptions = [subscription(i, 5, [pid]) for i, pid in enumerate(projects, start=100)]
-    subscriptions[0]["action-key"] = f"{PROVIDER}4"
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=subscriptions,
-        project_enabled={pid: [5] for pid in projects},
-        projects=projects,
-    )
-    for path in ("/xapi/events/subscriptions", "/data/projects"):
-        _, body = fake_xnat.handle(copy.deepcopy(state), fake_xnat.Request([f"http://xnat-web:8080{path}"]))
-        assert len(body) > 1024 * 1024, f"fixture: {path} is only {len(body)} bytes"
-    del state["subscriptions"][-1]  # one FLIP project left with no trigger, for the report
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output[-2000:]
-    assert run.subscription(100)["action-key"] == f"{PROVIDER}5", "the one stale trigger was not repaired"
-    assert "Project triggers repaired: 1; could not repair: 0." in run.output
-    assert "WARNING: project P03499 " in run.output, "the missing-trigger report did not run"
-
-
-def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path) -> None:
-    """One subscription XNAT will not update (its owner cannot be loaded) must not fail every deploy."""
-    state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=[subscription(1, 4, ["P"]), subscription(3, 4, ["Q"])],
-        project_enabled={"P": [4], "Q": [4]},
-        faults={"reject_subscription_update": [1]},
-    )
-    run = configure(tmp_path, state)
-
-    assert run.code == 0, run.output
-    assert "WARNING: could not repair the DICOM->NIfTI trigger of project(s) P (subscription 1" in run.output
-    assert run.subscription(1)["action-key"] == f"{PROVIDER}4"
-    assert run.subscription(3)["action-key"] == f"{PROVIDER}5"
-    assert "Project triggers repaired: 1; could not repair: 1." in run.output
-    assert "WARNING: invalid DICOM->NIfTI trigger: subscription 1" in run.output, "named again by the report"
-
-
-# --------------------------------------------------------------------------------------------------
 # Names imaging-api and this script must agree on
 # --------------------------------------------------------------------------------------------------
 
 
 def test_the_trigger_name_is_the_one_imaging_api_creates() -> None:
-    """The repair finds FLIP's subscriptions by name."""
+    """The validation finds FLIP's triggers by name."""
     script = re.search(r'^DCM2NIIX_SUBSCRIPTION_NAME="([^"]+)"', SCRIPT.read_text(), re.M)
     imaging = re.search(r'^DCM2NIIX_SUBSCRIPTION_NAME = "([^"]+)"', IMAGING_API_PROJECTS.read_text(), re.M)
     assert script, "configure-dcm2niix.sh no longer sets DCM2NIIX_SUBSCRIPTION_NAME"
@@ -572,15 +384,3 @@ def test_imaging_api_reconverts_what_the_wrapper_takes_and_writes() -> None:
     assert f"@.label == '{held['INPUT_RESOURCE']}'" == derived["matcher"]
     assert held["OUTPUT_RESOURCE"] == handler["label"]
     assert handler["as-a-child-of"] == scan_input["name"]
-
-
-HUB_ID_PATTERN = "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
-
-
-def test_flip_projects_are_recognised_the_same_way_everywhere() -> None:
-    """Which XNAT projects are FLIP's (a hub-id secondary_ID) decides who gets reported and restored."""
-    for name, text in (
-        ("configure-dcm2niix.sh", SCRIPT.read_text()),
-        ("restore_nifti_triggers.py", RESTORE_CLI.read_text()),
-    ):
-        assert HUB_ID_PATTERN in text, f"{name} no longer recognises FLIP projects by {HUB_ID_PATTERN}"

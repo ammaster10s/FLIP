@@ -10,8 +10,6 @@
 # limitations under the License.
 #
 
-import pytest
-
 from imaging_api.config import Settings
 
 
@@ -27,30 +25,3 @@ def test_internal_topology_vars_default(monkeypatch):
 
     assert settings.XNAT_URL == "http://xnat-web:8080"
     assert settings.DATA_ACCESS_API_URL == "http://data-access-api:8000"
-
-
-def test_a_leftover_pacs_id_is_ignored(monkeypatch):
-    """There is no PACS id setting any more: DQR queries its default PACS and the import reads that
-    PACS's id from XNAT. An older kit or Helm values file that still injects PACS_ID must not stop
-    imaging-api booting on upgrade, and must not come back as a setting anything could read.
-    """
-    monkeypatch.setenv("PACS_ID", "1")
-
-    settings = Settings()
-
-    assert not hasattr(settings, "PACS_ID")
-
-
-@pytest.mark.parametrize("variable", ["XNAT_DATABASE_URL", "XNAT_DATASOURCE_PASSWORD"])
-def test_a_leftover_xnat_database_setting_is_ignored(monkeypatch, variable):
-    """imaging-api reads import status through XNAT's REST API and holds no XNAT database settings.
-
-    A kit file keeps XNAT_DATASOURCE_PASSWORD for xnat-web and xnat-db, and an older compose file or
-    Helm values file still hands imaging-api one or both. That must not stop imaging-api booting on
-    upgrade, and must not come back as a setting anything could read.
-    """
-    monkeypatch.setenv(variable, "leftover")
-
-    settings = Settings()
-
-    assert not hasattr(settings, variable)

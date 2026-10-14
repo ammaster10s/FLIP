@@ -15,8 +15,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
-   - [2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23e-existing-projects-stopped-converting-after-a-redeploy-flip1451)
-   - [2.3f Scans Archived Without NIfTI (Converting the Backlog)](#23f-scans-archived-without-nifti-converting-the-backlog)
+   - [2.3e Scans Archived Without NIfTI (Converting the Backlog)](#23e-scans-archived-without-nifti-converting-the-backlog)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -407,81 +406,16 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 `configure-dcm2niix.sh` on Compose. Both update the existing command in place
 with `POST /xapi/commands/{id}`, so its command and wrapper ids, and with them
 every project's trigger, survive (FLIP#1451). Then confirm the listing above
-names the image the trust's imaging-api requests. A chart older than FLIP#1451
-deleted and re-registered the command instead, which is how §2.3e happens.
+names the image the trust's imaging-api requests.
 
-### 2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)
-
-**Symptom:** after a `helm upgrade` (or, on Compose, `upgrade-xnat`), projects
-created *before* it archive DICOM but never get NIfTI; projects created after it
-convert normally. Nothing logs an error trust-side.
-
-**Root Cause:** each project's DICOM->NIfTI trigger is an XNAT event subscription
-whose action key names the dcm2niix *wrapper* by id
-(`org.nrg.containers.services.CommandActionProvider:<wrapper id>`). Before
-FLIP#1451 every configure deleted dcm2niix and registered it again under new ids,
-leaving every existing subscription on a wrapper that no longer exists. XNAT
-reports such a subscription `valid: false` ("Could not validate Action") and
-fires nothing. On Compose it was worse: the configure step's legacy cleanup
-deleted every project's subscription outright.
-
-**Check:**
-
-```bash
-kubectl exec -n flip-trust "$XNAT_POD" -- \
-  curl -s -u admin:<admin-pass> http://localhost:8080/xapi/events/subscriptions \
-  | jq -r '.[] | "\(.id) \(.["event-filter"]["project-ids"]) \(.["action-key"]) valid=\(.valid)"'
-kubectl exec -n flip-trust "$XNAT_POD" -- \
-  curl -s -u admin:<admin-pass> "http://localhost:8080/xapi/commands?name=dcm2niix" \
-  | jq '.[] | {id, wrapper: .xnat[0].id, image}'
-```
-
-**Fix:** run the current `xnat-init` Job (`helm upgrade`). It updates dcm2niix in
-place and re-points every `DICOM-NIfTI Conversion` subscription whose wrapper no
-longer exists at the current one, after enabling that wrapper for the project, logging
-one `Repaired the DICOM->NIfTI trigger of project <id>` line per project. It
-leaves a subscription whose project no longer exists alone, warns about a repair
-XNAT refuses and carries on (the closing `could not repair: N` counts them), and
-warns about any trigger XNAT still calls invalid.
-
-The Job runs `configure-dcm2niix.sh` from the xnat-web image. If `xnat.image.pin`
-(the kit's `XNAT_TAG`) holds that image before FLIP#1451, the Job stops with
-`xnat-web image <image> predates FLIP#1451`: unpin it, or pin an image from the
-release that ships this chart or later.
-
-A project with **no** subscription at all is named in the Job log
-(`WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger`) but not
-recreated: whether a project converts is its hub-side *DICOM to NIfTI* setting,
-which reaches the trust only when the project is created. Read the setting from
-each project's page on the hub (its default is on), then recreate the triggers
-with imaging-api's own creation path:
-
-```bash
-# Report only: every FLIP project and whether it has a trigger
-kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
-  python -m imaging_api.scripts.restore_nifti_triggers
-# Recreate: ids are hub project ids (as in the FLIP UI) or XNAT project IDs
-kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
-  python -m imaging_api.scripts.restore_nifti_triggers --active <id> --inactive <id>
-# Or: every untriggered project active except the ones named inactive (--dry-run to preview)
-kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
-  python -m imaging_api.scripts.restore_nifti_triggers --rest active --inactive <id>
-```
-
-A project that still has a trigger is never touched by this command. On Compose
-the same command is `make -C trust restore-nifti-triggers KIT=<CODE>
-[ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]`.
-Neither step converts scans archived while the trigger was broken: a trigger fires
-on new scans only. Convert those as §2.3f describes.
-
-### 2.3f Scans Archived Without NIfTI (Converting the Backlog)
+### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
 
 **Symptom:** a project's archived sessions hold `DICOM` resources but some scans
 have no `NIFTI` resource, so FL training sees fewer samples than the cohort has.
 Its trigger is (now) active and valid, and new scans convert.
 
 **Root Cause:** a trigger fires once, when a scan is archived. Scans archived while
-it was missing or invalid (§2.3e), or whose conversion was lost (Container Service
+it was missing or invalid, or whose conversion was lost (Container Service
 Jobs deleted to free a swamped node, FLIP#1448), are never converted afterwards.
 
 **Fix:** `reconvert_nifti`, in the imaging-api pod. It lists every archived scan
@@ -505,8 +439,7 @@ How it behaves:
 
 - **Which projects:** without `--project`, `--launch` converts only projects whose
   trigger is active. An inactive trigger means the hub's *DICOM to NIfTI* setting is
-  off, and a project with no trigger has an unknown setting, so restore triggers
-  first (§2.3e). Naming a project converts it whatever its trigger says.
+  off, and a project with no trigger has an unknown setting. Naming a project converts it whatever its trigger says.
 - **No double conversions:** it never launches on a scan whose container has not
   finished. A container that will never finish (the finalize stall: `_Waiting` long
   after its history shows `complete`; or a Job deleted from under it) holds its scan

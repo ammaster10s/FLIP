@@ -416,54 +416,21 @@ The setup script (`configure-dcm2niix.sh`) intentionally does **not** create a s
 
 A project's trigger names the dcm2niix **wrapper** by id: its action key is
 `org.nrg.containers.services.CommandActionProvider:<wrapper id>`, which imaging-api takes from
-XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy:
+XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy.
 
-- `configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
-  `XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
-  `POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
-  matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image
-  included; on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is registered only when none exists, and
-  the step refuses to choose between two.
-- It then **re-points** any `DICOM-NIfTI Conversion` subscription whose wrapper no longer exists (left
-  by a configure from before the fix, which deleted and re-registered the command) at the current
-  one, enabling the wrapper for that project first, and logs one line per project repaired.
-- A repair XNAT refuses (the subscription's owner cannot be loaded, say) is a warning, and the
-  run goes on; the closing count says how many could not be repaired.
-- The script **deletes no event subscription**. Its legacy site-wide cleanup is gone: it selected
-  a `project-id` field that no subscription has, and so deleted **every** project's subscription
-  on every `up-trust` and `upgrade-xnat`, while the site-wide subscription it was written for has
-  not been created since 2026-03-24 (FLIP#945 removes it too).
-- XNAT's listings reach jq through files, never as an argument: Linux caps one argument at
-  128 KiB, which a few hundred projects or subscriptions exceed.
-
-### Restoring missing DICOM->NIfTI triggers
-
-A Compose trust configured before FLIP#1451 has probably lost every project's trigger to that
-cleanup. The configure step names each such project in its log
-(`WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger`) but cannot recreate them
-faithfully: a trigger is created active or inactive from the project's hub-side **DICOM to NIfTI**
-setting, which reaches the trust only when the project is created. Read the setting from each
-project's page on the hub (its default is on), then:
-
-```bash
-make -C trust restore-nifti-triggers KIT=<CODE>                                   # report only
-make -C trust restore-nifti-triggers KIT=<CODE> ACTIVE="<id> <id>" INACTIVE="<id>"
-make -C trust restore-nifti-triggers KIT=<CODE> REST=active INACTIVE="<id>" DRY_RUN=1
-```
-
-Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
-`python -m imaging_api.scripts.restore_nifti_triggers` in the running imaging-api container, which
-creates each trigger through imaging-api's own project-creation path, owned by the service account;
-a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
-`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. Scans archived while a project had no trigger are not
-converted retroactively; convert them as the next section describes.
+`configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
+`XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
+`POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
+matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image included;
+on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is
+registered only when none exists, and the step refuses to choose between two.
 
 ### Converting scans archived without NIfTI
 
 A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
 [LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
 (report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
-its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3f](../deploy/helm/TROUBLESHOOTING.md#23f-scans-archived-without-nifti-converting-the-backlog).
+its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits
 

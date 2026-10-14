@@ -28,8 +28,8 @@ name: Trust - XNAT CI
 # workflow — otherwise a change to the uid in the image, or to the ownership task
 # in either playbook, lands with the drift test that exists to catch it unrun.
 # test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends and
-# holds its subscription name and FLIP-project test to imaging-api's (services/projects.py,
-# scripts/restore_nifti_triggers.py), so those trigger this workflow too (FLIP#1451).
+# holds its subscription name to imaging-api's (services/projects.py), so that file triggers this
+# workflow too (FLIP#1451).
 on:
   push:
     branches: [main, develop]
@@ -57,7 +57,6 @@ on:
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "trust/imaging-api/imaging_api/services/projects.py"
-      - "trust/imaging-api/imaging_api/scripts/restore_nifti_triggers.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
@@ -92,7 +91,6 @@ on:
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "trust/imaging-api/imaging_api/services/projects.py"
-      - "trust/imaging-api/imaging_api/scripts/restore_nifti_triggers.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"

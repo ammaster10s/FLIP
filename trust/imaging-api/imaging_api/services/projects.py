@@ -428,11 +428,7 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
 
 
 def enable_wrapper_for_project(project_id: str, command_id: int, headers: dict[str, str]) -> None:
-    """Enables the dcm2niix wrapper in one project, as project creation does.
-
-    Enablement is held per wrapper id (container-service 3.8.1 ContainerConfigServiceImpl.java:74-143),
-    so a project created before a pre-FLIP#1451 re-registration is enabled only for the deleted wrapper.
-    The call is idempotent.
+    """Enables the dcm2niix wrapper in one project. The call is idempotent.
 
     Args:
         project_id (str): XNAT project ID.

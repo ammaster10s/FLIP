@@ -47,7 +47,7 @@ if [[ -z "${!backend_setting:-}" ]]; then
   exit 1
 fi
 
-# XNAT's listings go through files: Linux caps one command-line argument at 128 KiB.
+# Scratch space for the Kubernetes command body, removed on exit.
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -271,79 +271,11 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
 # for projects that have opted in to DICOM-to-NIfTI conversion.
 
-# This script deletes no event subscription: the cleanup that used to stand here deleted every project's.
-
-SUBS_FILE="$WORK_DIR/subscriptions.json"
-PROJECTS_FILE="$WORK_DIR/projects.json"
-ACTIONS_FILE="$WORK_DIR/actions.json"
-xnat_curl "$XNAT_URL/xapi/events/subscriptions" >"$SUBS_FILE"
-xnat_curl "$XNAT_URL/data/projects?format=json" >"$PROJECTS_FILE"
-xnat_curl "$XNAT_URL/xapi/events/allactions" >"$ACTIONS_FILE"
-
-# The action key XNAT offers for this wrapper, rather than one built here.
-DCM2NIIX_ACTION=$(jq -r --arg w "$dcm2niix_wrapper_name" --arg id "$WRAPPER_ID" '
-  [.[] | select(.["display-name"] == $w and (.["action-key"] | split(":") | last) == $id) | .["action-key"]]
-  | if length == 1 then .[0] else empty end' <"$ACTIONS_FILE")
-if [[ -z "$DCM2NIIX_ACTION" ]]; then
-  echo "ERROR: XNAT lists no single event-service action for wrapper '$dcm2niix_wrapper_name' (id $WRAPPER_ID)." >&2
-  exit 1
-fi
-
-# Re-point FLIP's triggers whose action no longer exists (an earlier configure deleted the wrapper),
-# enabling the wrapper for the project first because XNAT validates the update; a refusal only warns.
-echo "Repairing project DICOM->NIfTI triggers left on a deleted wrapper..."
-STALE_SUBS=$(jq -c --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" \
-  --slurpfile actions "$ACTIONS_FILE" --slurpfile projects "$PROJECTS_FILE" '
-  [$actions[0][]["action-key"]] as $live
-  | [$projects[0].ResultSet.Result[].ID] as $known
-  | (. // [])[]
-  | select(.name == $name and (.["action-key"] as $key | $live | index($key) | not))
-  | select((.["event-filter"]["project-ids"] // []) | length > 0)
-  | . + {missing: [.["event-filter"]["project-ids"][] | select(. as $p | $known | index($p) | not)]}' <"$SUBS_FILE")
-REPAIRED=0
-REPAIR_FAILED=0
-while IFS= read -r sub; do
-  [[ -n "$sub" ]] || continue
-  sub_id=$(jq -r '.id' <<<"$sub")
-  projects=$(jq -r '.["event-filter"]["project-ids"] | join(" ")' <<<"$sub")
-  if [[ -n $(jq -r '.missing[]' <<<"$sub") ]]; then
-    echo "Skipped subscription $sub_id: its project is no longer in XNAT ($projects)."
-    continue
-  fi
-  update=$(jq -c --arg key "$DCM2NIIX_ACTION" \
-    '{"action-key": $key, "active": .active, "act-as-event-user": (.["act-as-event-user"] // false), "attributes": (.attributes // {})}' <<<"$sub")
-  ok=true
-  for project in $projects; do
-    xnat_curl -X PUT "$XNAT_URL/xapi/projects/$project/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null || ok=false
-  done
-  if [[ "$ok" == true ]]; then
-    xnat_curl -X PUT "$XNAT_URL/xapi/events/subscription/$sub_id" -H "Content-Type: application/json" -d "$update" >/dev/null || ok=false
-  fi
-  if [[ "$ok" == true ]]; then
-    echo "Repaired the DICOM->NIfTI trigger of project $projects: subscription $sub_id now runs wrapper $WRAPPER_ID."
-    REPAIRED=$((REPAIRED + 1))
-  else
-    echo "WARNING: could not repair the DICOM->NIfTI trigger of project(s) $projects (subscription $sub_id); see the error above." >&2
-    REPAIR_FAILED=$((REPAIR_FAILED + 1))
-  fi
-done <<<"$STALE_SUBS"
-echo "Project triggers repaired: $REPAIRED; could not repair: $REPAIR_FAILED."
-
-# FLIP projects (a hub-id secondary_ID) with no trigger at all are named, not recreated: whether one
-# converts is the project's hub-side dicom_to_nifti setting (restore-nifti-triggers, trust/xnat/README.md).
-jq -r --slurpfile subs "$SUBS_FILE" --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" '
-  [($subs[0] // [])[] | select(.name == $name) | (.["event-filter"]["project-ids"] // [])[]] as $covered
-  | .ResultSet.Result[]
-  | select((.secondary_ID // "") | test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
-  | select(.ID as $id | ($covered | index($id)) == null)
-  | "WARNING: project \(.ID) (hub project \(.secondary_ID)) has no DICOM->NIfTI trigger, so its scans are not converted. Restore it with restore-nifti-triggers (trust/xnat/README.md)."' \
-  <"$PROJECTS_FILE" >&2
-
 # ----------------------------------------------------------------
 # VALIDATION
 # ----------------------------------------------------------------
 
-# Every xnat_curl above but a trigger repair aborts the script (via set -e) on a non-2xx
+# Every xnat_curl above aborts the script (via set -e) on a non-2xx
 # response, so reaching this block means every write was accepted; these
 # re-GETs check the resulting state actually persisted. The wrapper-enabled
 # endpoint returns a bare JSON boolean (container-service 3.8.1 —

@@ -167,21 +167,12 @@ Creating the project also creates its DICOM->NIfTI trigger: an XNAT event subscr
 key XNAT lists for that wrapper id (`GET /xapi/events/allactions`), and refuses with the registered
 images named when there is no such wrapper (FLIP#1451, FLIP#1456).
 
-#### Restoring triggers: `restore_nifti_triggers`
-
-`python -m imaging_api.scripts.restore_nifti_triggers` (inside the container; `make -C trust
-restore-nifti-triggers KIT=<CODE>` on Compose) lists every FLIP project and whether it has a
-trigger, and recreates missing ones through the same creation path for the projects named with
-`--active` / `--inactive` (hub or XNAT project id) or covered by `--rest active|inactive`; `--dry-run`
-previews. Only the hub knows which projects should convert. See
-[`../xnat/README.md`](../xnat/README.md#restoring-missing-dicom-nifti-triggers).
-
 #### Converting the backlog: `reconvert_nifti`
 
 `python -m imaging_api.scripts.reconvert_nifti` (`make -C trust reconvert-nifti KIT=<CODE>` on Compose)
 lists the archived scans that have DICOM and no NIfTI and, with `--launch`, converts them by one
 Container Service bulk launch per project. See
-[`../deploy/helm/TROUBLESHOOTING.md` §2.3f](../deploy/helm/TROUBLESHOOTING.md#23f-scans-archived-without-nifti-converting-the-backlog).
+[`../deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ### Retrieval
 

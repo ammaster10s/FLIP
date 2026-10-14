@@ -19,7 +19,7 @@ request:
 * ``POST /xapi/commands`` gives the command and each wrapper fresh ids; ``POST /xapi/commands/{id}``
   keeps the command id and the id of every wrapper it matches by name.
 * A subscription is valid while its action key names a wrapper that exists and is enabled site-wide
-  and for each of its projects; ``PUT /xapi/events/subscription/{id}`` refuses an invalid update.
+  and for each of its projects.
 * ``GET /xapi/events/subscriptions`` is null while the Event Service is off.
 """
 
@@ -213,82 +213,16 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
             return ok_empty
         return 200, json.dumps(wrapper["id"] in state["site_enabled"])
 
-    match = re.fullmatch(r"/xapi/projects/([^/]+)/commands/(\d+)/wrappers/([^/]+)/enabled", path)
-    if match and method == "PUT":
-        project = match.group(1)
-        if project not in state["projects"]:
-            return 404, '{"error":"no project"}'
-        wrapper = _wrapper_of(state, int(match.group(2)), match.group(3))
-        if wrapper is None:
-            return 404, '{"error":"no wrapper"}'
-        enabled = state["project_enabled"].setdefault(project, [])
-        if wrapper["id"] not in enabled:
-            enabled.append(wrapper["id"])
-        return ok_empty
-
     if path == "/xapi/events/prefs":
         if method == "PUT":
             state["events_enabled"] = bool(req.json_body()["enabled"])
             return ok_empty
         return 200, json.dumps({"enabled": state["events_enabled"]})
 
-    if path == "/xapi/events/allactions":
-        # One action per wrapper of every command, keyed "<provider class>:<wrapper id>" and named after the wrapper.
-        actions = [
-            {"action-key": f"{ACTION_KEY_PREFIX}{w['id']}", "display-name": w["name"], "description": None}
-            for c in state["commands"]
-            for w in c.get("xnat", [])
-        ]
-        return 200, json.dumps(actions)
-
     if path == "/xapi/events/subscriptions":
         if not state["events_enabled"]:
             return 200, "null"
         return 200, json.dumps([with_validity(state, s) for s in state["subscriptions"]])
-
-    match = re.fullmatch(r"/xapi/events/subscription/(\d+)", path)
-    if match:
-        subscription_id = int(match.group(1))
-        stored = next((s for s in state["subscriptions"] if s["id"] == subscription_id), None)
-        if stored is None:
-            return 404, '{"error":"no subscription"}'
-        if method == "DELETE":
-            state["subscriptions"].remove(stored)
-            return 204, ""
-        if method == "PUT":
-            if not state["events_enabled"]:
-                return 500, '{"error":"event service disabled"}'
-            if subscription_id in state["faults"].get("reject_subscription_update", []):
-                # What XNAT answers when, say, the subscription's owner account cannot be loaded.
-                return 400, '{"error":"Could not load Subscription Owner"}'
-            update = req.json_body()
-            merged = dict(stored)
-            merged["action-key"] = update["action-key"]
-            if update.get("active") is not None:
-                merged["active"] = update["active"]
-            merged["attributes"] = update.get("attributes") or {}
-            merged["act-as-event-user"] = bool(update.get("act-as-event-user") or False)
-            error = validation_error(state, merged)
-            if error is not None:
-                return 400, json.dumps({"error": error})
-            state["subscriptions"][state["subscriptions"].index(stored)] = merged
-            return ok_empty
-
-    if path == "/data/projects":
-        # The fields XNAT 1.10 returns per project, so a large listing has a realistic size (~400 B a row).
-        rows = [
-            {
-                "ID": pid,
-                "secondary_ID": secondary,
-                "name": f"{secondary}:{secondary}-FL-Project",
-                "description": f"Project corresponding to central hub project {secondary}",
-                "pi_firstname": "",
-                "pi_lastname": "",
-                "URI": f"/data/projects/{pid}",
-            }
-            for pid, secondary in state["projects"].items()
-        ]
-        return 200, json.dumps({"ResultSet": {"Result": rows}})
 
     return 404, f'{{"error":"fake XNAT does not model {method} {path}"}}'
 
