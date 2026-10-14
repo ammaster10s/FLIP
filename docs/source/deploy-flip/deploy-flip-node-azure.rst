@@ -9,7 +9,9 @@ stack (trust-api, imaging-api, data-access-api, FL client, XNAT, Orthanc), the s
 built entirely from code in ``deploy/providers/azure``. The VM configures itself at first boot and
 is operated only through Azure Run Command: there are no inbound ports and no SSH from outside. It
 receives its kit the way any trust does, from the hub admin, through a private container it reads
-with its own identity. For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`.
+with its own identity. For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`. The
+same trust can run instead as the ``flip-trust`` Helm chart on a one-node AKS cluster: see
+`Run it on AKS instead`_.
 
 .. contents:: On this page
    :local:
@@ -160,3 +162,69 @@ Troubleshooting
   again (or pass ``OPERATOR_IP=<ip>``).
 - **A self-test check fails.** The report names it. Fix the cause in the repo and reprovision;
   do not edit the node by hand.
+
+**********************
+Run it on AKS instead
+**********************
+
+The ``aks`` root builds a one-node AKS cluster (``Standard_D4s_v5``, Free control-plane tier) on
+the same bootstrap layer, and the trust runs on it as the ``flip-trust`` Helm chart. Sign-in is
+through Entra, the API server admits only your IP, and the cluster egresses from the bootstrap's
+static IP. That IP and the trial's 4 vCPUs are the VM's too, so ``aks-apply`` refuses while the
+VM exists: ``make destroy`` first. A running cluster costs roughly $0.25 an hour.
+
+On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq`` and
+``python3``.
+
+.. code-block:: bash
+
+   cd deploy/providers/azure
+   SUB="<subscription name>"
+
+   make bootstrap       AZ_SUBSCRIPTION="$SUB" LOCATION=<region> STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   make aks-init        AZ_SUBSCRIPTION="$SUB"
+   make aks-plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region>
+   make aks-apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
+   make aks-credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
+
+The hub admin registers the trust and packages its kit as in `Join a hub`_. With the tarball in
+hand:
+
+.. code-block:: bash
+
+   make aks-join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<slot> PROD=<env>   # MOCK_PACS=1 on a test node
+   make aks-selftest
+
+``aks-join`` unpacks the tarball under ``build/kits/``, installs the kit file as
+``trust/.env.<slot>.<env>``, generates the chart's ``values-secrets.yaml`` from it and puts the FL
+kit in a Secret, because a managed node can be replaced at any time. It then deploys the chart
+with ``values-aks.yaml`` and ``values-small-node.yaml``. The first install takes up to half an
+hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
+chart's Orthanc, which a test node needs for an imaging pull and for the self-test.
+
+The chart loads no OMOP core vocabulary here, because its loader reads S3. Cohort queries that
+name concepts through ``omop.concept`` return nothing, so test with a query that does not.
+
+``aks-selftest`` runs the VM self-test's checks against the release
+and writes its report under ``build/selftest/``; it needs no hub. The trust has joined when its
+heartbeat is answered:
+
+.. code-block:: bash
+
+   kubectl --context flipaz-aks -n flip-trust logs deploy/trust-release-flip-trust-trust-api | grep heartbeat   # 200 OK
+
+Operate and remove:
+
+- ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
+  IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
+- ``make aks-deploy KIT=<slot> PROD=<env>`` redeploys or upgrades from the installed kit.
+- ``make aks-destroy`` removes the cluster and keeps the bootstrap layer;
+  ``make destroy-bootstrap`` refuses while the cluster or a VM exists.
+
+Troubleshooting:
+
+- **kubectl times out or is refused.** Your IP has changed: ``make aks-allow-ip``.
+- **Pods stay Pending while the node is full of dcm2niix Jobs.** Jobs created before the
+  conversion cap still request a CPU each: ``make aks-clear-jobs`` counts them and deletes them
+  once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
+  (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).

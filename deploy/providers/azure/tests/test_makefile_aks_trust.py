@@ -1,0 +1,112 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""The trust on the AKS cluster: the azure targets that drive trust/deploy/helm (FLIP#1390).
+
+The chart's own targets are replaced by `echo make`, so these read what would be handed to them.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from conftest import AZURE_DIR, REPO_ROOT, run_make
+
+HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE=flip-trust"
+
+
+def test_deploy_layers_the_aks_overlays_and_keeps_the_vocabulary_load_off(tmp_path):
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == (
+        f"{HELM} deploy-trust-k8s KIT=Trust_3 PROD=lza-stag NO_VOCAB_LOAD=1"
+        " PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
+    )
+
+
+def test_mock_pacs_seeds_orthanc_last(tmp_path):
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag", MOCK_PACS="1")
+
+    overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
+    assert result.stdout.strip().endswith(f"values-small-node.yaml {overlay}"), result.stdout
+    assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
+
+
+@pytest.mark.parametrize("target", ["aks-deploy", "aks-join"])
+def test_kit_and_env_are_required(tmp_path, target):
+    result, calls = run_make(tmp_path, target, MAKE="echo make", KIT="Trust_3")
+
+    assert result.returncode != 0
+    assert "PROD=<env>" in result.stdout + result.stderr
+    assert not calls
+    assert "make -C" not in result.stdout
+
+
+def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
+    tarball = tmp_path / "flip-trust-kit-Trust_3-20261009.tar.gz"
+    result, _ = run_make(
+        tmp_path, "-n", "aks-join", MAKE="echo make", TARBALL=str(tarball), KIT="Trust_3", PROD="lza-stag"
+    )
+
+    out = result.stdout
+    assert result.returncode == 0, out + result.stderr
+    kit_dir = "build/kits/flip-trust-kit-Trust_3-20261009"
+    steps = [
+        f'install -m 0600 "{kit_dir}/.env.Trust_3" "{REPO_ROOT}/trust/.env.Trust_3.lza-stag"',
+        f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
+        "kubectl --context flipaz-aks create namespace flip-trust",
+        f"{HELM} kit-secret KIT_SRC=",
+        "make aks-deploy KIT=Trust_3 PROD=lza-stag",
+    ]
+    positions = [out.find(s) for s in steps]
+    assert -1 not in positions, (steps[positions.index(-1)], out)
+    assert positions == sorted(positions), out
+
+
+def _job(name: str, cpu_limit: str | None) -> dict:
+    resources = {"limits": {"cpu": cpu_limit}} if cpu_limit else {}
+    return {"metadata": {"name": name}, "spec": {"template": {"spec": {"containers": [{"resources": resources}]}}}}
+
+
+JOBS = json.dumps({"items": [_job("old-1", "1"), _job("capped", None), _job("old-2", "1")]})
+
+
+def test_clear_jobs_deletes_only_the_jobs_from_before_the_cap_after_a_yes(tmp_path):
+    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs=JOBS, stdin="yes\n")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 Jobs from before the cap" in result.stdout
+    assert calls[-1] == "kubectl --context flipaz-aks delete job -n flip-trust old-1 old-2"
+
+
+def test_clear_jobs_deletes_nothing_without_a_yes(tmp_path):
+    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs=JOBS, stdin="no\n")
+
+    assert result.returncode != 0
+    assert not [c for c in calls if " delete " in c]
+
+
+def test_clear_jobs_fails_when_the_cluster_cannot_be_read(tmp_path):
+    result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs="not json", stdin="yes\n")
+
+    assert result.returncode != 0
+    assert "No Container Service Jobs" not in result.stdout, "an unreadable answer is not an empty one"
+    assert not [c for c in calls if " delete " in c]
+
+
+@pytest.mark.parametrize("rg", ["flipaz-node-rg", "flipaz-aks-rg"])
+def test_destroy_bootstrap_refuses_while_the_node_or_the_cluster_exists(tmp_path, rg):
+    result, calls = run_make(tmp_path, "destroy-bootstrap", existing_rg=rg)
+
+    assert result.returncode != 0
+    assert f"{rg} still exists" in result.stdout + result.stderr
+    assert not [c for c in calls if c.startswith("terraform -chdir=bootstrap destroy")]

@@ -96,8 +96,19 @@ make aks-destroy     AZ_SUBSCRIPTION="$SUB"
 
 The API server admits one IP, and Azure refuses to change it while the cluster is stopped, which
 is why `aks-start` does it after starting. If that step fails the cluster is still running, and
-billing: retry with `aks-allow-ip`, or `aks-stop`. Deploying the chart onto the cluster:
-[`trust/deploy/helm`](../../../trust/deploy/helm/README.md).
+billing: retry with `aks-allow-ip`, or `aks-stop`.
+
+The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
+
+```bash
+make aks-join     TARBALL=<flip-trust-kit-…tar.gz> KIT=<slot> PROD=<env>   # MOCK_PACS=1 on a test node
+make aks-selftest
+make aks-deploy   KIT=<slot> PROD=<env>      # redeploy or upgrade from the installed kit
+make aks-clear-jobs                          # dcm2niix Jobs from before the conversion cap
+```
+
+These drive [`trust/deploy/helm`](../../../trust/deploy/helm/README.md) on the cluster's kube context,
+with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 
 ## Joining a hub
 

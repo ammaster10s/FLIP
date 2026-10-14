@@ -87,7 +87,7 @@ define require_operator_ip
 		echo "   Pass yours: make $@ OPERATOR_IP=<your public IPv4>"; exit 1; }
 endef
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip logs report stop start test lint
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip aks-join aks-deploy aks-selftest aks-clear-jobs logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -140,10 +140,11 @@ destroy: ## Destroy the node, keep bootstrap and the outbound IP (asks first)
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
 		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
-destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node exists; asks first)
+destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node or the cluster exists; asks first)
 	$(require_subscription)
-	@if [ "$$(az group exists --subscription "$(SUB_ID)" -n $(NODE_RG))" = "true" ]; then \
-		echo "❌ $(NODE_RG) still exists. Run make destroy first: removing the state now would leave a node spending credit with no state."; exit 1; fi
+	@for rg in $(NODE_RG) $(AKS_RG); do \
+		if [ "$$(az group exists --subscription "$(SUB_ID)" -n $$rg)" = "true" ]; then \
+		echo "❌ $$rg still exists. Run make destroy or make aks-destroy first: removing the state now would leave it spending credit with no state."; exit 1; fi; done
 	$(TF) -chdir=bootstrap destroy -var "subscription_id=$(SUB_ID)" \
 		-var "state_storage_account_name=$$($(BOOT) state_storage_account_name)" -var create_budget=false
 
@@ -262,6 +263,52 @@ aks-allow-ip: ## Admit only your current IP to the running cluster's API server,
 	$(require_operator_ip)
 	$(require_subscription)
 	$(admit_operator)
+
+# The trust on the cluster: trust/deploy/helm's targets, on the kube context aks-credentials wrote
+# (named after the cluster). values-aks.yaml takes the FL kit from a Secret, values-small-node.yaml
+# fits the trust on the one 4-vCPU node, and the vocabulary load is off: it reads S3, which a node
+# outside AWS cannot. MOCK_PACS=1 seeds the mock studies into Orthanc, for a test node.
+REPO_ROOT := $(abspath $(CURDIR)/../../..)
+HELM_DIR := $(REPO_ROOT)/trust/deploy/helm
+K8S_NAMESPACE ?= flip-trust
+KUBECTL = kubectl --context $(AKS_NAME)
+CHART = $(MAKE) -C $(HELM_DIR) KUBE_CONTEXT=$(AKS_NAME) NAMESPACE=$(K8S_NAMESPACE)
+AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(MOCK_PACS), $(CURDIR)/aks/values-mock-pacs.yaml)
+AKS_KIT_DIR = build/kits/$(notdir $(TARBALL:.tar.gz=))
+# The kit file's name carries the env token (trust/.env.<KIT>.<env>), derived from PROD in one place.
+ifneq ($(filter aks-join,$(MAKECMDGOALS)),)
+include $(REPO_ROOT)/deploy/env_mode.mk
+endif
+
+aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (TARBALL=<path> KIT=<slot> PROD=<env> [MOCK_PACS=1])
+	@[ -f "$(TARBALL)" ] && [ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ TARBALL=<kit tarball from the hub admin> KIT=<slot> PROD=<env> are required."; exit 1; }
+	@$(call check_arg,KIT,$(KIT),$(KIT_PATTERN))
+	@rm -rf "$(AKS_KIT_DIR)" && mkdir -p -m 700 "$(AKS_KIT_DIR)" && tar -xzf "$(TARBALL)" -C "$(AKS_KIT_DIR)" --no-same-owner
+	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT); is KIT the slot it was packaged for?"; exit 1; }
+	install -m 0600 "$(AKS_KIT_DIR)/.env.$(KIT)" "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
+	python3 $(HELM_DIR)/scripts/generate_values.py --env-file "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)" \
+		--output-dir "$(AKS_KIT_DIR)" --secrets-file $(HELM_DIR)/values-secrets.yaml
+	$(KUBECTL) create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@# An NVFLARE kit is the slot's services/<slot>/; a Flower kit is net-1/ itself.
+	$(CHART) kit-secret KIT_SRC="$$(k=$(AKS_KIT_DIR)/fl-kit/net-1; [ -d $$k/services/$(KIT) ] && k=$$k/services/$(KIT); echo $(CURDIR)/$$k)"
+	$(MAKE) aks-deploy KIT=$(KIT) PROD=$(PROD)
+
+aks-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<slot> PROD=<env> [MOCK_PACS=1])
+	@[ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ KIT=<slot> PROD=<env> are required."; exit 1; }
+	$(CHART) deploy-trust-k8s KIT=$(KIT) PROD=$(PROD) NO_VOCAB_LOAD=1 PLATFORM_VALUES="$(AKS_VALUES)"
+
+aks-selftest: ## Run the trust self-test against the deployed release (report under build/selftest/)
+	$(CHART) selftest
+
+# Container Service Jobs from before the conversion cap (FLIP#1448) still request a CPU each and can
+# fill the node; a Job keeps the pod spec it was created with. TROUBLESHOOTING.md §2.3d.
+aks-clear-jobs: ## Delete dcm2niix Jobs created before the conversion cap (asks first)
+	@set -o pipefail; jobs=$$($(KUBECTL) get jobs -n $(K8S_NAMESPACE) -l XNAT_PROJECT -o json | jq -r '.items[] \
+		| select(.spec.template.spec.containers[0].resources.limits.cpu != null) | .metadata.name') || exit 1; \
+	[ -n "$$jobs" ] || { echo "No Container Service Jobs from before the cap."; exit 0; }; \
+	echo "$$(echo "$$jobs" | wc -l | tr -d ' ') Jobs from before the cap. Their scans stay unconverted: relaunch dcm2niix from XNAT."; \
+	read -r -p "Delete them? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Nothing deleted."; exit 1; }; \
+	echo "$$jobs" | xargs $(KUBECTL) delete job -n $(K8S_NAMESPACE)
 
 test: ## Credential-free checks: terraform test in every root and module, plus pytest
 	@for d in bootstrap modules/network modules/kit_drop vm aks; do \
