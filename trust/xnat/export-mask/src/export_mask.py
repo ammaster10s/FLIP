@@ -26,8 +26,8 @@ from pathlib import Path
 
 import highdicom as hd
 import numpy as np
+import requests
 import SimpleITK as sitk
-from pyxnat import Interface
 
 
 def dicom_seg_to_nifti(dicom_seg: Path, output: Path) -> None:
@@ -55,40 +55,80 @@ def resample_to_reference(mask: Path, reference: Path) -> None:
     sitk.WriteImage(resampled, str(mask), True)
 
 
-def connect() -> Interface:
-    return Interface(server=os.environ["XNAT_HOST"], user=os.environ["XNAT_USER"], password=os.environ["XNAT_PASS"])
+class Xnat:
+    """The XNAT REST calls this command makes, as the user the Container Service runs it for.
+
+    Plain requests rather than pyxnat: pyxnat's Interface imports its "derivatives" plugins on
+    construction, which need nibabel and pandas it does not declare, and this command needs five
+    calls. A missing resource lists as empty, as it did through pyxnat; any other HTTP error raises,
+    so a failed run is a failed container in XNAT's command history.
+    """
+
+    def __init__(self, host: str, user: str, password: str) -> None:
+        self.host = host.rstrip("/")
+        self.session = requests.Session()
+        self.session.auth = (user, password)
+
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        response = self.session.request(method, f"{self.host}{path}", timeout=300, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def list(self, path: str, field: str) -> list[str]:
+        try:
+            rows = self._request("GET", path, params={"format": "json"}).json()["ResultSet"]["Result"]
+        except requests.HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                return []
+            raise
+        return [row[field] for row in rows]
+
+    def download(self, path: str, target: Path) -> None:
+        with self._request("GET", path, stream=True) as response, target.open("wb") as out:
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                out.write(chunk)
+
+    def upload(self, path: str, source: Path) -> None:
+        with source.open("rb") as body:
+            self._request("PUT", path, params={"inbody": "true"}, data=body)
 
 
-def find_reference_nifti(xnat: Interface, project: str, experiment: str, workdir: Path) -> Path | None:
+def connect() -> Xnat:
+    return Xnat(os.environ["XNAT_HOST"], os.environ["XNAT_USER"], os.environ["XNAT_PASS"])
+
+
+def find_reference_nifti(xnat: Xnat, experiment: str, workdir: Path) -> Path | None:
     """Download the session's NIfTI scan, or return None when there is not exactly one candidate.
 
     The OHIF mask covers one series, so with several scans the right reference is ambiguous; the
     mask is then kept in the DICOM-SEG's own geometry rather than resampled onto a guess. Within
     the scan's NIFTI resource the image is dcm2niix's output, named after the Container Service's
-    /input mount (``input_*``); enrichment puts ``label_*`` and other masks beside it.
+    /input mount (``input_*``); enrichment puts ``label_*`` and other masks beside it. Paths are
+    experiment-scoped (IDs are unique across XNAT): under /data/projects/<p>/ the same listing
+    answers with the experiment's whole item tree instead of a ResultSet.
     """
-    session = xnat.select.project(project).experiment(experiment)
-    scans = session.scans().get()
+    session = f"/data/experiments/{experiment}"
+    scans = xnat.list(f"{session}/scans", "ID")
     if len(scans) != 1:
         print(f"Not resampling: expected exactly one scan in {experiment}, found {len(scans)}.")
         return None
-    resource = session.scan(scans[0]).resource("NIFTI")
-    files = [f for f in resource.files().get() if f.startswith("input_") and f.endswith((".nii", ".nii.gz"))]
+    files_path = f"{session}/scans/{scans[0]}/resources/NIFTI/files"
+    files = [f for f in xnat.list(files_path, "Name") if f.startswith("input_") and f.endswith((".nii", ".nii.gz"))]
     if len(files) != 1:
         print(f"Not resampling: expected exactly one input_*.nii[.gz] on scan {scans[0]}, found {len(files)}.")
         return None
     path = workdir / files[0]
-    resource.file(files[0]).get(str(path))
+    xnat.download(f"{files_path}/{files[0]}", path)
     return path
 
 
-def upload(xnat: Interface, project: str, experiment: str, assessor: str, nifti: Path) -> None:
-    xnat_file = xnat.select.project(project).experiment(experiment).assessor(assessor).resource("SEG").file(nifti.name)
-    if xnat_file.exists():
+def upload(xnat: Xnat, experiment: str, assessor: str, nifti: Path) -> None:
+    files_path = f"/data/experiments/{experiment}/assessors/{assessor}/resources/SEG/files"
+    if nifti.name in xnat.list(files_path, "Name"):
         # Never overwrite: replacing a mask is a deliberate delete on XNAT, not a side effect of a re-run.
         print(f"Not uploading {nifti.name}: already on assessor {assessor}.")
         return
-    xnat_file.put(str(nifti))
+    xnat.upload(f"{files_path}/{nifti.name}", nifti)
     print(f"Uploaded {nifti.name} to assessor {assessor}.")
 
 
@@ -96,7 +136,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-i", "--input", required=True, type=Path, help="Mounted SEG resource of the assessor")
     parser.add_argument("-o", "--output", required=True, type=Path, help="Mounted output directory")
-    parser.add_argument("--project", required=True, help="XNAT project ID")
     parser.add_argument("--experiment", required=True, help="XNAT session (experiment) ID")
     parser.add_argument("--assessor", required=True, help="XNAT assessor ID")
     args = parser.parse_args(argv)
@@ -108,13 +147,13 @@ def main(argv: list[str] | None = None) -> int:
 
     xnat = connect()
     with tempfile.TemporaryDirectory() as workdir:
-        reference = find_reference_nifti(xnat, args.project, args.experiment, Path(workdir))
+        reference = find_reference_nifti(xnat, args.experiment, Path(workdir))
         for seg in seg_files:
             nifti = args.output / seg.with_suffix(".nii.gz").name
             dicom_seg_to_nifti(seg, nifti)
             if reference:
                 resample_to_reference(nifti, reference)
-            upload(xnat, args.project, args.experiment, args.assessor, nifti)
+            upload(xnat, args.experiment, args.assessor, nifti)
     return 0
 
 

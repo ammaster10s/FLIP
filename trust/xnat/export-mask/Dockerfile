@@ -37,8 +37,11 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-cache
 COPY src/ ./src/
 
-# Build-time smoke check: the locked stack imports on this base.
-RUN /app/.venv/bin/python -c "import highdicom, pyxnat, SimpleITK"
+# Build-time smoke check: the module and every dependency it imports load on this base, and its
+# XNAT client constructs. Constructing it is the point: pyxnat, which this replaced, imported
+# undeclared packages only when its client was built, so an import alone passed while every
+# Container Service run failed.
+RUN cd /app/src && /app/.venv/bin/python -c "import export_mask; export_mask.Xnat('http://smoke', 'u', 'p')"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     HOME=/tmp

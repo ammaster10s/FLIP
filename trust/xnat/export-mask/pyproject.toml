@@ -5,7 +5,7 @@ description = "XNAT Container Service command: convert an OHIF DICOM-SEG assesso
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "highdicom>=0.28",
-    "pyxnat>=1.6.3",
+    "requests>=2.32",
     "simpleitk>=2.5.2",
 ]
 

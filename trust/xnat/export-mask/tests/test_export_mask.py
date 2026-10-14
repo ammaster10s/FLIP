@@ -11,6 +11,7 @@
 #
 """The converter on a real DICOM-SEG (written by highdicom over synthetic CT slices); XNAT is mocked."""
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -19,6 +20,7 @@ import highdicom as hd
 import numpy as np
 import pydicom
 import pytest
+import requests
 import SimpleITK as sitk
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.sr.codedict import codes
@@ -176,38 +178,120 @@ def test_main_converts_and_uploads_each_seg(dicom_seg: Path, tmp_path: Path) -> 
         mock.patch.object(export_mask, "upload") as upload,
     ):
         status = export_mask.main(
-            ["-i", str(dicom_seg.parent), "-o", str(output), "--project", "P", "--experiment", "E", "--assessor", "A"]
+            ["-i", str(dicom_seg.parent), "-o", str(output), "--experiment", "E", "--assessor", "A"]
         )
 
     assert status == 0
-    upload.assert_called_once_with(xnat, "P", "E", "A", output / "SEG_1.nii.gz")
+    upload.assert_called_once_with(xnat, "E", "A", output / "SEG_1.nii.gz")
     assert (output / "SEG_1.nii.gz").is_file()
 
 
 def test_main_fails_when_the_assessor_has_no_dicom_seg(tmp_path: Path) -> None:
     with mock.patch.object(export_mask, "connect") as connect:
-        status = export_mask.main(
-            ["-i", str(tmp_path), "-o", str(tmp_path), "--project", "P", "--experiment", "E", "--assessor", "A"]
-        )
+        status = export_mask.main(["-i", str(tmp_path), "-o", str(tmp_path), "--experiment", "E", "--assessor", "A"])
     assert status == 1
     connect.assert_not_called()
 
 
+class FakeXnat:
+    """The Xnat interface over a dict of listings; records downloads and uploads."""
+
+    def __init__(self, listings: dict[str, list[str]]) -> None:
+        self.listings = listings
+        self.downloaded: list[tuple[str, Path]] = []
+        self.uploaded: list[tuple[str, Path]] = []
+
+    def list(self, path: str, field: str) -> list[str]:
+        return self.listings.get(path, [])
+
+    def download(self, path: str, target: Path) -> None:
+        self.downloaded.append((path, target))
+
+    def upload(self, path: str, source: Path) -> None:
+        self.uploaded.append((path, source))
+
+
+SESSION = "/data/experiments/E"
+SEG_FILES = f"{SESSION}/assessors/A/resources/SEG/files"
+NIFTI_FILES = f"{SESSION}/scans/1/resources/NIFTI/files"
+
+
+def test_upload_puts_the_mask_into_the_assessors_seg_resource(tmp_path: Path) -> None:
+    xnat = FakeXnat({SEG_FILES: ["SEG_1.dcm"]})
+    export_mask.upload(xnat, "E", "A", tmp_path / "SEG_1.nii.gz")
+    assert xnat.uploaded == [(f"{SEG_FILES}/SEG_1.nii.gz", tmp_path / "SEG_1.nii.gz")]
+
+
 def test_upload_never_overwrites_an_existing_mask(tmp_path: Path) -> None:
-    xnat = mock.MagicMock()
-    assessor = xnat.select.project.return_value.experiment.return_value.assessor.return_value
-    xnat_file = assessor.resource.return_value.file.return_value
-    xnat_file.exists.return_value = True
-
-    export_mask.upload(xnat, "P", "E", "A", tmp_path / "SEG_1.nii.gz")
-
-    xnat_file.put.assert_not_called()
+    xnat = FakeXnat({SEG_FILES: ["SEG_1.dcm", "SEG_1.nii.gz"]})
+    export_mask.upload(xnat, "E", "A", tmp_path / "SEG_1.nii.gz")
+    assert xnat.uploaded == []
 
 
 def test_no_reference_when_the_session_has_several_scans(tmp_path: Path) -> None:
-    xnat = mock.MagicMock()
-    xnat.select.project.return_value.experiment.return_value.scans.return_value.get.return_value = ["1", "2"]
-    assert export_mask.find_reference_nifti(xnat, "P", "E", tmp_path) is None
+    xnat = FakeXnat({f"{SESSION}/scans": ["1", "2"]})
+    assert export_mask.find_reference_nifti(xnat, "E", tmp_path) is None
+    assert xnat.downloaded == []
+
+
+def test_reference_is_the_converted_scan_not_the_labels_beside_it(tmp_path: Path) -> None:
+    """FLIP's NIFTI resource holds dcm2niix's ``input_*`` image plus enrichment's ``label_*`` masks."""
+    image = "input_CT_Spleen_20161103205508_1.nii.gz"
+    xnat = FakeXnat(
+        {
+            f"{SESSION}/scans": ["1"],
+            NIFTI_FILES: ["label_CT_Spleen_20161103205508_1.nii.gz", image, "input_CT_Spleen_20161103205508_1.json"],
+        }
+    )
+    assert export_mask.find_reference_nifti(xnat, "E", tmp_path) == tmp_path / image
+    assert xnat.downloaded == [(f"{NIFTI_FILES}/{image}", tmp_path / image)]
+
+
+def _response(status: int, payload: object = None) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps(payload).encode() if payload is not None else b""
+    return response
+
+
+def test_the_client_is_built_from_what_the_container_service_injects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real client, not a mock: constructing it must not import anything the image lacks."""
+    monkeypatch.setenv("XNAT_HOST", "http://xnat-web:8080/")
+    monkeypatch.setenv("XNAT_USER", "alias-token")
+    monkeypatch.setenv("XNAT_PASS", "alias-secret")  # pragma: allowlist secret
+    xnat = export_mask.connect()
+    assert xnat.host == "http://xnat-web:8080"
+    assert xnat.session.auth == ("alias-token", "alias-secret")  # pragma: allowlist secret
+
+
+def test_a_listing_reads_the_named_field_of_each_row() -> None:
+    xnat = export_mask.Xnat("http://xnat", "u", "p")
+    payload = {"ResultSet": {"Result": [{"Name": "a.dcm"}, {"Name": "b.nii.gz"}]}}
+    with mock.patch.object(xnat.session, "request", return_value=_response(200, payload)) as request:
+        assert xnat.list("/data/x/files", "Name") == ["a.dcm", "b.nii.gz"]
+    assert request.call_args.args == ("GET", "http://xnat/data/x/files")
+    assert request.call_args.kwargs["params"] == {"format": "json"}
+
+
+def test_a_missing_resource_lists_as_empty_but_other_errors_raise() -> None:
+    xnat = export_mask.Xnat("http://xnat", "u", "p")
+    with mock.patch.object(xnat.session, "request", return_value=_response(404)):
+        assert xnat.list("/data/x/files", "Name") == []
+    with (
+        mock.patch.object(xnat.session, "request", return_value=_response(500)),
+        pytest.raises(requests.HTTPError),
+    ):
+        xnat.list("/data/x/files", "Name")
+
+
+def test_an_upload_puts_the_file_body(tmp_path: Path) -> None:
+    source = tmp_path / "SEG_1.nii.gz"
+    source.write_bytes(b"nifti")
+    xnat = export_mask.Xnat("http://xnat", "u", "p")
+    with mock.patch.object(xnat.session, "request", return_value=_response(200)) as request:
+        xnat.upload("/data/x/files/SEG_1.nii.gz", source)
+    assert request.call_args.args == ("PUT", "http://xnat/data/x/files/SEG_1.nii.gz")
+    assert request.call_args.kwargs["params"] == {"inbody": "true"}
 
 
 @pytest.mark.parametrize("orientation", ORIENTATIONS.values(), ids=ORIENTATIONS.keys())
@@ -241,21 +325,3 @@ def test_identity_resampling_onto_its_own_grid_changes_nothing(dicom_seg: Path, 
     assert after.GetOrigin() == pytest.approx(before.GetOrigin())
     assert after.GetSpacing() == pytest.approx(before.GetSpacing())
     assert after.GetDirection() == pytest.approx(before.GetDirection())
-
-
-def test_reference_is_the_converted_scan_not_the_labels_beside_it(tmp_path: Path) -> None:
-    """FLIP's NIFTI resource holds dcm2niix's ``input_*`` image plus enrichment's ``label_*`` masks."""
-    xnat = mock.MagicMock()
-    session = xnat.select.project.return_value.experiment.return_value
-    session.scans.return_value.get.return_value = ["1"]
-    resource = session.scan.return_value.resource.return_value
-    resource.files.return_value.get.return_value = [
-        "label_CT_Spleen_20161103205508_1.nii.gz",
-        "input_CT_Spleen_20161103205508_1.nii.gz",
-        "input_CT_Spleen_20161103205508_1.json",
-    ]
-
-    reference = export_mask.find_reference_nifti(xnat, "P", "E", tmp_path)
-
-    assert reference == tmp_path / "input_CT_Spleen_20161103205508_1.nii.gz"
-    resource.file.assert_called_once_with("input_CT_Spleen_20161103205508_1.nii.gz")
