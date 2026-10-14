@@ -689,21 +689,17 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
 SCAFFOLD_VOCAB_BUCKET = "flipdev-aicentre"
 
 
-def should_load_vocab(kit: dict[str, str], env: str, requested: bool) -> bool:
-    """Whether the override should turn on the omop-db S3 vocab-load hook.
+def is_scaffold_bucket(kit: dict[str, str], env: str) -> bool:
+    """Whether the kit still names the dev scaffolding bucket outside development (#881).
 
     Args:
         kit: The parsed kit file.
         env: The kit's environment token (development, stag, lza-stag, ...).
-        requested: False when the operator opted out (a cluster with no route to AWS).
 
     Returns:
-        True when the kit names a bucket this environment can plausibly read.
+        True when the vocab load would read a bucket this environment cannot.
     """
-    bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
-    if not requested or not bucket:
-        return False
-    return not (bucket == SCAFFOLD_VOCAB_BUCKET and env != "development")
+    return kit.get("AICENTRE_BUCKET_NAME", "").strip() == SCAFFOLD_VOCAB_BUCKET and env != "development"
 
 
 def render_override(
@@ -1006,12 +1002,14 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
         try:
-            load_vocab = should_load_vocab(kit, env, vocab_load)
-            if vocab_load and kit.get("AICENTRE_BUCKET_NAME", "").strip() and not load_vocab:
+            scaffold = vocab_load and is_scaffold_bucket(kit, env)
+            if scaffold:
                 print("⚠️  Skipping the S3 vocabulary load: AICENTRE_BUCKET_NAME is still the dev scaffolding")
                 print(f"   default ({SCAFFOLD_VOCAB_BUCKET}), which {env} cannot read (#881). Set this environment's")
                 print("   bucket in the kit, or load the vocabulary another way (load-omop-vocab).")
-            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=load_vocab)
+            override = render_override(
+                kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load and not scaffold
+            )
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")

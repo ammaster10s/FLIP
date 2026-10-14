@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import re
 import sys
 from pathlib import Path
 
@@ -37,6 +38,10 @@ REQUIRED = {
     "nvflare": ["startup/fed_client.json"],
     "flower": ["certificates/ca.crt", "keys/supernode_credentials_*"],
 }
+# The only Flower files a SuperNode reads. A provisioning tree also holds ca.key, the SuperLink's
+# server.key and every other slot's credential, none of which may reach this trust (FLIP#965).
+FLOWER_CA = "certificates__ca.crt"
+FLOWER_CREDENTIAL = re.compile(r"keys__supernode_credentials_\d+")
 
 
 def collect(kit_src: Path) -> dict[str, bytes]:
@@ -63,8 +68,21 @@ def backend_of(kit_src: Path) -> str | None:
     return None
 
 
-def render(name: str, namespace: str, data: dict[str, bytes]) -> str:
-    """The Secret as YAML (keys and base64 values need no quoting)."""
+def flower_problems(data: dict[str, bytes]) -> list[str]:
+    """Why a Flower kit is not one slot's: files beyond ca.crt and its own credential, or not one credential."""
+    credentials = [key for key in data if FLOWER_CREDENTIAL.fullmatch(key)]
+    problems = [
+        f"{key.replace('__', '/', 1)} does not belong in a trust's kit"
+        for key in sorted(data)
+        if key != FLOWER_CA and key not in credentials
+    ]
+    if len(credentials) != 1:
+        problems.append(f"needs exactly one keys/supernode_credentials_<slot>, found {len(credentials)}")
+    return problems
+
+
+def render(name: str, namespace: str, encoded: dict[str, str]) -> str:
+    """The Secret as YAML, from base64-encoded values (keys and base64 need no quoting)."""
     lines = [
         "apiVersion: v1",
         "kind: Secret",
@@ -76,7 +94,7 @@ def render(name: str, namespace: str, data: dict[str, bytes]) -> str:
         "    app.kubernetes.io/component: fl-kit",
         "data:",
     ]
-    lines += [f"  {key}: {base64.b64encode(value).decode()}" for key, value in sorted(data.items())]
+    lines += [f"  {key}: {value}" for key, value in sorted(encoded.items())]
     return "\n".join(lines) + "\n"
 
 
@@ -90,7 +108,8 @@ def main() -> int:
     if not args.kit_src.is_dir():
         print(f"❌ {args.kit_src} is not a directory", file=sys.stderr)
         return 1
-    if backend_of(args.kit_src) is None:
+    backend = backend_of(args.kit_src)
+    if backend is None:
         wanted = "; ".join(f"{b}: {', '.join(r)}" for b, r in REQUIRED.items())
         print(f"❌ {args.kit_src} is not a slot's FL kit (needs {wanted})", file=sys.stderr)
         return 1
@@ -99,11 +118,15 @@ def main() -> int:
     except ValueError as e:
         print(f"❌ {e}", file=sys.stderr)
         return 1
-    size = sum(len(base64.b64encode(v)) for v in data.values())
+    if backend == "flower" and (problems := flower_problems(data)):
+        print(f"❌ {args.kit_src} is not one slot's Flower kit:", *problems, sep="\n  ", file=sys.stderr)
+        return 1
+    encoded = {key: base64.b64encode(value).decode() for key, value in data.items()}
+    size = sum(len(v) for v in encoded.values())
     if size > SECRET_LIMIT:
         print(f"❌ the kit is {size} bytes encoded; a Secret holds at most 1 MiB", file=sys.stderr)
         return 1
-    sys.stdout.write(render(args.name, args.namespace, data))
+    sys.stdout.write(render(args.name, args.namespace, encoded))
     return 0
 
 

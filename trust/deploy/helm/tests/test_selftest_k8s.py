@@ -11,7 +11,7 @@
 
 """The Kubernetes self-test's checks, judged against a fake cluster (FLIP#1390).
 
-The node self-test (scripts/selftest_node.sh) is the acceptance checklist for every trust shape;
+The VM node self-test (FLIP#1406) is the acceptance checklist for every trust shape;
 this is its Kubernetes form. Each check is a pure judgement over what the cluster answers, so the
 fake below stands in for kubectl and helm and the tests pin what passes and what fails.
 """
@@ -44,20 +44,26 @@ class FakeCluster:
         self.workload_items = [
             {
                 "kind": "Deployment",
-                "metadata": {"name": "trust-api"},
+                "metadata": {"name": "trust-api", "generation": 2},
                 "spec": {"replicas": 1},
-                "status": {"readyReplicas": 1},
+                "status": {"observedGeneration": 2, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 1},
             },
             {
                 "kind": "StatefulSet",
                 "metadata": {"name": "omop-db"},
                 "spec": {"replicas": 1},
-                "status": {"readyReplicas": 1},
+                "status": {
+                    "replicas": 1,
+                    "updatedReplicas": 1,
+                    "readyReplicas": 1,
+                    "currentRevision": "omop-db-2",
+                    "updateRevision": "omop-db-2",
+                },
             },
             {
                 "kind": "DaemonSet",
                 "metadata": {"name": "alloy"},
-                "status": {"desiredNumberScheduled": 1, "numberReady": 1},
+                "status": {"desiredNumberScheduled": 1, "updatedNumberScheduled": 1, "numberReady": 1},
             },
         ]
         self.health = '{"status":"ok","version":"sha-1"}'
@@ -111,12 +117,47 @@ def test_a_release_whose_workloads_are_all_ready_passes():
 
 def test_a_workload_short_of_its_replicas_fails_and_is_named():
     cluster = FakeCluster()
-    cluster.workload_items[1]["status"] = {"readyReplicas": 0}
+    cluster.workload_items[1]["status"]["readyReplicas"] = 0
 
     check = selftest.check_release_ready(cluster)
 
     assert not check.ok
     assert "omop-db" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("index", "status", "why"),
+    [
+        # helm upgrade with a crash-looping new pod: the old one is still Ready, so the count is met.
+        (0, {"replicas": 2, "updatedReplicas": 1, "readyReplicas": 1}, "old replica"),
+        (0, {"replicas": 1, "updatedReplicas": 0, "readyReplicas": 1}, "old replica"),
+        (0, {"replicas": 0, "updatedReplicas": 0, "readyReplicas": 0}, "0/1 updated"),
+        (0, {"observedGeneration": 1}, "not yet observed"),
+        (1, {"currentRevision": "omop-db-1", "updateRevision": "omop-db-2"}, "update revision"),
+        (2, {"updatedNumberScheduled": 0}, "0/1 updated"),
+    ],
+)
+def test_a_release_still_rolling_out_fails_although_its_old_pods_are_ready(index, status, why):
+    cluster = FakeCluster()
+    cluster.workload_items[index]["status"].update(status)
+
+    check = selftest.check_release_ready(cluster)
+
+    assert not check.ok
+    assert why in check.detail, check.detail
+
+
+def test_the_pod_tested_is_a_ready_one_never_a_terminating_one(monkeypatch):
+    def pod(name, ready, deleting=False):
+        meta = {"name": name, **({"deletionTimestamp": "2026-10-14T00:00:00Z"} if deleting else {})}
+        return {"metadata": meta, "status": {"conditions": [{"type": "Ready", "status": str(ready)}]}}
+
+    cluster = selftest.KubectlCluster("flip-trust", "trust-release", None)
+    items = [pod("old", True, deleting=True), pod("new-crashing", False), pod("new-ready", True)]
+    monkeypatch.setattr(cluster, "_json", lambda _args: {"items": items})
+    assert cluster.pod("fl-client") == "new-ready"
+    items[:] = [pod("old", True, deleting=True)]
+    assert cluster.pod("fl-client") is None
 
 
 def test_a_release_with_no_workloads_fails():
@@ -248,6 +289,19 @@ def test_a_smoke_that_died_silently_on_stdout_reports_its_stderr():
 
     assert not check.ok
     assert "No such file" in check.detail
+
+
+@pytest.mark.parametrize("error", [selftest.subprocess.TimeoutExpired("bash", 600), FileNotFoundError("bash")])
+def test_a_smoke_that_cannot_run_is_a_failed_check_not_a_crash(monkeypatch, error):
+    def boom(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(selftest.subprocess, "run", boom)
+
+    check = selftest.check_cstore(lambda: selftest.run_smoke("flip-trust", "trust-release", None))
+
+    assert not check.ok
+    assert check.detail == str(error)
 
 
 # ── FL client ───────────────────────────────────────────────────────────────────────
@@ -684,7 +738,7 @@ def test_no_answer_from_xnat_is_status_zero(tmp_path):
 
 
 def test_the_report_matches_the_node_self_tests_shape(tmp_path):
-    checks = [selftest.Check("a", True, "fine"), selftest.Check("b", False, "broken | piped")]
+    checks = [selftest.Check("a", True, "fine"), selftest.Check("b", False, "broken | piped\nsecond line")]
 
     ok = selftest.write_report(
         checks, tmp_path, "nvflare", "2026-10-10T10:00:00Z", "2026-10-10T10:05:00Z", "20261010T100000Z"
@@ -694,10 +748,10 @@ def test_the_report_matches_the_node_self_tests_shape(tmp_path):
     report = json.loads((tmp_path / "selftest-k8s-nvflare-20261010T100000Z.json").read_text())
     assert report["ok"] is False
     assert report["backend"] == "nvflare"
-    assert report["checks"][1] == {"name": "b", "ok": False, "detail": "broken | piped"}
+    assert report["checks"][1] == {"name": "b", "ok": False, "detail": "broken | piped\nsecond line"}
     md = (tmp_path / "latest-k8s-nvflare.md").read_text()
     assert "FAILED" in md
-    assert "| ❌ | b |" in md
+    assert "| ❌ | b | broken \\| piped second line |" in md, "one row, three cells"
 
 
 def test_a_report_with_no_checks_is_not_a_pass(tmp_path):

@@ -437,7 +437,7 @@ flClient:
   # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
   #
-  # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
+  # Required whenever flClient.enabled with kit.source hostPath (the default). The chart deliberately offers no way to fetch
   # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
   # in AGENTS.md — "FL clients intentionally have no Central Hub credentials"), and the
   # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed

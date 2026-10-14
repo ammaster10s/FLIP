@@ -17,6 +17,7 @@ local/, chmods startup/ scripts and saves into transfer/; a Secret volume is rea
 then mounts the same subdirectories it mounts from a hostPath. Skipped without helm.
 """
 
+import functools
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,6 +32,7 @@ DEFAULT_KIT_SECRET = "trust-release-flip-trust-fl-kit"  # pragma: allowlist secr
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
 
+@functools.cache  # one render per distinct --set list; callers only read it
 def _fl_client(*sets: str) -> dict:
     args = ["helm", "template", "trust-release", str(CHART_DIR)]
     for item in sets:

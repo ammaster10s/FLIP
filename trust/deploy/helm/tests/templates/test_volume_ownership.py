@@ -17,6 +17,7 @@ volumes are world-writable, which hid it. Orthanc already does the same (fsGroup
 Skipped without helm.
 """
 
+import functools
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,6 +30,7 @@ CHART_DIR = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
 
+@functools.cache  # one render per distinct --set list; callers only read it
 def _pod_specs() -> dict[str, dict]:
     args = ["helm", "template", "trust-release", str(CHART_DIR), "--set", "flClient.kitHostPath=/opt/flip/fl-kit"]
     rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
@@ -44,9 +46,6 @@ def test_the_volume_is_handed_to_the_images_user(component, gid):
     assert _pod_specs()[component].get("securityContext", {}).get("fsGroup") == gid
 
 
-XNAT_DATA_SUBDIRS = ("archive", "build", "cache", "prearchive", "home/logs")
-
-
 def test_xnat_web_gets_its_data_dirs_before_tomcat_starts():
     """xnat-web mounts five subPaths of its volume; Kubernetes creates a missing subPath root-owned
     0755, and XNAT runs as uid 1001, so it could write neither prearchive nor archive and aborted
@@ -56,8 +55,11 @@ def test_xnat_web_gets_its_data_dirs_before_tomcat_starts():
     assert init["securityContext"]["runAsUser"] == 0
     assert "CHOWN" in init["securityContext"]["capabilities"]["add"]
     script = init["command"][-1]
-    for sub in XNAT_DATA_SUBDIRS:
-        assert f"/data/xnat/{sub}" in script, sub
+    tomcat = next(c for c in spec["containers"] if c["name"] == "tomcat")
+    subpaths = {m["subPath"] for m in tomcat["volumeMounts"] if m["name"] == "data" and "subPath" in m}
+    assert subpaths, "tomcat mounts its data volume by subPath"
+    prepared = script.split("for d in ", 1)[1].split(";", 1)[0].split()
+    assert set(prepared) == subpaths, "every subPath tomcat mounts is prepared, and only those"
     assert "chown 1001:1001" in script
     assert {m["name"] for m in init["volumeMounts"]} == {"data"}
     names = [c["name"] for c in spec["initContainers"]]

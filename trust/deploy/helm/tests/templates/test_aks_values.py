@@ -15,22 +15,26 @@ Asserted on `helm template` output: the kit comes from a Secret, Postgres keeps 
 fresh disk's lost+found, and nothing reaches the cloud metadata endpoint. Skipped without helm.
 """
 
+import functools
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
+from test_metadata_egress import _egress_rules, _reaches_imds_on_port_80
 
 CHART_DIR = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
 
-def _docs() -> list[dict]:
+@functools.cache
+def _docs() -> tuple[dict, ...]:
+    """The chart rendered with the AKS overlay, once per run; treat it as read-only."""
     args = ["helm", "template", "trust-release", str(CHART_DIR), "-f", str(CHART_DIR / "values-aks.yaml")]
     rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
-    return [d for d in yaml.safe_load_all(rendered) if d]
+    return tuple(d for d in yaml.safe_load_all(rendered) if d)
 
 
 def test_aks_overlay_renders_without_a_node_path():
@@ -48,13 +52,21 @@ def test_aks_overlay_puts_postgres_data_below_lost_and_found():
             assert env.get("PGDATA") == "/var/lib/postgresql/data/pgdata", doc["metadata"]["name"]
 
 
-def test_aks_overlay_never_opens_the_metadata_endpoint():
-    egress = next(d for d in _docs() if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-egress"))
-    peers = [p for rule in egress["spec"]["egress"] for p in rule.get("to", [])]
-    assert not any(p.get("ipBlock", {}).get("cidr") == "169.254.169.254/32" for p in peers)
+def test_aks_overlay_keeps_the_metadata_endpoint_closed_even_when_the_kit_names_a_bucket(tmp_path):
+    """sync-kit writes the kit's vocab bucket into the per-trust override; the overlay, applied after
+    it, must still keep the vocab load out and with it every route to 169.254.169.254 (on Azure, the
+    managed-identity token endpoint)."""
+    override = tmp_path / "k8s-trust-X.yaml"
+    override.write_text("omopDb:\n  vocabLoad:\n    s3Bucket: flipstag-aicentre\n")
+    args = ["helm", "template", "trust-release", str(CHART_DIR), "-f", str(override)]
+    args += ["-f", str(CHART_DIR / "values-aks.yaml")]
+    rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
+    assert not _reaches_imds_on_port_80(_egress_rules(rendered))
+    jobs = [d["metadata"]["name"] for d in yaml.safe_load_all(rendered) if d and d["kind"] == "Job"]
+    assert not any(name.endswith("omop-vocab-load") for name in jobs), jobs
 
 
-def test_make_deploy_layers_the_platform_values_last():
+def test_make_deploy_layers_the_platform_values_last_and_in_order():
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
     out = subprocess.run(
@@ -64,15 +76,15 @@ def test_make_deploy_layers_the_platform_values_last():
             "-C",
             str(CHART_DIR),
             "deploy",
-            "PLATFORM_VALUES=values-aks.yaml",
+            "PLATFORM_VALUES=values-aks.yaml values-small-node.yaml",
             "OVERRIDES_FILE=k8s-trust-X.yaml",
         ],
         capture_output=True,
         text=True,
         timeout=60,
     ).stdout
-    assert "-f values-aks.yaml" in out
-    assert out.index("-f k8s-trust-X.yaml") < out.index("-f values-aks.yaml"), out
+    order = [out.index(f"-f {f}") for f in ("k8s-trust-X.yaml", "values-aks.yaml", "values-small-node.yaml")]
+    assert order == sorted(order), out
 
 
 def _cpu_m(q: str) -> int:
@@ -103,13 +115,19 @@ def test_small_node_overlay_fits_the_trust_on_one_four_vcpu_node():
     assert mem <= 11 * 1024, f"{mem}Mi memory requested"
 
 
-def test_make_deploy_takes_several_platform_files_in_order():
+def test_the_kit_file_keeps_the_platform_values_on_every_deploy(tmp_path):
+    """A run that dropped values-aks.yaml would move PGDATA back to the volume root and the kit back
+    to the node, so the kit file records it and an explicit PLATFORM_VALUES still wins."""
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
-    out = subprocess.run(
-        ["make", "-n", "-C", str(CHART_DIR), "deploy", "PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    ).stdout
-    assert out.index("-f values-aks.yaml") < out.index("-f values-small-node.yaml"), out
+    kit = tmp_path / "kit.env"
+    kit.write_text("DOCKER_TAG=stag\nK8S_PLATFORM_VALUES=values-aks.yaml values-small-node.yaml\n")
+
+    def deploy(*extra: str) -> str:
+        args = ["make", "-n", "-C", str(CHART_DIR), "deploy", "KIT=X", f"KIT_FILE={kit}", *extra]
+        return subprocess.run(args, capture_output=True, text=True, timeout=60).stdout
+
+    assert "-f values-aks.yaml -f values-small-node.yaml" in deploy()
+    explicit = deploy("PLATFORM_VALUES=values-small-node.yaml")
+    assert "-f values-small-node.yaml" in explicit
+    assert "values-aks.yaml" not in explicit

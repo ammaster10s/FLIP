@@ -11,7 +11,7 @@
 # limitations under the License.
 """Self-test of a deployed flip-trust release (FLIP#1390): `make -C trust/deploy/helm selftest`.
 
-The Kubernetes form of the node self-test (scripts/selftest_node.sh), the acceptance checklist
+The Kubernetes form of the VM node self-test (FLIP#1406), the acceptance checklist
 every trust shape runs: the release is ready, the FL client has its kit, the three APIs are
 healthy, OMOP and Orthanc are seeded, Orthanc refuses anonymous requests, XNAT accepts a real
 C-STORE (smoke-cstore.sh), dcm2niix converts a stored series to NIfTI, and the FL client stays
@@ -76,6 +76,11 @@ class Cluster(Protocol):
     def exec(self, pod: str, script: str, stdin: str | None = None) -> tuple[bool, str]: ...
 
 
+def _is_ready(pod: dict) -> bool:
+    conditions = pod.get("status", {}).get("conditions", [])
+    return any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions)
+
+
 class KubectlCluster:
     """A release in a namespace, reached through kubectl (and helm for its values)."""
 
@@ -131,8 +136,10 @@ class KubectlCluster:
                 "json",
             ]
         )
-        items = (found or {}).get("items", [])
-        return items[0]["metadata"]["name"] if items else None
+        # A terminating pod still reports Running; never test the revision being replaced.
+        items = [i for i in (found or {}).get("items", []) if not i["metadata"].get("deletionTimestamp")]
+        ready = [i for i in items if _is_ready(i)]
+        return (ready or items)[0]["metadata"]["name"] if items else None
 
     def _pod_json(self, pod: str) -> dict:
         return self._json([*self.kubectl, "get", "pod", pod, "-o", "json"]) or {}
@@ -181,20 +188,38 @@ class KubectlCluster:
 # ── the checks ──────────────────────────────────────────────────────────────────────
 
 
+def rollout_gap(item: dict) -> str | None:
+    """Why a workload has not finished rolling out, or None (the conditions `kubectl rollout status` waits for).
+
+    Ready replicas alone are not enough: during an upgrade of a one-replica Deployment the old pod
+    stays Ready while the new one crash-loops, so the count is met by the revision being replaced.
+    """
+    spec, status = item.get("spec", {}), item.get("status", {})
+    if status.get("observedGeneration", 0) < item["metadata"].get("generation", 0):
+        return "spec not yet observed"
+    if item["kind"] == "DaemonSet":
+        want = status.get("desiredNumberScheduled", 0)
+        updated, ready = status.get("updatedNumberScheduled", 0), status.get("numberReady", 0)
+    else:
+        want = spec.get("replicas", 1)
+        updated, ready = status.get("updatedReplicas", 0), status.get("readyReplicas", 0)
+        if status.get("replicas", 0) > updated:
+            return f"{status['replicas'] - updated} old replica(s) still running"
+        if item["kind"] == "StatefulSet" and status.get("currentRevision") != status.get("updateRevision"):
+            return "update revision not yet current"
+    if updated < want:
+        return f"{updated}/{want} updated"
+    if ready < want:
+        return f"{ready}/{want} ready"
+    return None
+
+
 def check_release_ready(cluster: Cluster) -> Check:
-    """Every Deployment, StatefulSet and DaemonSet of the release has all its replicas ready."""
+    """Every Deployment, StatefulSet and DaemonSet of the release has rolled out and is ready."""
     items = cluster.workloads()
     if not items:
         return Check("release ready", False, "the release has no workloads in this namespace")
-    short = []
-    for item in items:
-        status = item.get("status", {})
-        if item["kind"] == "DaemonSet":
-            want, ready = status.get("desiredNumberScheduled", 0), status.get("numberReady", 0)
-        else:
-            want, ready = item.get("spec", {}).get("replicas", 1), status.get("readyReplicas", 0)
-        if ready < want:
-            short.append(f"{item['metadata']['name']} {ready}/{want}")
+    short = [f"{item['metadata']['name']} {gap}" for item in items if (gap := rollout_gap(item))]
     if short:
         return Check("release ready", False, "not ready: " + ", ".join(short))
     return Check("release ready", True, f"{len(items)} workloads ready")
@@ -283,6 +308,18 @@ def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
         else Check("orthanc requires auth", False, f"expected 401 from {ORTHANC_URL}/, got {code or 'no answer'}")
     )
     return seeded, auth
+
+
+def run_smoke(namespace: str, release: str, context: str | None) -> tuple[int, str, str]:
+    """smoke-cstore.sh's exit code and output; a smoke that cannot start or overruns is a failure, not a crash."""
+    env = {**os.environ, "NAMESPACE": namespace, "RELEASE_NAME": release, "KUBE_CONTEXT": context or ""}
+    try:
+        result = subprocess.run(
+            ["bash", str(SCRIPTS_DIR / "smoke-cstore.sh")], env=env, capture_output=True, text=True, timeout=600
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, "", str(e)
+    return result.returncode, result.stdout, result.stderr
 
 
 def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
@@ -552,6 +589,11 @@ def check_fl_client(cluster: Cluster, settle_seconds: int, sleep: Callable[[floa
 # ── the report ──────────────────────────────────────────────────────────────────────
 
 
+def _cell(text: str) -> str:
+    """Text safe inside one markdown table cell: pipes escaped, line breaks folded to spaces."""
+    return " ".join(text.split()).replace("|", "\\|")
+
+
 def write_report(checks: list[Check], out: Path, backend: str, started: str, finished: str, stamp: str) -> bool:
     """Write the JSON and markdown report in the node self-test's shape; return whether all passed."""
     ok = bool(checks) and all(c.ok for c in checks)
@@ -566,7 +608,7 @@ def write_report(checks: list[Check], out: Path, backend: str, started: str, fin
     out.mkdir(parents=True, exist_ok=True)
     base = out / f"selftest-k8s-{backend}-{stamp}"
     base.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-    rows = "\n".join(f"| {'✅' if c.ok else '❌'} | {c.name} | {c.detail} |" for c in checks)
+    rows = "\n".join(f"| {'✅' if c.ok else '❌'} | {_cell(c.name)} | {_cell(c.detail)} |" for c in checks)
     status = "PASSED" if ok else "FAILED"
     md = (
         f"# Kubernetes trust self-test: {backend}\n\n{status} · {started} → {finished}\n\n"
@@ -609,18 +651,6 @@ def main(argv: list[str] | None = None) -> int:
         checks.append(check)
         print(f"  ✅ {check.name}" if check.ok else f"  ❌ {check.name}: {check.detail}")
 
-    def run_smoke() -> tuple[int, str, str]:
-        env = {
-            **os.environ,
-            "NAMESPACE": args.namespace,
-            "RELEASE_NAME": args.release,
-            "KUBE_CONTEXT": args.context or "",
-        }
-        result = subprocess.run(
-            ["bash", str(SCRIPTS_DIR / "smoke-cstore.sh")], env=env, capture_output=True, text=True, timeout=600
-        )
-        return result.returncode, result.stdout, result.stderr
-
     record(check_release_ready(cluster))
     if fl_enabled:
         record(check_fl_kit(cluster, backend))
@@ -629,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
     record(check_omop_seeded(cluster))
     for check in check_orthanc(cluster):
         record(check)
-    record(check_cstore(run_smoke))
+    record(check_cstore(lambda: run_smoke(args.namespace, args.release, args.context)))
     xnat_pod = cluster.pod("xnat-web")
     if xnat_pod:
         record(check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), args.conversion_timeout))

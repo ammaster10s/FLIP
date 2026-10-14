@@ -66,7 +66,7 @@ boundary — see [Residual risk](#residual-risk).
      way to safely allow 443 to *named* hosts rather than any IP. Out of scope
      for a CNI-portable chart; recommended for high-security trusts.
 2. **IMDS reachable from all pods while the vocab-load Job needs it.** Only that Job uses it.
-   A per-pod tightening (allow IMDS egress only on the fl-client `podSelector`,
+   A per-pod tightening (allow IMDS egress only on the omop-db vocab-load Job's `podSelector`,
    deny elsewhere) is a future hardening — pairs with IMDSv2 hop-limit=1 and the
    RBAC/securityContext work in [#530](https://github.com/londonaicentre/FLIP/issues/530).
 3. **NetworkPolicy is L3/L4 only.** It cannot inspect payloads; it is not a DLP

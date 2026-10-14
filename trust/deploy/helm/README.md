@@ -196,22 +196,29 @@ instead and deploy with `flClient.kit.source=secret` (FLIP#1390):
 
 ```bash
 make -C trust/deploy/helm kit-secret KIT_SRC=<the slot's kit directory> KUBE_CONTEXT=<kube context>
-make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> NO_VOCAB_LOAD=1 \
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
   PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube context>
 ```
 
 `values-aks.yaml` carries what belongs to a managed cluster rather than to the trust (the kit from the Secret,
-Postgres data below the fresh disk's `lost+found`); `PLATFORM_VALUES` layers it after the per-trust override.
+Postgres data below the fresh disk's `lost+found`, the S3 vocabulary load off); `PLATFORM_VALUES` layers it after
+the per-trust override. Better, put `K8S_PLATFORM_VALUES=values-aks.yaml` in the kit file: every `deploy`,
+`deploy-trust-k8s` and `upgrade-trust-k8s` with that `KIT` then applies it. A run without it would move PGDATA back
+to the volume root (both databases crash-loop) and look for the kit on the node (the FL client stays Pending).
 `kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
-...) in `<release>-flip-trust-fl-kit` (`flClient.kit.secretName` overrides it) and refuses a kit
-missing its backend's files, a nested directory, or more than a Secret's 1 MiB. At pod start the
+...) in `<release>-flip-trust-fl-kit` (set `flClient.kit.secretName` only for a Secret you build yourself with `scripts/kit_secret.py --name`; `make kit-secret` always writes the default name) and refuses a kit
+missing its backend's files, a nested directory, or more than a Secret's 1 MiB — and a Flower kit
+holding anything beyond `certificates/ca.crt` and one `keys/supernode_credentials_<slot>`, so a whole
+provisioning tree (`ca.key`, `server.key`, every slot's key) never lands in one trust's Secret. At pod start the
 `stage-fl-kit` init container copies the files into the pod's own kit volume, because a Secret
 volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`; it hands them to
 uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the
 pod, so anything NVFLARE leaves in `transfer/` goes with it.
 
-`NO_VOCAB_LOAD=1` keeps the chart's S3 vocabulary hook out, so the trust runs without the OMOP vocabulary
-until one is loaded another way. Cohort queries that name concepts through `omop.concept` then return
+`values-aks.yaml` keeps the chart's S3 vocabulary hook out whatever bucket the kit names, and with it the
+metadata endpoint, which on Azure hands out managed-identity tokens (`NO_VOCAB_LOAD=1` does the same for sync-kit on
+any other cluster without a route to AWS). The trust then runs without the OMOP vocabulary until one is loaded
+another way. Cohort queries that name concepts through `omop.concept` then return
 nothing; the x-ray tutorial ships `query_no_vocab.sql` for exactly this, and `make e2e_smoke NO_VOCAB=1`
 smokes such a trust with it.
 
@@ -356,11 +363,11 @@ from `dicom.log` and the container log alike. See
 ### 6b. Run the trust self-test
 
 `make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>` runs the acceptance checklist every
-trust shape shares (the VM's is `scripts/selftest_node.sh`) against the deployed release:
+trust shape shares (the VM node self-test's, FLIP#1406) against the deployed release:
 
 | Check | Passes when |
 |---|---|
-| release ready | every Deployment, StatefulSet and DaemonSet of the release has all its replicas ready |
+| release ready | every Deployment, StatefulSet and DaemonSet of the release has finished rolling out (all replicas updated and ready, no old pod left) |
 | fl kit delivered | the FL client sees its kit (`/app/startup/fed_client.json`; Flower: `/certs/ca.crt` and `/keys`) |
 | trust-api / imaging-api / data-access-api health | each answers its own `/health` with `"status":"ok"` |
 | omop seeded | `omop.person` has rows |

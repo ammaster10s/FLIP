@@ -21,19 +21,16 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sqlite3
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
+from tutorial_apps import TUTORIALS_ROOT, load_module
 
-TUTORIALS = Path(__file__).resolve().parents[1]
-MAPPINGS_PATH = TUTORIALS / "datasets" / "utils" / "omop_mappings.py"
+MAPPINGS_PATH = TUTORIALS_ROOT / "datasets" / "utils" / "omop_mappings.py"
 QUERY_DIRS = {
-    "nvflare": TUTORIALS / "nvflare" / "image_classification" / "xray_classification",
-    "flower": TUTORIALS / "flower" / "xray_classification",
+    "nvflare": TUTORIALS_ROOT / "nvflare" / "image_classification" / "xray_classification",
+    "flower": TUTORIALS_ROOT / "flower" / "xray_classification",
 }
 # What the app consumes: accession_id to fetch the study, the three findings as labels, and person_id
 # for the trust's per-subject age/sex distributions.
@@ -43,20 +40,7 @@ X_RAY = 4056681  # the modality the cxr converter writes; any concept works, the
 LIMIT = 300
 
 
-def _load_mappings() -> ModuleType:
-    module_name = "fl_tutorials_under_test.omop_mappings_xray_query"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, MAPPINGS_PATH)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {MAPPINGS_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-MAPPINGS = _load_mappings()
+MAPPINGS = load_module("fl_tutorials_under_test.omop_mappings_xray_query", MAPPINGS_PATH)
 YES, NO = MAPPINGS.MAPPING_YES_NO["yes"], MAPPINGS.MAPPING_YES_NO["no"]
 EFFUSION = MAPPINGS.MAPPING_FINDING["pleural effusion"]
 EDEMA = MAPPINGS.MAPPING_FINDING["pulmonary edema"]

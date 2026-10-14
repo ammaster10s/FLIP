@@ -99,9 +99,28 @@ def test_a_nested_directory_is_refused(tmp_path):
 
 
 def test_a_kit_over_the_secret_size_limit_is_refused(tmp_path):
-    result = _run(_tree(tmp_path / "kit", {**FLOWER, "keys/huge.bin": "x" * 1_100_000}))
+    result = _run(_tree(tmp_path / "kit", {**NVFLARE, "local/huge.bin": "x" * 1_100_000}))
     assert result.returncode != 0
     assert "1 MiB" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        # A whole provisioning tree: the CA key, the SuperLink's key and another slot's credential.
+        (
+            {"certificates/ca.key": "k", "certificates/server.key": "k", "keys/supernode_credentials_4": "s"},
+            ["certificates/ca.key", "certificates/server.key", "found 2"],
+        ),
+        ({"keys/supernode_credentials_3.pub": "p"}, ["keys/supernode_credentials_3.pub"]),
+    ],
+)
+def test_a_flower_kit_beyond_one_slots_files_is_refused(tmp_path, extra, named):
+    result = _run(_tree(tmp_path / "kit", {**FLOWER, **extra}))
+    assert result.returncode != 0
+    assert result.stdout == "", "nothing reaches kubectl"
+    for name in named:
+        assert name in result.stderr
 
 
 def test_make_kit_secret_pipes_the_secret_to_kubectl():
@@ -116,6 +135,7 @@ def test_make_kit_secret_pipes_the_secret_to_kubectl():
         text=True,
         timeout=60,
     ).stdout
+    assert out.index("create namespace flip-trust") < out.index("kit_secret.py"), "a fresh cluster has no namespace yet"
     assert "scripts/kit_secret.py --kit-src /tmp/kit" in out
     assert "--name trust-release-flip-trust-fl-kit" in out
     assert "kubectl --context aks-x apply -f -" in out

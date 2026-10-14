@@ -20,6 +20,8 @@ IPs that rotate on recreation, so a pinned /32 would go stale. A port-only rule
 is immune to that drift and renders deterministically across runs."""
 
 import importlib.util
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -127,14 +129,13 @@ def test_render_override_can_leave_the_vocab_load_off():
     assert "vocabLoad" not in out
 
 
-def test_vocab_load_follows_the_operator_and_never_a_scaffolding_default():
+def test_only_the_scaffolding_bucket_outside_development_is_flagged():
     stag = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipstag-aicentre"}
     scaffold = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipdev-aicentre"}
-    assert sync_k8s_kit.should_load_vocab(stag, "stag", requested=True)
-    assert not sync_k8s_kit.should_load_vocab(stag, "stag", requested=False), "the operator opted out"
+    assert not sync_k8s_kit.is_scaffold_bucket(stag, "stag")
     # #881: .env.example ships the dev bucket, which no other environment can read.
-    assert not sync_k8s_kit.should_load_vocab(scaffold, "lza-stag", requested=True)
-    assert sync_k8s_kit.should_load_vocab(scaffold, "development", requested=True)
+    assert sync_k8s_kit.is_scaffold_bucket(scaffold, "lza-stag")
+    assert not sync_k8s_kit.is_scaffold_bucket(scaffold, "development")
 
 
 def test_render_override_carries_the_kits_seed_partition():
@@ -482,19 +483,16 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
         )
 
 
-def test_make_passes_no_vocab_load_through_to_every_sync():
-    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run the target."""
-    import shutil
-    import subprocess
-
+@pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
+def test_make_passes_no_vocab_load_through_to_every_sync(target):
+    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run each target."""
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
     chart = Path(__file__).resolve().parents[1]
-    run = lambda *extra: subprocess.run(  # noqa: E731
-        ["make", "-n", "-C", str(chart), "sync-kit", "KIT=Trust_K8s", "PROD=stag", *extra],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    ).stdout
+
+    def run(*extra: str) -> str:
+        args = ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "PROD=stag", *extra]
+        return subprocess.run(args, capture_output=True, text=True, timeout=60).stdout
+
     assert "--no-vocab-load" in run("NO_VOCAB_LOAD=1")
     assert "--no-vocab-load" not in run()

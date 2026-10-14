@@ -10,9 +10,11 @@
 # limitations under the License.
 #
 # Overlay for a managed AKS cluster (FLIP#1390): deploy with PLATFORM_VALUES=values-aks.yaml, e.g.
-#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> NO_VOCAB_LOAD=1 \
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
 #     PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<aks context>
-# after `make kit-secret KIT_SRC=<slot kit dir>` has put the FL kit in its Secret.
+# after `make kit-secret KIT_SRC=<slot kit dir>` has put the FL kit in its Secret. Set
+# K8S_PLATFORM_VALUES=values-aks.yaml in the kit file instead and every deploy and upgrade of
+# that KIT applies it, so a later run cannot drop it.
 
 flClient:
   kit:
@@ -23,6 +25,11 @@ omopDb:
   persistence:
     # A fresh Azure Disk has lost+found at its root, which initdb refuses.
     pgdataSubdir: pgdata
+  vocabLoad:
+    # The S3 vocabulary load needs an AWS route and, on a node role, the metadata endpoint, which
+    # on Azure hands out managed-identity tokens. Off here whatever bucket the kit names, so the
+    # NetworkPolicy keeps 169.254.169.254 closed and no failing post-install hook sinks the release.
+    enabled: false
 
 xnat:
   db:
