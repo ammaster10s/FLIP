@@ -43,11 +43,12 @@ def get_net_status(
         user_id (UUID): ID of the authenticated user.
 
     Returns:
-        INetStatus: Object containing the network name and status of connected clients.
+        INetStatus: Object containing the network name and status of connected clients. A net whose FL API gives
+        no client status (unreachable, an error response, or no clients connected) is returned with
+        ``online=False`` and no clients.
 
     Raises:
-        HTTPException: If the net is not found, if there is no response from the FL API, or if there is an error
-        retrieving the net status.
+        HTTPException: If the net is not found, or if there is an error retrieving the net status.
     """
 
     try:

@@ -503,8 +503,10 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     except httpx.HTTPError as e:
         # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
         # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline.
-        logger.error(f"HTTP GET failed for {url}: {e}")
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"Server status response: {response}")
     if not response:
@@ -535,8 +537,10 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     except httpx.HTTPError as e:
         # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
         # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
-        # Either way there is no status to report, so the caller shows the net offline.
-        logger.error(f"HTTP GET failed for {url}: {e}")
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"Client status response: {response}")
     if not response:
