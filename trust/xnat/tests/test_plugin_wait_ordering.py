@@ -32,9 +32,7 @@ Two things are pinned here:
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -182,19 +180,3 @@ def test_probe_still_succeeds_on_2xx(tmp_path: Path) -> None:
 
     assert result.returncode == 0, f"a 200 must satisfy the wait. Got:\n{result.stdout}{result.stderr}"
     assert "XNAT plugins are ready" in result.stdout
-
-
-def test_shellcheck_clean_if_available() -> None:
-    """Cheap belt-and-braces on the edited script when shellcheck is installed."""
-    shellcheck = shutil.which("shellcheck")
-    if not shellcheck:
-        pytest.skip("shellcheck not installed")
-
-    result = subprocess.run(
-        [shellcheck, "-S", "error", str(PLUGIN_WAIT), str(CONFIGURE_XNAT)],
-        capture_output=True,
-        text=True,
-        timeout=TIMEOUT_SECONDS,
-        cwd=os.fspath(REPO_ROOT),
-    )
-    assert result.returncode == 0, result.stdout + result.stderr

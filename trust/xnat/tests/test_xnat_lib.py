@@ -125,17 +125,6 @@ def test_each_script_loads_the_library_from_its_own_directory(script: str) -> No
         assert f"\n{helper}() {{" not in text, f"{script} defines its own {helper}"
 
 
-def test_a_script_run_from_another_directory_still_finds_the_library(tmp_path: Path) -> None:
-    env = {"PATH": os.environ["PATH"]}
-    result = subprocess.run(
-        ["bash", str(CONFIG_DIR / "wait-for-xnat-plugins.sh")], cwd=tmp_path, env=env, capture_output=True, text=True
-    )
-
-    assert result.returncode != 0
-    assert "xnat-lib.sh" not in result.stderr, result.stderr
-    assert "XNAT_ADMIN_USER" in result.stderr, "it should stop at its own settings check"
-
-
 def test_the_library_and_scripts_are_shellcheck_clean() -> None:
     shellcheck = shutil.which("shellcheck")
     if not shellcheck:

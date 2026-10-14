@@ -427,30 +427,6 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
     return CommandInfo(command_id=row["command-id"], wrapper_id=row["wrapper-id"])
 
 
-def enable_wrapper_for_project(project_id: str, command_id: int, headers: dict[str, str]) -> None:
-    """Enables the dcm2niix wrapper in one project. The call is idempotent.
-
-    Args:
-        project_id (str): XNAT project ID.
-        command_id (int): The wrapper's command id, from ``get_command_info``.
-        headers (dict[str, str]): XNAT authentication headers.
-
-    Raises:
-        Exception: If XNAT does not answer with 200.
-    """
-    response = requests.put(
-        xnat_url(
-            "xapi", "projects", project_id, "commands", str(command_id), "wrappers", DCM2NIIX_WRAPPER_NAME, "enabled"
-        ),
-        headers=headers,
-    )
-    if response.status_code != 200:
-        raise Exception(
-            f"Error: Enabling command {command_id} ('{DCM2NIIX_WRAPPER_NAME}') for project '{project_id}' failed: "
-            f"{response.status_code} - {_bounded_body(response.text)}"
-        )
-
-
 def create_project_event_subscription(project_id: str, container: str, active: bool, headers: dict[str, str]) -> None:
     """
     Creates a project-scoped event subscription in XNAT that auto-triggers a command on scan upload.
@@ -473,7 +449,17 @@ def create_project_event_subscription(project_id: str, container: str, active: b
 
     # Enable the command at the project level — required by XNAT to validate the action key
     # in project-scoped event subscriptions
-    enable_wrapper_for_project(project_id, command_id, headers)
+    response = requests.put(
+        xnat_url(
+            "xapi", "projects", project_id, "commands", str(command_id), "wrappers", DCM2NIIX_WRAPPER_NAME, "enabled"
+        ),
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise Exception(
+            f"Error: Enabling command {command_id} ('{DCM2NIIX_WRAPPER_NAME}') for project '{project_id}' failed: "
+            f"{response.status_code} - {_bounded_body(response.text)}"
+        )
 
     # The key names the wrapper, not the command: formatting the command id only worked while the two were equal.
     action_key = get_wrapper_action_key(wrapper_id, headers)

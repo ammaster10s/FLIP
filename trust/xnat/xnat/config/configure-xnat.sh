@@ -460,9 +460,7 @@ scp_payload=$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
 # Drift is any field of the payload that differs. A routing expression XNAT returns as null is the
 # empty one the kit sends, or a receiver made another way would drift on every run.
 # shellcheck disable=SC2016 # jq's variables, not the shell's
-scp_jq_defs='
-def norm: if . == null then "" else . end;
-def drift($entry; $desired): [$desired | keys_unsorted[] | select(($entry[.] | norm) != ($desired[.] | norm))];
+scp_jq_defs="$XNAT_JQ_DRIFT"'
 def owned: .identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT";
 '
 

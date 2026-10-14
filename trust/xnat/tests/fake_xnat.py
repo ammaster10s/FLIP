@@ -74,7 +74,7 @@ class Request:
                 if arg in ("-X", "--request"):
                     self.method = value
                 elif arg in ("-d", "--data", "--data-binary"):
-                    self.data = Path(value[1:]).read_text() if value.startswith("@") else value
+                    self.data = value
                 elif arg in ("-o", "--output"):
                     self.output = value
                 elif arg in ("-w", "--write-out"):
@@ -243,9 +243,7 @@ def main(argv: list[str]) -> int:
 
     if req.fail and status >= 400:
         return 22
-    if req.output and req.output != "/dev/null":
-        Path(req.output).write_text(body)
-    elif not req.output and not req.head:
+    if not req.output and not req.head:
         sys.stdout.write(body)
     if req.write_out:
         sys.stdout.write(req.write_out.replace("\\n", "\n").replace("%{http_code}", str(status)))

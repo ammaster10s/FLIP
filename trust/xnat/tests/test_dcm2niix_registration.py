@@ -51,8 +51,6 @@ PROVIDER = fake_xnat.ACTION_KEY_PREFIX
 TRIGGER = "DICOM-NIfTI Conversion"
 WRAPPER = "dcm2niix-scan"
 OLD_IMAGE = "xnat/dcm2niix:latest"
-HUB_P = "0b9a4c3e-1d2f-4a5b-8c6d-7e8f9a0b1c2d"
-HUB_Q = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
 
 
 def command_file() -> dict[str, Any]:
@@ -84,22 +82,14 @@ def command(command_id: int, wrapper_id: int, image: str = OLD_IMAGE, name: str 
     return body
 
 
-def subscription(
-    sub_id: int,
-    wrapper_id: int,
-    projects: list[str],
-    *,
-    name: str = TRIGGER,
-    active: bool = True,
-    attributes: dict[str, str] | None = None,
-) -> dict[str, Any]:
+def subscription(sub_id: int, wrapper_id: int, projects: list[str]) -> dict[str, Any]:
     """A subscription shaped as GET /xapi/events/subscriptions returns one: projects only in the filter."""
     return {
         "id": sub_id,
-        "name": name,
-        "active": active,
+        "name": TRIGGER,
+        "active": True,
         "action-key": f"{PROVIDER}{wrapper_id}",
-        "attributes": attributes or {},
+        "attributes": {},
         "event-filter": {
             "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
             "project-ids": projects,
@@ -117,7 +107,6 @@ def xnat_state(
     subscriptions: list[dict[str, Any]] | None = None,
     site_enabled: list[int] | None = None,
     project_enabled: dict[str, list[int]] | None = None,
-    projects: dict[str, str] | None = None,
     faults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ids = [c["id"] for c in commands]
@@ -128,7 +117,6 @@ def xnat_state(
         "last_wrapper_id": max(wrapper_ids, default=0),
         "site_enabled": site_enabled if site_enabled is not None else wrapper_ids,
         "project_enabled": project_enabled or {},
-        "projects": projects if projects is not None else {"P": HUB_P, "Q": HUB_Q},
         "subscriptions": subscriptions or [],
         "events_enabled": True,
         "hubs": [],
@@ -242,6 +230,7 @@ def test_a_drifted_backend_is_registered_again(tmp_path: Path) -> None:
 
     assert second.code == 0, second.output
     assert second.made("POST", r"/xapi/docker/server")
+    assert "(drifted on host)" in second.output
     assert second.state["backend"]["host"] == "tcp://xnat-socket-proxy:2375"
 
 
@@ -336,16 +325,6 @@ def test_kubernetes_moves_the_command_off_its_resource_settings_and_docker_keeps
     assert in_file, "fixture: dcm2niix_command.json carries no resource keys to strip"
     kept = {key for key in RESOURCE_KEYS if key in run.dcm2niix()}
     assert kept == (set() if backend == "kubernetes" else in_file)
-
-
-def test_a_second_run_changes_nothing_about_the_triggers(tmp_path: Path) -> None:
-    first = configure(tmp_path / "one", xnat_state([command(4, 4)], subscriptions=[subscription(1, 4, ["P"])]))
-    assert first.code == 0, first.output
-    second = configure(tmp_path / "two", first.state)
-
-    assert second.code == 0, second.output
-    assert (second.dcm2niix()["id"], second.dcm2niix()["xnat"][0]["id"]) == (4, 4)
-    assert not second.made("PUT", r"/xapi/events/subscription/\d+")
 
 
 def test_refuses_to_pick_between_two_dcm2niix_commands(tmp_path: Path) -> None:

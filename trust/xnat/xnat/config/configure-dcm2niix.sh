@@ -33,7 +33,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
 XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the Docker network or the cluster
 XNAT_CS_BACKEND="${XNAT_CS_BACKEND:-docker}"
 DCM2NIIX_NAME="dcm2niix"
-# imaging-api gives every project trigger this name, which is how the repair below finds FLIP's.
+# imaging-api gives every project trigger this name, which is how the validation below finds FLIP's.
 DCM2NIIX_SUBSCRIPTION_NAME="DICOM-NIfTI Conversion"
 
 case "$XNAT_CS_BACKEND" in
@@ -44,15 +44,11 @@ case "$XNAT_CS_BACKEND" in
     exit 1
     ;;
 esac
-# Checked explicitly: under the EXIT trap below, bash 3.2 exits 0 after a ${VAR:?} error.
+# Checked explicitly, to name the setting this backend needs.
 if [[ -z "${!backend_setting:-}" ]]; then
   echo "ERROR: $backend_setting is required for the $XNAT_CS_BACKEND backend" >&2
   exit 1
 fi
-
-# Scratch space for the Kubernetes command body, removed on exit.
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
 
 wait_for_xnat 900
 
@@ -77,23 +73,15 @@ fi
 # Registered again only when a field the config sets has drifted: each POST stores a new server
 # under a new id. A GET that fails (no server yet) counts as drift.
 xnat_request 10 60 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/docker/server"
-if [[ "$xnat_status" == 200 ]] && jq -e --argjson want "$backend_config" \
-    '. as $have | $want | to_entries | all(.value == $have[.key])' >/dev/null 2>&1 <<<"$xnat_body"; then
+backend_drift=""
+if [[ "$xnat_status" == 200 ]] && backend_drift=$(jq -r --argjson desired "$backend_config" \
+    "$XNAT_JQ_DRIFT"'drift(.; $desired) | join(", ")' 2>/dev/null <<<"$xnat_body") && [[ -z "$backend_drift" ]]; then
   echo "The $XNAT_CS_BACKEND backend already matches the configuration — leaving it as-is."
 else
-  echo "Adding the $XNAT_CS_BACKEND backend for the container service..."
+  echo "Adding the $XNAT_CS_BACKEND backend for the container service${backend_drift:+ (drifted on $backend_drift)}..."
   echo "backend_config: $backend_config"
-  # The status is checked here, not left to the ping: if XNAT rejects the new backend config, the
-  # ping below could still pass against a previously registered backend. 000 = no answer.
-  xnat_request 10 60 -X POST "$XNAT_URL/xapi/docker/server" \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    -H "Content-Type: application/json" \
-    -d "$backend_config"
-  if [[ "$xnat_status" != 2* ]]; then
-    echo "ERROR: POST /xapi/docker/server returned HTTP $xnat_status"
-    printf '%s\n' "$xnat_body"
-    exit 1
-  fi
+  # A rejected config fails here: the ping below could still pass against the previous backend.
+  admin_curl -X POST "$XNAT_URL/xapi/docker/server" -H "Content-Type: application/json" -d "$backend_config" >/dev/null
 fi
 
 # Fail loudly here if the backend is unreachable — the command registration below would still
@@ -106,13 +94,11 @@ if [[ "$xnat_status" != "200" ]]; then
 fi
 echo "Container Service -> $XNAT_CS_BACKEND backend: OK"
 
-# The command body, sent both to register the command and to update it in place.
-DCM2NIIX_COMMAND_JSON=dcm2niix_command.json
-if [[ "$XNAT_CS_BACKEND" == kubernetes ]]; then
-  # Without resource keys the pods are BestEffort; on Kubernetes they reserved a whole CPU each (FLIP#1448).
-  DCM2NIIX_COMMAND_JSON="$WORK_DIR/dcm2niix_command.json"
-  jq 'del(."reserve-memory", ."limit-memory", ."limit-cpu")' dcm2niix_command.json >"$DCM2NIIX_COMMAND_JSON"
-fi
+# The command body, sent both to register the command and to update it in place. On Kubernetes it
+# loses its resource keys, so the pods are BestEffort: they reserved a whole CPU each (FLIP#1448).
+DCM2NIIX_COMMAND=$(jq -c --arg backend "$XNAT_CS_BACKEND" \
+  'if $backend == "kubernetes" then del(."reserve-memory", ."limit-memory", ."limit-cpu") else . end' \
+  dcm2niix_command.json)
 
 # ----------------------------------------------------------------
 # IMAGE HOST (registry entry for the pinned dcm2niix image)
@@ -175,20 +161,16 @@ if [[ -n "$CMD_ID" ]]; then
   echo "Found existing command ID: $CMD_ID. Updating it in place..."
   admin_curl -X POST "$XNAT_URL/xapi/commands/$CMD_ID" \
     -H "Content-Type: application/json" \
-    -d @"$DCM2NIIX_COMMAND_JSON" >/dev/null
+    -d "$DCM2NIIX_COMMAND" >/dev/null
 else
   # The POST returns the new id as a bare number, used directly because a re-GET by name once came back empty on prod.
   echo "Command not found. Adding dcm2niix command..."
   CMD_ID=$(admin_curl -X POST "$XNAT_URL/xapi/commands" \
     -H "Content-Type: application/json" \
-    -d @"$DCM2NIIX_COMMAND_JSON")
+    -d "$DCM2NIIX_COMMAND")
 fi
 
-if ! [[ "$CMD_ID" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: XNAT did not give a numeric $DCM2NIIX_NAME command id." >&2
-  echo "  body: $CMD_ID" >&2
-  exit 1
-fi
+require_numeric_id "XNAT returned the $DCM2NIIX_NAME command" "$CMD_ID"
 
 # Read it back: the wrapper id is what triggers name, and the image shows the pin landed.
 REGISTERED=$(admin_curl "$XNAT_URL/xapi/commands/$CMD_ID")
