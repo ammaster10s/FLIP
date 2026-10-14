@@ -1397,7 +1397,8 @@ environment. There is no automatic link between them. What catches a slip:
   so the two cannot drift apart silently;
 - a value that has merely drifted (not gone missing) shows up as an unexpected
   plan diff — compare against a laptop `make plan HUB=stag` on the same
-  commit when a CI plan looks wrong.
+  commit when a CI plan looks wrong, with the image tags resolved as CI does
+  (see "Plan and drift resolve the tags too" below).
 
 ### GitHub environments
 
@@ -1779,6 +1780,19 @@ the services are running, never probe the registry. Without that, once the first
 CI apply has written a `sha-…` pin every PR plan and every nightly run would
 report a permanent `sha-… → :prod` diff on the task definitions — including the FL
 ones, which the FL gate would then hold every apply on.
+
+A laptop plan compared against CI's has to resolve them the same way, or it shows that diff. After
+`make init HUB=prod`, with `DOCKER_REGISTRY` and `FL_BACKEND` as in `.env.prod`:
+
+```bash
+export AWS_PROFILE=lza-prod
+GIT_SHA=$(git rev-parse HEAD) RESOLVE_SHA_TAG=false DOCKER_REGISTRY=<registry> FL_BACKEND=<backend> \
+  FALLBACK_DOCKER_TAG=prod FALLBACK_DOCKER_FL_TAG=prod scripts/resolve-image-tags.sh > /tmp/flip-live-tags &&
+  make plan HUB=prod LOCK=false $(cat /tmp/flip-live-tags)
+```
+
+The tags go on the command line because the env file's `DOCKER_TAG` would beat an exported one. Read the plan,
+never `make apply` it: the estate is CI-applied ([Break-glass](#break-glass) is the exception).
 
 **An infrastructure-only apply does not wait for images that cannot exist.** The
 apply fires on `deploy/providers/AWS/**` while the image builds fire on service
