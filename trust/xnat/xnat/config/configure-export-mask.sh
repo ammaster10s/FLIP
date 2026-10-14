@@ -158,28 +158,34 @@ if [ "$SUB_COUNT" != "1" ]; then
   exit 1
 fi
 
-# Counting by name alone is not enough. XNAT accepts a subscription whose event-selector names
-# a class it cannot resolve, and stores it happily — the subscription then simply never fires,
-# so DICOM-SEG assessors are created and silently never converted. Nothing surfaces in the
-# viewer, and the only trace is the absence of entries in Command History. Assert the selector
-# actually round-tripped as an ImageAssessorEvent, and that the subscription is active.
-SUB_SELECTOR=$(printf '%s' "$SUBSCRIPTIONS" \
-  | jq -r --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '.[] | select(.name == $name) | .["event-selector"] // empty')
-SUB_ACTIVE=$(printf '%s' "$SUBSCRIPTIONS" \
-  | jq -r --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '.[] | select(.name == $name) | .active')
+# Counting by name alone is not enough. XNAT accepts a subscription whose event class it cannot
+# resolve, and stores it happily — the subscription then simply never fires, so DICOM-SEG
+# assessors are created and silently never converted. Nothing surfaces in the viewer, and the
+# only trace is the absence of entries in Command History. XNAT 1.10 reports the class it
+# resolved under event-filter.event-type (it does not echo the event-selector we POSTed) and
+# flags the subscription `valid`; assert both, and that it is active.
+SUB=$(printf '%s' "$SUBSCRIPTIONS" | jq -c --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '.[] | select(.name == $name)')
+SUB_EVENT_TYPE=$(printf '%s' "$SUB" | jq -r '.["event-filter"]["event-type"] // empty')
+SUB_VALID=$(printf '%s' "$SUB" | jq -r '.valid')
+SUB_ACTIVE=$(printf '%s' "$SUB" | jq -r '.active')
 
-echo "  event-selector: $SUB_SELECTOR"
-# Substring rather than equality: XNAT is free to normalise the stored form, and a spurious
-# bring-up failure over cosmetic drift would be worse than the bug this guards against.
-case "$SUB_SELECTOR" in
-  *ImageAssessorEvent*) ;;
+echo "  event-type: $SUB_EVENT_TYPE (valid: $SUB_VALID, active: $SUB_ACTIVE)"
+# Suffix match rather than equality: the package prefix is XNAT's to normalise. A class missing
+# its "Event" suffix is the mistake this exists to catch.
+case "$SUB_EVENT_TYPE" in
+  *.ImageAssessorEvent) ;;
   *)
-    echo "ERROR: subscription event-selector is '$SUB_SELECTOR', expected an ImageAssessorEvent." >&2
-    echo "       XNAT event classes carry the 'Event' suffix; a selector it cannot resolve is" >&2
+    echo "ERROR: subscription event-type is '$SUB_EVENT_TYPE', expected an ImageAssessorEvent." >&2
+    echo "       XNAT event classes carry the 'Event' suffix; a class it cannot resolve is" >&2
     echo "       stored without complaint and then never fires." >&2
     exit 1
     ;;
 esac
+
+if [ "$SUB_VALID" != "true" ]; then
+  echo "ERROR: XNAT reports the '$EXPORT_MASK_SUBSCRIPTION_NAME' subscription as not valid" >&2
+  exit 1
+fi
 
 if [ "$SUB_ACTIVE" != "true" ]; then
   echo "ERROR: '$EXPORT_MASK_SUBSCRIPTION_NAME' subscription is not active (got '$SUB_ACTIVE')" >&2
