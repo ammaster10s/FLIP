@@ -292,7 +292,6 @@ class FakeXnat:
             ("GET", "/data/projects?format=json"): (200, json.dumps({"ResultSet": {"Result": [{"ID": "a-uuid"}]}})),
             ("DELETE", "/data/projects/FLIPSELFTEST?removeFiles=true"): (200, ""),
             ("POST", "/data/projects"): (200, ""),
-            ("PUT", "/data/projects/FLIPSELFTEST/prearchive_code/4"): (200, ""),
             ("GET", "/data/experiments/XNAT_E00042/scans?format=json"): (
                 200,
                 json.dumps({"ResultSet": {"Result": [{"ID": "1"}]}}),
@@ -308,7 +307,7 @@ class FakeXnat:
             ),
         }
         # Successive answers to the experiment and container listings; the last one repeats.
-        self.experiment_answers = [[], [{"ID": "XNAT_E00042"}]]
+        self.experiment_answers = [[{"ID": "XNAT_E00042"}]]
         self.container_answers = [
             [],
             [{"workflow-id": "wf-1", "status": "Running"}],
@@ -459,7 +458,6 @@ def test_an_earlier_runs_container_is_not_read_while_ours_is_not_listed_yet():
             (500, json.dumps({"status": "failure", "message": "no such wrapper"})),
             "refused the launch",
         ),
-        (("PUT", "/data/projects/FLIPSELFTEST/prearchive_code/4"), (403, "x"), "auto-archive"),
     ],
 )
 def test_each_step_that_fails_is_named(route, answer, says):
@@ -472,21 +470,27 @@ def test_each_step_that_fails_is_named(route, answer, says):
     assert says in check.detail
 
 
-def test_the_project_auto_archives_before_the_import_and_the_session_is_awaited():
+EXPERIMENTS = "/data/projects/FLIPSELFTEST/experiments?format=json"
+
+
+def test_the_archived_session_is_read_once_right_after_the_import_with_no_wait():
     xnat = FakeXnat()
 
     assert _convert(xnat).ok
-    order = [c[1] for c in xnat.calls if c[0] in ("PUT", "IMPORT")]
-    assert order.index("/data/projects/FLIPSELFTEST/prearchive_code/4") < order.index("series-a")
+    order = [c[1] for c in xnat.calls]
+    assert order.count(EXPERIMENTS) == 1
+    assert order.index("series-a") < order.index(EXPERIMENTS)
+    assert not any("prearchive" in str(c[1]) for c in xnat.calls)
 
 
-def test_a_session_never_archived_fails_naming_the_project():
+def test_an_import_that_archives_nothing_fails_naming_the_project():
     xnat = FakeXnat(experiment_answers=[[]])
 
     check = _convert(xnat)
 
     assert not check.ok
-    assert "not archived into FLIPSELFTEST within 600s" in check.detail
+    assert "archived no session into FLIPSELFTEST" in check.detail
+    assert [c[1] for c in xnat.calls].count(EXPERIMENTS) == 1
     assert xnat.calls[-1][0] == "DELETE"
 
 
@@ -650,6 +654,7 @@ def test_the_import_posts_the_series_zip_into_the_project(tmp_path):
     assert "http://orthanc:8042/series/series-a/archive" in args
     assert "import-handler=DICOM-zip&PROJECT_ID=FLIPSELFTEST" in args
     assert "inbody=true" in args
+    assert "action=commit&AA=true" in args
     assert "s3cret" not in args
     assert "password" not in args
 

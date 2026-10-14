@@ -52,9 +52,6 @@ SELFTEST_PROJECT = "FLIPSELFTEST"
 SELFTEST_NAME = "FLIP self-test"
 # How many Orthanc series the conversion check looks at to pick the smallest one to convert.
 SERIES_SAMPLE = 50
-# How long XNAT may take to move the imported session from the prearchive into the archive. It
-# archives a session only once it has been idle for about five minutes: 5.4 minutes on AZ1.
-ARCHIVE_TIMEOUT = 600
 API_COMPONENTS = ("trust-api", "imaging-api", "data-access-api")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -351,10 +348,11 @@ class XnatPod:
         return min(series, key=lambda s: s[1]) if series else None
 
     def import_series(self, orthanc_creds: str, series_id: str, project: str) -> tuple[int, str]:
-        """Copy one series from Orthanc into the project, through XNAT's import service.
+        """Copy one series from Orthanc into the project's archive, through XNAT's import service.
 
-        The DICOM-zip handler takes no archive destination: the session lands in the project's
-        prearchive, and the project's prearchive code decides whether XNAT archives it.
+        ``action=commit`` with ``AA=true`` has the DICOM-zip importer build the session and archive it
+        before it answers, with the archive URI as the body. Without them the session waits in the
+        prearchive until XNAT's idle timer archives it, about five minutes later.
         """
         fetch = (
             "read -r ocreds\n"
@@ -365,7 +363,7 @@ class XnatPod:
         )
         url = (
             f"{XNAT_URL}/data/services/import?import-handler=DICOM-zip&PROJECT_ID={project}"
-            "&SUBJECT_ID=selftest&EXPT_LABEL=selftest&inbody=true"
+            "&SUBJECT_ID=selftest&EXPT_LABEL=selftest&inbody=true&action=commit&AA=true"
         )
         return self._xnat(
             f"-X POST -H 'Content-Type: application/zip' --data-binary @\"$zip\" {shlex.quote(url)}",
@@ -466,18 +464,19 @@ def _convert(
     name = "dcm2niix conversion"
     project = SELFTEST_PROJECT
     series_id, instances = series
-    # Auto-archive what arrives, as imaging-api sets every project it creates (prearchive code 4).
-    status, body = xnat.request("PUT", f"/data/projects/{project}/prearchive_code/4")
-    if status != 200:
-        return Check(name, False, f"could not set {project} to auto-archive (HTTP {status}: {body[:120]})")
+    # The import archives before it answers, so an archive XNAT refuses (a validation error, say)
+    # comes back here as the import's own failure.
     status, body = xnat.import_series(orthanc_creds, series_id, project)
     if status != 200:
-        return Check(name, False, f"XNAT did not import Orthanc series {series_id} (HTTP {status}: {body[:120]})")
-    archived_by = clock() + ARCHIVE_TIMEOUT
-    while not (experiments := _results(xnat.request("GET", f"/data/projects/{project}/experiments?format=json")[1])):
-        if clock() >= archived_by:
-            return Check(name, False, f"the imported series was not archived into {project} within {ARCHIVE_TIMEOUT}s")
-        sleep(poll)
+        return Check(name, False, f"XNAT did not import Orthanc series {series_id} (HTTP {status}: {body[:200]})")
+    experiments = _results(xnat.request("GET", f"/data/projects/{project}/experiments?format=json")[1])
+    if not experiments:
+        return Check(
+            name,
+            False,
+            f"XNAT answered the import of Orthanc series {series_id} ({body.strip()[:120]!r}) "
+            f"but archived no session into {project}",
+        )
     experiment = experiments[0]["ID"]
     scans = _results(xnat.request("GET", f"/data/experiments/{experiment}/scans?format=json")[1])
     if not scans:
