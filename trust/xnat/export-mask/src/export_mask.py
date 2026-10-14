@@ -63,7 +63,9 @@ def find_reference_nifti(xnat: Interface, project: str, experiment: str, workdir
     """Download the session's NIfTI scan, or return None when there is not exactly one candidate.
 
     The OHIF mask covers one series, so with several scans the right reference is ambiguous; the
-    mask is then kept in the DICOM-SEG's own geometry rather than resampled onto a guess.
+    mask is then kept in the DICOM-SEG's own geometry rather than resampled onto a guess. Within
+    the scan's NIFTI resource the image is dcm2niix's output, named after the Container Service's
+    /input mount (``input_*``); enrichment puts ``label_*`` and other masks beside it.
     """
     session = xnat.select.project(project).experiment(experiment)
     scans = session.scans().get()
@@ -71,9 +73,9 @@ def find_reference_nifti(xnat: Interface, project: str, experiment: str, workdir
         print(f"Not resampling: expected exactly one scan in {experiment}, found {len(scans)}.")
         return None
     resource = session.scan(scans[0]).resource("NIFTI")
-    files = resource.files().get()
+    files = [f for f in resource.files().get() if f.startswith("input_") and f.endswith((".nii", ".nii.gz"))]
     if len(files) != 1:
-        print(f"Not resampling: expected exactly one NIFTI file on scan {scans[0]}, found {len(files)}.")
+        print(f"Not resampling: expected exactly one input_*.nii[.gz] on scan {scans[0]}, found {len(files)}.")
         return None
     path = workdir / files[0]
     resource.file(files[0]).get(str(path))

@@ -241,3 +241,21 @@ def test_identity_resampling_onto_its_own_grid_changes_nothing(dicom_seg: Path, 
     assert after.GetOrigin() == pytest.approx(before.GetOrigin())
     assert after.GetSpacing() == pytest.approx(before.GetSpacing())
     assert after.GetDirection() == pytest.approx(before.GetDirection())
+
+
+def test_reference_is_the_converted_scan_not_the_labels_beside_it(tmp_path: Path) -> None:
+    """FLIP's NIFTI resource holds dcm2niix's ``input_*`` image plus enrichment's ``label_*`` masks."""
+    xnat = mock.MagicMock()
+    session = xnat.select.project.return_value.experiment.return_value
+    session.scans.return_value.get.return_value = ["1"]
+    resource = session.scan.return_value.resource.return_value
+    resource.files.return_value.get.return_value = [
+        "label_CT_Spleen_20161103205508_1.nii.gz",
+        "input_CT_Spleen_20161103205508_1.nii.gz",
+        "input_CT_Spleen_20161103205508_1.json",
+    ]
+
+    reference = export_mask.find_reference_nifti(xnat, "P", "E", tmp_path)
+
+    assert reference == tmp_path / "input_CT_Spleen_20161103205508_1.nii.gz"
+    resource.file.assert_called_once_with("input_CT_Spleen_20161103205508_1.nii.gz")
