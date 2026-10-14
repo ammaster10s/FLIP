@@ -327,7 +327,55 @@ class TestEnvFileParsing:
 # suite green. These drive both, with every AWS call stubbed.
 
 
-def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
+#: compose-ci-env.sh's LZA_REQUIRED_KEYS, plus the two subdomains its REQUIRED_KEYS carries.
+LZA_KEYS = (
+    "ACCESS_LOGS_BUCKET_NAME",
+    "EFS_PROVISION_IMAGE",
+    "LZA_VPC_NAME",
+    "MANAGE_DNS",
+    "NETWORKING_INGRESS_CIDRS",
+    "ALB_SUBDOMAIN",
+    "NLB_SUBDOMAIN",
+)
+
+
+#: The LZA keys as an estate's state holds them (pre-FLIP#1479 addresses, with their [0]).
+LZA_STATE = [
+    {
+        "mode": "data",
+        "type": "aws_vpc",
+        "name": "lza",
+        "instances": [
+            {"index_key": 0, "attributes": {"cidr_block": "10.20.0.0/16", "tags": {"Name": "AWSAccelerator-vpc"}}}
+        ],
+    },
+    {
+        "mode": "managed",
+        "module": "module.fl_internal_nlb_security_group[0]",
+        "type": "aws_security_group_rule",
+        "name": "ingress",
+        "instances": [{"index_key": "8002", "attributes": {"cidr_blocks": ["10.20.0.0/16", "10.12.0.0/24"]}}],
+    },
+    {
+        "mode": "managed",
+        "type": "aws_s3_bucket",
+        "name": "flip_access_logs",
+        "instances": [{"attributes": {"bucket": "flip-lza-access-logs"}}],
+    },
+    {
+        "mode": "managed",
+        "type": "aws_cloudfront_origin_access_control",
+        "name": "flip_ui",
+        "instances": [{"attributes": {"name": "flip-ui-app.flip.example"}}],
+    },
+    _task_definition(
+        "efs_provision",
+        [{"name": "provision-efs-certs", "image": "123.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2"}],
+    ),
+]
+
+
+def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None, lza: bool = False) -> dict:
     """Just enough state for build() to run end to end; the demo bucket, when given, is the
     managed ``aws_s3_bucket.this`` inside ``module.flip_demo_assets_bucket`` (FLIP#1199)."""
     resources: list[dict] = [
@@ -413,7 +461,9 @@ def _minimal_state(*, with_trust_host: bool, demo_bucket: str | None) -> dict:
                 "instances": [{"attributes": {"bucket": "flip-lza-fl-results"}}],
             },
         )
-    return {"resources": resources}
+    if lza:
+        resources += LZA_STATE
+    return {"resources": resources, "outputs": {"FlServerEndpoint": {"value": "fl.flip.example"}} if lza else {}}
 
 
 @pytest.fixture
@@ -482,6 +532,41 @@ class TestBuild:
         stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket="flip-lza-demo-assets"))
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
+
+    def test_the_keys_every_estate_requires_come_from_state(self, stub_aws):
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None, lza=True))
+        values, _ = rce.build("stag", "lza-stag", "eu-west-2", "flip-terraform-state-lza-stag", "flip-cluster")
+        assert {key: values[key] for key in LZA_KEYS} == {
+            "ACCESS_LOGS_BUCKET_NAME": "flip-lza-access-logs",
+            "EFS_PROVISION_IMAGE": "123.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2",
+            "LZA_VPC_NAME": "AWSAccelerator-vpc",
+            "MANAGE_DNS": "false",  # no certificate in state
+            "NETWORKING_INGRESS_CIDRS": '["10.12.0.0/24"]',  # the rule's sources less the VPC's own
+            "ALB_SUBDOMAIN": "app.flip.example",
+            "NLB_SUBDOMAIN": "fl.flip.example",
+        }
+
+    def test_a_certificate_in_state_means_dns_is_managed(self, stub_aws):
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None, lza=True))
+        stub_aws["resources"].append(
+            {
+                "mode": "managed",
+                "type": "aws_acm_certificate",
+                "name": "flip",
+                "instances": [{"attributes": {"id": "c"}}],
+            }
+        )
+        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
+        assert values["MANAGE_DNS"] == "true"
+
+    def test_keys_state_cannot_answer_are_left_empty_to_be_flagged(self, stub_aws):
+        """Empty is what main() reports as "Not recovered — set these by hand"."""
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
+        for key in LZA_KEYS:
+            if key != "MANAGE_DNS":
+                assert values[key] == "", key
+        assert not rce.keys_expected_empty("prod") & set(LZA_KEYS)
 
 
 class TestExpectedEmpty:

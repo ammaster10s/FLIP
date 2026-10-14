@@ -92,8 +92,8 @@ class State:
     def __init__(self, doc: dict) -> None:
         self.doc = doc
 
-    def attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a managed resource's first instance, by type and name.
+    def attrs(self, rtype: str, name: str, mode: str = "managed") -> dict[str, Any]:
+        """Attributes of a resource's first instance, by type and name.
 
         `mode` matters: a `data` source and a `managed` resource can share a
         type and name (aws_ecs_task_definition.flip_api is both, by design —
@@ -103,13 +103,14 @@ class State:
         Args:
             rtype (str): Terraform resource type, e.g. `aws_ecs_task_definition`.
             name (str): Resource name, e.g. `flip_api`.
+            mode (str): `managed` (the default) or `data`.
 
         Returns:
             dict[str, Any]: The first instance's attributes, or `{}` when the resource
                 is absent from state or has no instances.
         """
         for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
+            if r.get("mode") == mode and r.get("type") == rtype and r.get("name") == name:
                 instances = r.get("instances") or []
                 if instances:
                     return instances[0].get("attributes") or {}
@@ -177,6 +178,10 @@ class State:
                 return bool(r.get("instances"))
         return False
 
+    def output(self, name: str) -> str:
+        """A root output's value, or '' when state has none."""
+        return str((self.doc.get("outputs", {}).get(name) or {}).get("value") or "")
+
     def containers(self, task_family: str) -> list[dict]:
         raw = self.attrs("aws_ecs_task_definition", task_family).get("container_definitions")
         return json.loads(raw) if raw else []
@@ -190,6 +195,19 @@ class State:
 
 def env_of(container: dict) -> dict[str, str]:
     return {e["name"]: e["value"] for e in (container.get("environment") or [])}
+
+
+def networking_ingress_cidrs(st: State) -> str:
+    """The networking account's ingress CIDRs, as the HCL list the env file carries.
+
+    The internal NLB's rules admit them beside the VPC's own CIDR (fl_ingress_lza.tf),
+    so they are the rules' sources less that one; '' when state has either side missing.
+    """
+    vpc_cidr = st.attrs("aws_vpc", "lza", mode="data").get("cidr_block")
+    rule = st.module_attrs("module.fl_internal_nlb_security_group", "aws_security_group_rule", "ingress")
+    if not vpc_cidr or "cidr_blocks" not in rule:
+        return ""
+    return json.dumps([cidr for cidr in rule["cidr_blocks"] or [] if cidr != vpc_cidr])
 
 
 def first_port(container: dict) -> str:
@@ -331,6 +349,9 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     )
 
     has_trust_ec2 = st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
+    # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
+    # for both subdomains never existed on an LZA estate.
+    oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
 
     v: dict[str, str] = {
         "AWS_REGION": region,
@@ -347,8 +368,8 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
         "SES_VERIFIED_EMAIL": st.attrs("aws_ses_email_identity", "flip_sender").get("email", ""),
-        "ALB_SUBDOMAIN": st.attrs("aws_route53_record", "alb").get("fqdn", ""),
-        "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
+        "ALB_SUBDOMAIN": oac_name.removeprefix("flip-ui-") if oac_name.startswith("flip-ui-") else "",
+        "NLB_SUBDOMAIN": st.output("FlServerEndpoint"),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
         "FL_SERVER_PORT": first_port(fl_server),
@@ -372,6 +393,13 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB": fl_api_env.get("JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB", ""),
         "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
+        # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
+        "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
+        "EFS_PROVISION_IMAGE": st.container("efs_provision", "provision-efs-certs").get("image", ""),
+        "LZA_VPC_NAME": (st.attrs("aws_vpc", "lza", mode="data").get("tags") or {}).get("Name", ""),
+        # certificate.tf creates the certificate exactly when manage_dns is true.
+        "MANAGE_DNS": "true" if st.attrs("aws_acm_certificate", "flip") else "false",
+        "NETWORKING_INGRESS_CIDRS": networking_ingress_cidrs(st),
     }
     # Which values did NOT come from state. Built by grouping rather than as
     # literal `"KEY": "..."` pairs: secret-scanning treats a quoted string beside
