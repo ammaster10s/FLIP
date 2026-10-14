@@ -120,13 +120,15 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 # Platform overlays (space-separated, applied in order) after the per-trust override, e.g. values-aks.yaml on a managed
-# AKS cluster (FLIP#1390): settings that belong to where the chart runs, not to the trust.
-PLATFORM_VALUES ?=
+# AKS cluster (FLIP#1390): settings that belong to where the chart runs, not to the trust. With KIT set they default
+# to the kit file's K8S_PLATFORM_VALUES, so every deploy and upgrade of that trust applies them: a run that dropped
+# values-aks.yaml would move PGDATA back to the volume root and the kit back to the node.
+PLATFORM_VALUES ?= $(if $(KIT),$(shell sed -n 's/^K8S_PLATFORM_VALUES=//p' $(KIT_FILE) 2>/dev/null | tail -1))
 ifneq ($(strip $(PLATFORM_VALUES)),)
 	VALUES_OPTS := $(VALUES_OPTS) $(foreach f,$(PLATFORM_VALUES),-f $(f))
 endif
 
-# The chart requires flClient.kitHostPath whenever flClient is enabled, so any
+# The chart requires flClient.kitHostPath whenever flClient is enabled (with the default hostPath kit source), so any
 # render (make test, template-all-backends, a plain `make template`) fails the
 # moment values.yaml has no default. CI renders with the path hardcoded (.github/
 # workflows/test_helm_chart.yml); default the same value here so the local
