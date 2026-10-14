@@ -1329,6 +1329,25 @@ def test_check_client_status_returns_none_when_request_fails(mock_http_get, erro
     assert fl_service.check_client_status("endpoint") is None
 
 
+@pytest.mark.parametrize(
+    ("error_factory", "expected_error_logs"),
+    [(_fl_api_unreachable, 0), (_fl_api_answers_500, 1)],
+    ids=["fl-api-unreachable", "fl-api-answers-500"],
+)
+@pytest.mark.parametrize(
+    "check", [fl_service.check_server_status, fl_service.check_client_status], ids=["server", "client"]
+)
+@patch("flip_api.fl_services.services.fl_service.logger")
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_status_logs_a_failed_request_once(mock_http_get, mock_logger, check, error_factory, expected_error_logs):
+    # http_get logs a RequestError itself before re-raising it, so logging it here too would print the same
+    # line twice on every status poll; an error response is not logged by http_get, so it is logged here.
+    mock_http_get.side_effect = error_factory()
+
+    assert check("endpoint") is None
+    assert mock_logger.error.call_count == expected_error_logs
+
+
 @patch("flip_api.fl_services.services.fl_service.http_get")
 def test_check_client_status_success(mock_http_get):
     mock_http_get.return_value = [
