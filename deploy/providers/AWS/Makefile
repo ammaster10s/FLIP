@@ -13,9 +13,8 @@
 # What HUB means (ENV, the env-file name, ENV_CLASS, …) is derived once in
 # ../../env_mode.mk, shared with every Makefile that reads HUB. Unlike the root
 # Makefile, an unset HUB is no estate here: every goal but the static ones below
-# refuses to run without HUB=stag|prod (FLIP#1377). The estate's network mode —
-# self-contained or platform-managed (LZA) — is LZA_MANAGED_NETWORK in its env
-# file, not part of the selector; see "Deploying onto an LZA estate" in README.md.
+# refuses to run without HUB=stag|prod (FLIP#1377). Every estate is an LZA one; see
+# "Deploying onto an LZA estate" in README.md.
 include ../../env_mode.mk
 
 # Goals that need no env file and call no AWS API. When every goal on the command line is one of
@@ -40,7 +39,8 @@ ONPREM_ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
 ifneq ($(IS_DEPLOYED),)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# Real assignments only, as in the root Makefile: a commented `# KEY=` must not become a bare export.
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
 endif
 endif
 
@@ -68,21 +68,11 @@ _AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
 
-# Network mode (FLIP#749, FLIP#1479): LZA_MANAGED_NETWORK=true in the env file puts the
-# estate on an LZA workload account, whose VPC layer the AWS Accelerator pipeline owns
-# and SCP-denies to this stack, so Terraform switches from creating the network to data
-# lookups (see network_lza.tf); false is the self-contained estate. Required, not
-# defaulted, by the env guards below: the wrong mode plans the other estate's network.
-IS_LZA := $(filter true,$(LZA_MANAGED_NETWORK))
-
-# Logical AWS profile names. Defaults match the short-alias pattern recommended
-# in deploy/providers/AWS/README.md (operators add `[profile prod]` / `[profile stag]`
-# blocks to their ~/.aws/config that point at the FLIP SSO accounts; on LZA,
-# `[profile lza-prod]` / `[profile lza-stag]` for the Identity Center
-# `FLIPAdminAccess` permission set). Override via the env file or on the command line
-# if your local profile names differ.
-PROD_AWS_PROFILE ?= $(if $(IS_LZA),lza-prod,prod)
-STAG_AWS_PROFILE ?= $(if $(IS_LZA),lza-stag,stag)
+# Logical AWS profile names: the short local aliases recommended in README.md for each LZA
+# workload account's Identity Center `FLIPAdminAccess` permission set. Override via the env
+# file or on the command line if your local profile names differ.
+PROD_AWS_PROFILE ?= lza-prod
+STAG_AWS_PROFILE ?= lza-stag
 
 # The AWS profile each environment expects, checked by the account guard in the env guards
 # below. Profile name is the safety guard because Make has no easy way to read the account ID
@@ -93,33 +83,24 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
-# prod-only RDS hardening (deletion protection, final snapshot). It is orthogonal to
-# the network mode above: HUB=stag on an LZA account is staging semantics on the
-# platform-managed network.
+# prod-only RDS hardening (deletion protection, final snapshot).
 export TF_VAR_environment=$(ENV_CLASS)
 
-export TF_VAR_lza_managed_network=$(if $(IS_LZA),true,false)
-# Name tag of the platform-managed VPC; only consulted on LZA. Set LZA_VPC_NAME in
-# the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
+# LZA is the only supported setup; a follow-up issue deletes the self-contained Terraform paths this switches off.
+export TF_VAR_lza_managed_network=true
+# Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
 # optional on HUB=prod if the platform template keeps that name, mandatory on
 # HUB=stag (the env guards below).
 ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
-# IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained mode takes
-# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
-# modules/terraform_ci_bootstrap (through ci/ or a platform repository). LZA
-# takes the platform's AICentre-WorkloadRoleBoundary instead
-# (londonaicentre/lza#51): the accelerator deploys it to every workload account,
-# and an LZA SCP denies creating a role, or attaching or writing a policy onto
-# one, unless the role carries it. So on LZA it is not a choice — without it every
-# role change is denied, from a laptop or from CI. There the platform instantiates
-# the bootstrap module with its own boundary rather than FLIP's. An env file that
-# sets the variable still wins: `?=` only supplies the default.
-ifneq ($(IS_LZA),)
+# IAM permissions boundary (FLIP#1082, FLIP#1280): the platform's AICentre-WorkloadRoleBoundary
+# (londonaicentre/lza#51), which the accelerator deploys to every workload account. An LZA SCP
+# denies creating a role, or attaching or writing a policy onto one, unless the role carries it,
+# so every role change needs it, from a laptop or from CI. An env file that sets the variable
+# still wins: `?=` only supplies the default.
 export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
-endif
 
 # The trust kit file the trust-deploy targets read — trust/.env.<KIT>.$(ENV), or an old
 # name resolved by env_mode.mk's kit_file.
@@ -159,18 +140,15 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 ifeq ($(STATIC_ONLY),)
 $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
 # Refuse to operate against an unintended AWS account (the profile knobs above).
-$(if $(filter true false,$(LZA_MANAGED_NETWORK)),,$(error LZA_MANAGED_NETWORK must be true (LZA, platform-managed network) or false (self-contained) in $(MAIN_ENV_FILE) — got '$(LZA_MANAGED_NETWORK)'))
 ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
-$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
+$(error "AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' for HUB=$(HUB) (or set $(_AWS_PROFILE_KNOB_$(ENV)) in $(MAIN_ENV_FILE)) — got '$(AWS_PROFILE)'")
 endif
 # The variables.tf default VPC name is the prod template (AWSAccelerator-eu-west-2-prod);
 # there is no defaultable name for the staging VPC, so require it explicitly rather
 # than letting the data lookup fail with an opaque "no results" in the wrong account.
-ifneq ($(IS_LZA),)
 ifeq ($(ENV),stag)
 ifeq ($(LZA_VPC_NAME),)
-$(error "For LZA staging deployments, LZA_VPC_NAME must be set in $(MAIN_ENV_FILE) (the Name tag of the staging platform VPC)")
-endif
+$(error "For staging deployments, LZA_VPC_NAME must be set in $(MAIN_ENV_FILE) (the Name tag of the staging platform VPC)")
 endif
 endif
 # Fail fast with a useful message if the per-tenant bucket names are missing
@@ -220,8 +198,8 @@ export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). An LZA account has no internet egress, so its env file
 # points this at the in-account ECR Public pull-through cache mirror
-# (…/ecr-public/aws-cli/aws-cli:<tag>, FLIP#749). Export only when set so
-# self-contained estates keep the variables.tf default rather than an empty string.
+# (…/ecr-public/aws-cli/aws-cli:<tag>, FLIP#749). Export only when set, so an unset
+# key keeps the variables.tf default rather than an empty string.
 ifneq ($(EFS_PROVISION_IMAGE),)
 export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
 endif
@@ -251,7 +229,7 @@ export TF_VAR_AWS_REGION=${AWS_REGION}
 # DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
 # for the first bring-up (default CloudFront domain, no custom certs/records) and
-# flips it to true once the zone exists there. Unset (self-contained) ⇒ true.
+# flips it to true once the zone exists there. Unset ⇒ true.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
 # Handing the public web name to another estate's CloudFront (FLIP#749 change
@@ -942,21 +920,12 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
-	@# On LZA there is no workload distribution to invalidate (cloudfront.tf gates
-	@# it off; the networking account's edge distribution serves the bucket) and no
-	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
-	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
-	@# deploy is visible on the next index.html fetch with no invalidation at all.
-ifneq ($(IS_LZA),)
-	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
-else
-	@echo "🧹 Invalidating CloudFront..."
-	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
-	$(_AWS_ENV) aws cloudfront create-invalidation \
-		--distribution-id "$$DIST_ID" \
-		--paths "/*" >/dev/null
-endif
+	@# There is no workload distribution to invalidate (cloudfront.tf gates it off; the
+	@# networking account's edge distribution serves the bucket) and no cross-account
+	@# invalidation permission -- BY DESIGN (FLIP#749): the hashed bundles are immutable
+	@# and index.html/window.js carry no-cache metadata, so a deploy is visible on the
+	@# next index.html fetch with no invalidation at all.
+	@echo "🧹 No CloudFront invalidation (the edge distribution honours the Cache-Control metadata)."
 	@echo "✅ deploy-ui complete."
 
 .PHONY: deploy-ark-demo

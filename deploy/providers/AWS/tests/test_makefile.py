@@ -169,7 +169,6 @@ COMPLETE_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_MANAGED_NETWORK": "false",
     "LZA_VPC_NAME": "probe-vpc",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
@@ -215,8 +214,6 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
     [
         ({"FLARE_KIT_DATE": None}, "FLARE_KIT_DATE"),
         ({"AWS_PROFILE": "someone-else"}, "AWS_PROFILE must be set"),
-        ({"LZA_MANAGED_NETWORK": None}, "LZA_MANAGED_NETWORK must be true"),
-        ({"LZA_MANAGED_NETWORK": "yes"}, "LZA_MANAGED_NETWORK must be true"),
         ({"FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": None}, "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME"),
         ({"FLIP_FL_RESULTS_BUCKET_NAME": None}, "FLIP_FL_RESULTS_BUCKET_NAME"),
         ({"FLIP_APP_BUNDLES_BUCKET_NAME": "<your-bundles-bucket>"}, "FLIP_APP_BUNDLES_BUCKET_NAME"),
@@ -239,8 +236,8 @@ def test_an_unset_hub_refuses_a_real_goal(tmp_path: Path) -> None:
     assert "HUB=stag or HUB=prod is required" in result.stderr, result.stderr
 
 
-def test_the_lza_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
-    env_file = _env_file(tmp_path, LZA_MANAGED_NETWORK="true", LZA_VPC_NAME=None)
+def test_the_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
+    env_file = _env_file(tmp_path, LZA_VPC_NAME=None)
     result = _make_dry_run("plan", tmp_path=tmp_path, env_file=env_file)
     assert result.returncode != 0
     assert "LZA_VPC_NAME must be set" in result.stderr, result.stderr

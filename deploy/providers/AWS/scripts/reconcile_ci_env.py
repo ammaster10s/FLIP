@@ -34,14 +34,14 @@ Secret values are written to the output file but never printed: the summary
 shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
-``--env`` defaults to AI Centre's LZA estates (profile ``lza-<env>``, state bucket
-``flip-terraform-state-lza`` / ``flip-terraform-state-lza-stag``); a self-contained
-estate passes its own ``--profile`` and ``--bucket``.
+``--env prod|stag`` is required. ``--profile`` and ``--bucket`` default to AI Centre's
+LZA estates (profile ``lza-<env>``, state bucket ``flip-terraform-state-lza`` /
+``flip-terraform-state-lza-stag``); another estate passes its own.
 
 Usage:
     scripts/reconcile_ci_env.py --env prod --out ../../../.env.prod
     scripts/reconcile_ci_env.py --env stag --compare ../../../.env.stag
-    scripts/reconcile_ci_env.py --env prod --profile prod --bucket <state bucket> --compare ../../../.env.prod
+    scripts/reconcile_ci_env.py --env prod --profile <profile> --bucket <state bucket> --compare ../../../.env.prod
 """
 
 from __future__ import annotations
@@ -366,8 +366,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
-        # The platform VPC lookup is in state only on an LZA estate (network_lza.tf).
-        "LZA_MANAGED_NETWORK": "true" if st.data_attrs("aws_vpc", "lza") else "false",
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
         # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
@@ -476,7 +474,7 @@ def read_env_file(path: str) -> dict[str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
-    ap.add_argument("--profile", help="AWS profile (default: lza-<env>; a self-contained estate passes its own)")
+    ap.add_argument("--profile", help="AWS profile (default: lza-<env>)")
     ap.add_argument("--region", default="eu-west-2")
     ap.add_argument(
         "--bucket",

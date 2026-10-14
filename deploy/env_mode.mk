@@ -22,14 +22,12 @@
 #   prod       prod         .env.prod          prod         prod
 #
 # ENV is the token in every per-environment file name: the hub env file
-# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV). Whether the estate
-# runs on a self-contained or a platform-managed (LZA) network is not encoded here:
-# it is a property of the estate, set by LZA_MANAGED_NETWORK in its env file.
+# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV).
 
 # PROD was the selector until FLIP#1479. Refused rather than ignored, so an old
 # command line, or a PROD still exported in the shell, cannot run against development.
 ifneq ($(strip $(PROD)),)
-$(error PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod (was true/lza) or HUB=stag (was stag/lza-stag); the network mode is LZA_MANAGED_NETWORK in the hub env file — got PROD='$(PROD)')
+$(error PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod (was true/lza) or HUB=stag (was lza-stag); PROD=stag's self-contained staging account is retired — got PROD='$(PROD)')
 endif
 
 ifeq ($(HUB),prod)

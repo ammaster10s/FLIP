@@ -546,18 +546,6 @@ class TestBuild:
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
 
-    def test_the_network_mode_is_recovered_from_the_platform_vpc_lookup(self, stub_aws):
-        # The Makefile refuses an env file without LZA_MANAGED_NETWORK, so a
-        # reconciled file has to carry it; only an LZA estate holds data.aws_vpc.lza.
-        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
-        values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
-        assert values["LZA_MANAGED_NETWORK"] == "false"
-        stub_aws["resources"].append(
-            {"mode": "data", "type": "aws_vpc", "name": "lza", "instances": [{"attributes": {"id": "vpc-1"}}]}
-        )
-        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
-        assert values["LZA_MANAGED_NETWORK"] == "true"
-
 
 class TestExpectedEmpty:
     def test_demo_bucket_may_be_empty_on_stag(self):

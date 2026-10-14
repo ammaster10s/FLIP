@@ -117,7 +117,6 @@ OLD_KIT_NAMES = (
 AWS_STUB_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
-    "LZA_MANAGED_NETWORK": "true",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",

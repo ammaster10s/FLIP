@@ -111,16 +111,9 @@ jobs:
       # header, and `make print-tf-env` below.
       - name: Compose the Terraform env file
         env:
-          # Which estate this run composes for: the TF_HUB variable on the
-          # environment (stag | prod). No fallback — an unset TF_HUB fails the
-          # compose step instead of composing some default estate. The script
-          # derives the env-file name, the AWS_PROFILE the Makefile's guard expects
-          # and which keys are required.
+          # The estate: TF_HUB (stag | prod) on the environment. No fallback, so an
+          # unset TF_HUB fails this step instead of composing some default estate.
           HUB: ${{ vars.TF_HUB }}
-          # The estate's network mode (true = LZA, platform-managed; false =
-          # self-contained), required as well. The script writes it into the env
-          # file, where the Makefile reads it.
-          LZA_MANAGED_NETWORK: ${{ vars.LZA_MANAGED_NETWORK }}
           # The class this run is allowed to compose, asserted by the script: this
           # workflow declares `environment: aws-stag` unconditionally, so
           # TF_HUB=prod on aws-stag is a mis-set variable, and the plan it would
@@ -154,9 +147,7 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
-          # The LZA keys (FLIP#749). Required when LZA_MANAGED_NETWORK=true,
-          # expected absent on a self-contained estate — see compose-ci-env.sh,
-          # which is the one place that decides. The last four have no
+          # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last four have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on
           # purpose: the edge is built from this stack's outputs, so they are
@@ -215,9 +206,8 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          # Same HUB as the compose step above, for the same reason: `make` is
-          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
-          # it has to be looking at the environment this run composed for.
+          # The compose step's HUB, so `make` reads the env file it wrote and maps
+          # it onto TF_VAR_* exactly as a laptop plan would.
           HUB: ${{ vars.TF_HUB }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 

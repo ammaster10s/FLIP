@@ -93,7 +93,8 @@ def test_unknown_hub_value_is_refused(root: Path) -> None:
 def test_any_prod_is_refused_naming_the_hub_equivalent(root: Path, prod: str) -> None:
     result = _run(root, f"PROD={prod}", "HUB=prod")
     assert result.returncode != 0
-    assert "unset PROD and pass HUB=prod (was true/lza) or HUB=stag (was stag/lza-stag)" in result.stderr
+    assert "unset PROD and pass HUB=prod (was true/lza) or HUB=stag (was lza-stag)" in result.stderr
+    assert "PROD=stag's self-contained staging account is retired" in result.stderr
 
 
 def test_prod_in_the_environment_is_refused_too(root: Path) -> None:
