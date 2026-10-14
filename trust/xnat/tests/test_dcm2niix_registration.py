@@ -220,6 +220,32 @@ def test_each_backend_registers_its_own_container_service_backend_and_pings_it(t
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+def test_an_unchanged_backend_is_not_registered_again(tmp_path: Path, backend: str) -> None:
+    """Each POST stores the server under a new id, so a re-run that changed nothing must not POST."""
+    first = configure(tmp_path / "one", xnat_state([command(4, 4)]), backend)
+    assert first.code == 0, first.output
+    second = configure(tmp_path / "two", first.state, backend)
+
+    assert second.code == 0, second.output
+    assert not second.made("POST", r"/xapi/docker/server")
+    assert second.state["backend"]["id"] == first.state["backend"]["id"]
+    assert "already matches the configuration" in second.output
+    assert second.made("GET", r"/xapi/docker/server/ping"), "an unchanged backend is still pinged"
+
+
+def test_a_drifted_backend_is_registered_again(tmp_path: Path) -> None:
+    first = configure(tmp_path / "one", xnat_state([command(4, 4)]))
+    assert first.code == 0, first.output
+    drifted = first.state
+    drifted["backend"]["host"] = "unix:///var/run/docker.sock"
+    second = configure(tmp_path / "two", drifted)
+
+    assert second.code == 0, second.output
+    assert second.made("POST", r"/xapi/docker/server")
+    assert second.state["backend"]["host"] == "tcp://xnat-socket-proxy:2375"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_only_the_docker_backend_registers_an_image_host(tmp_path: Path, backend: str) -> None:
     """Swarm launches NPE without one; kubelet pulls on Kubernetes, so none is needed there."""
     run = configure(tmp_path, xnat_state([command(4, 4)]), backend)

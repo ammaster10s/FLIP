@@ -155,8 +155,13 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
         return 200, json.dumps(roles)
     if path == "/xapi/docker/server":
         if method == "POST":
-            state["backend"] = req.json_body()
-        return 200, "{}"
+            # As XNAT does: every POST stores the server again, under a new id.
+            state.setdefault("backend_seq", 0)
+            state["backend"] = {**req.json_body(), "id": _new_id(state, "backend_seq")}
+            return 200, json.dumps(state["backend"])
+        if state.get("backend") is None:
+            return 404, '{"error":"no server"}'
+        return 200, json.dumps(state["backend"])
     if path == "/xapi/docker/server/ping":
         return 200, "OK"
     if path == "/xapi/docker/hubs":

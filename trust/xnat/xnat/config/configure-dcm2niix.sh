@@ -68,24 +68,32 @@ fi
 
 # The backend: Docker through the xnat-socket-proxy sidecar with path translation, or the
 # Container Service's Kubernetes backend mounting the xnat-web data PVC into each Job (FLIP#565).
-echo "Adding the $XNAT_CS_BACKEND backend for the container service..."
 if [[ "$XNAT_CS_BACKEND" == docker ]]; then
   backend_config=$(jq --arg data_path "$DATA_PATH" '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
 else
   backend_config=$(jq --arg pvc "$XNAT_CS_PVC_NAME" '.["combined-pvc-name"] = $pvc' container-service-backend-configuration.kubernetes.json)
 fi
 
-echo "backend_config: $backend_config"
-# The status is checked here, not left to the ping: if XNAT rejects the new backend config, the
-# ping below could still pass against a previously registered backend. 000 = no answer.
-xnat_request 10 60 -X POST "$XNAT_URL/xapi/docker/server" \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  -d "$backend_config"
-if [[ "$xnat_status" != 2* ]]; then
-  echo "ERROR: POST /xapi/docker/server returned HTTP $xnat_status"
-  printf '%s\n' "$xnat_body"
-  exit 1
+# Registered again only when a field the config sets has drifted: each POST stores a new server
+# under a new id. A GET that fails (no server yet) counts as drift.
+xnat_request 10 60 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/docker/server"
+if [[ "$xnat_status" == 200 ]] && jq -e --argjson want "$backend_config" \
+    '. as $have | $want | to_entries | all(.value == $have[.key])' >/dev/null 2>&1 <<<"$xnat_body"; then
+  echo "The $XNAT_CS_BACKEND backend already matches the configuration — leaving it as-is."
+else
+  echo "Adding the $XNAT_CS_BACKEND backend for the container service..."
+  echo "backend_config: $backend_config"
+  # The status is checked here, not left to the ping: if XNAT rejects the new backend config, the
+  # ping below could still pass against a previously registered backend. 000 = no answer.
+  xnat_request 10 60 -X POST "$XNAT_URL/xapi/docker/server" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d "$backend_config"
+  if [[ "$xnat_status" != 2* ]]; then
+    echo "ERROR: POST /xapi/docker/server returned HTTP $xnat_status"
+    printf '%s\n' "$xnat_body"
+    exit 1
+  fi
 fi
 
 # Fail loudly here if the backend is unreachable — the command registration below would still
