@@ -16,7 +16,7 @@
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
-# runs the production compose) and the kit-file env token (ENV: .env.<CODE>.stag /
+# runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag /
 # .prod, the files the AWS-side register-trusts writes). Both come from the shared
 # table in ../deploy/env_mode.mk, so this Makefile cannot be the copy that misses a
 # value and falls through to the DEVELOPMENT compose.
@@ -68,7 +68,7 @@ export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
 # every FL image download failing 500 and training dying with num_samples=0.
 export UID GID UNAME
 else
-# A deployed trust pulls from GHCR (the production compose files hardcode it) and its kit carries no
+# A deployed trust pulls from GHCR (the prod compose files hardcode it) and its kit carries no
 # registry (FLIP#1480). Set so DOCKER_FL_REGISTRY's default, and UP_PULL_FLAGS' --pull always, still hold.
 DOCKER_REGISTRY := ghcr.io/londonaicentre/
 endif
@@ -98,7 +98,7 @@ ORTHANC_CMD=make -C ./orthanc
 
 # Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
 # environment's compose default — the prod composes fall back to
-# /opt/flip/data/trust-<slot> (see compose_trust.production.yml), dev to ./data/<KIT>.
+# /opt/flip/data/trust-<slot> (see compose_trust.prod.yml), dev to ./data/<KIT>.
 # Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
@@ -119,7 +119,7 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/dat
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
 #   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
-#   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
+#   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
 #     which the documented on-prem/EC2 bring-up already has (sudo).
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
@@ -220,12 +220,12 @@ TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # The approved-cohort membership store (FLIP#857): ONE resolved host path, handed to compose in
 # TRUST_VARS so the directory $(ensure_snapshot_dir) prepares is the one compose mounts. The
-# production default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
+# deployed default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
 # remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
 # production image and as the host user under the dev compose, so that is who must own it.
-COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter production,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
-COHORT_SNAPSHOT_OWNER := $(if $(filter production,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)

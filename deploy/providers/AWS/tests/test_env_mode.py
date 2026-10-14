@@ -58,8 +58,8 @@ def _table(*variables: str) -> list[str]:
     ("hub", "env", "compose", "env_class"),
     [
         ("", "development", "development", "stag"),
-        ("stag", "stag", "production", "stag"),
-        ("prod", "prod", "production", "prod"),
+        ("stag", "stag", "prod", "stag"),
+        ("prod", "prod", "prod", "prod"),
     ],
 )
 def test_hub_table(hub: str, env: str, compose: str, env_class: str) -> None:

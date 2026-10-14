@@ -11,13 +11,13 @@
 #
 
 # ROLE (FLIP#936): NVFLARE overlay of the local prod-image harness (see the note in
-# compose.production.yml) — not a deployment target. The canonical production FL task definitions live in
+# compose.prod.yml) — not a deployment target. The canonical production FL task definitions live in
 # deploy/providers/AWS/ecs_tasks.tf, whose NVFLARE branch (fl_backend=nvflare) mirrors this overlay.
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
-# No `container_name` here either — see the header of compose.production.yml. Container names come
+# No `container_name` here either — see the header of compose.prod.yml. Container names come
 # from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
 # not be renamed: every provisioned client kit pins the server by name (`fed_client.json` carries
 # `"target": "fl-server-net-1:8002"`, and the name is a SAN in the provisioned certificates), and

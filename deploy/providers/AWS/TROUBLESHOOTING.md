@@ -218,7 +218,7 @@ invalid spec: :/var/lib/orthanc/db: empty section between colons
 
 **Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
 (`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
-path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
+path. The compose files (`trust/deploy/compose_trust.{development,prod}.yml`)
 both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
 `_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
 per-trust-kit refactor.
@@ -432,7 +432,7 @@ paths. Audit the other bind mounts on the host for the same leak —
 
 **Symptom**: All authenticated API calls return `401 Unauthorized` or `403 Forbidden`. The UI shows "Something went wrong" but the login works.
 
-**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The production compose file (`deploy/compose.production.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
+**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The prod compose file (`deploy/compose.prod.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` (inheriting the secure default). To temporarily disable for testing, set in `.env.stag`:
 
@@ -671,7 +671,7 @@ kit, not `.env.stag`).
 
 **Symptom**: All authenticated routes return 401/403 despite `ENFORCE_MFA=false` in `.env.stag`.
 
-**Root cause**: The production compose file (`deploy/compose.production.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
+**Root cause**: The prod compose file (`deploy/compose.prod.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden. To disable MFA in staging, add `ENFORCE_MFA=false` to `.env.stag` and redeploy. Note: the default in compose is `true` (secure by default) — you must explicitly set `false` to disable.
 

@@ -41,7 +41,7 @@ created or on infrastructure the site already has. Keep the two axes apart when 
 `trust/deploy/helm/Makefile` reads **the `development` kit when `HUB` is unset**.
 
 The **Central Hub** has exactly one supported production target, AWS ECS Fargate (hub-on-EC2 was deprecated in
-[#936](https://github.com/londonaicentre/FLIP/issues/936); `deploy/compose.production.yml` is a local
+[#936](https://github.com/londonaicentre/FLIP/issues/936); `deploy/compose.prod.yml` is a local
 prod-image harness, not a deploy target). One target needs no abstraction, so there is no hub-only provider,
 and the hub's Terraform is simply the `AWS/` root.
 

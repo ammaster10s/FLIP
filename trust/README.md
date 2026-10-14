@@ -379,7 +379,7 @@ path. Pass `HUB=stag` to the checklist and deployment when joining the staging h
 
    `HUB` names the hub you are joining, and with it the kit-file suffix the
    trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
-   Both run the production compose and stack files; only `HUB` unset is the
+   Both run the prod compose and stack files; only `HUB` unset is the
    development stack.
 
    On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in

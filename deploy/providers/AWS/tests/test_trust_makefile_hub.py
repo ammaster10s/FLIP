@@ -49,7 +49,7 @@ def _probe(cwd: Path, items: list[str], hub: str, kit: str = "ZZPROBE") -> list[
 def test_trust_makefile_maps_every_deployed_hub(hub: str) -> None:
     env, compose_suffix, kit_file = _probe(TRUST_DIR, TRUST_ITEMS, hub)
     assert env == hub
-    assert compose_suffix == "production", f"HUB={hub} must run the production compose, got {compose_suffix}"
+    assert compose_suffix == "prod", f"HUB={hub} must run the prod compose, got {compose_suffix}"
     # No kit exists for ZZPROBE, so the current name is the one named in the not-found error.
     assert kit_file == f".env.ZZPROBE.{hub}"
 
@@ -60,7 +60,7 @@ def test_xnat_makefile_maps_every_deployed_hub(hub: str) -> None:
     assert env == hub
     assert kit_file == f"../.env.ZZPROBE.{hub}"
     assert data_dir == "/opt/flip/xnat-trust1", f"HUB={hub} must use the deployed-environment XNAT data path"
-    assert "docker-compose-stack.production.yml" in stack_files
+    assert "docker-compose-stack.prod.yml" in stack_files
     assert "development" not in stack_files
 
 

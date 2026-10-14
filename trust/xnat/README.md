@@ -67,7 +67,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   | Environment | Files |
   | --- | --- |
   | Development (default) | `docker-compose-stack.yml` + `docker-compose-stack.development.yml` |
-  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.production.yml` |
+  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.prod.yml` |
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust

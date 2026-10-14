@@ -230,7 +230,7 @@ SMS MFA is intentionally disabled — it would introduce an SNS dependency and r
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
+The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
 
@@ -308,9 +308,9 @@ additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
-> running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported
+> running the hub via `compose.prod*.yml` on an EC2 or self-managed host is no longer a supported
 > deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
-> `compose.production*.yml` files remain maintained **only** as the local prod-image harness
+> `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
 > material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that

@@ -125,7 +125,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # Override per-host (e.g. on a box where /opt is small and the XNAT archive
 # lives on a larger /data volume) by setting XNAT_DATA_DIR in
 # trust/.env.<KIT> or exporting it before invoking make. Resolved to an
-# absolute path so docker-compose-stack.{development,production}.yml can
+# absolute path so docker-compose-stack.{development,prod}.yml can
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
@@ -222,7 +222,7 @@ export XNAT_PATH=$(realpath .)
 # xnat/plugins over the image, so only development needs the host-side plugin cache. Production
 # bakes plugins into the image, so a trust host has no reason to hold or check one.
 ifneq ($(IS_DEPLOYED),)
-STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.prod.yml
 XNAT_PLUGINS_FROM_HOST =
 # A deployed trust pulls XNAT from GHCR like every other image, whatever an older kit or the
 # caller's hub env says: an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).

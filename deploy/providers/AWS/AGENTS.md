@@ -8,7 +8,7 @@
 | `data.tf` | Shared data sources referenced across multiple files (currently the account's canonical user ID, used for S3 log-bucket ACL grants) |
 | `dhcp.tf` | Custom VPC DHCP options — adds `flip.local` as a search domain so EC2/Fargate resolve bare hostnames |
 | `kms.tf` | FLIP application KMS CMK, used for S3 SSE-KMS and Secrets Manager encryption |
-| `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the production composes) |
+| `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the prod composes) |
 | `security.tf` | SG drift detection: CloudTrail → EventBridge → Lambda (tag filter) → SNS → email alert on FlipSG-tagged security-group changes |
 | `service_discovery.tf` | AWS Cloud Map private DNS namespace + service registrations (`flip-api`, `fl-api-net-*`, `fl-server-net-*`) |
 | `s3_logging.tf` | Single S3 server-access-log destination bucket shared by every FLIP application bucket |

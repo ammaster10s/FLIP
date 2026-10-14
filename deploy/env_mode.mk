@@ -17,8 +17,8 @@
 #
 #   HUB        ENV          .env file          compose      ENV_CLASS
 #   (unset)    development  .env.development   development  stag
-#   stag       stag         .env.stag          production   stag
-#   prod       prod         .env.prod          production   prod
+#   stag       stag         .env.stag          prod         stag
+#   prod       prod         .env.prod          prod         prod
 #
 # ENV is the token in every per-environment file name: the hub env file
 # .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV). Whether the estate
@@ -48,8 +48,8 @@ endif
 # Repo-root-relative name of the hub env file; each Makefile prefixes its own
 # path to the repo root.
 ENV_FILE_NAME := .env.$(ENV)
-# Compose-file suffix: every deployed environment runs the production compose.
-__DCKR_SUFFIX := $(if $(filter development,$(ENV)),development,production)
+# Compose-file suffix: every deployed environment runs the prod compose.
+__DCKR_SUFFIX := $(if $(filter development,$(ENV)),development,prod)
 # Non-empty iff a hub is selected — usable in `ifneq` and in recipe-level
 # `[ -n "$(IS_DEPLOYED)" ]` tests alike.
 IS_DEPLOYED := $(strip $(HUB))

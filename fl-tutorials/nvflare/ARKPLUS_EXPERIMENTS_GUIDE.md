@@ -123,7 +123,7 @@ trust's Orthanc + OMOP **after** the trust containers are up — see
 [Load the DeCaf dataset](#load-the-decaf-dataset-into-omop--orthanc) below.
 
 **Two trusts on one host** — give each kit *distinct host-published ports* and point observability
-at the in-repo config (the production compose defaults to an EC2 path). In `trust/.env.<KIT>.stag`:
+at the in-repo config (the prod compose defaults to an EC2 path). In `trust/.env.<KIT>.stag`:
 
 ```ini
 # GSTT (Trust_1) uses 8001/8010/8020; give KCH (Trust_2) non-colliding ports:

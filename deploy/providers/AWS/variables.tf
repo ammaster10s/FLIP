@@ -266,7 +266,7 @@ variable "flower_kit_date" {
 }
 
 # Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
-# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
+# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.prod.nvflare.yml).
 # This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;
 # the GPUs are provided by the fl-clients (trust hosts). Default 0 = no GPU
 # requirement (a CPU-only tutorial). Set to 1 in the env file (TF_VAR_...) for
