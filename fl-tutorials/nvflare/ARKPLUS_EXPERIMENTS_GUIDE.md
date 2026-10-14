@@ -221,16 +221,15 @@ DB_HOST=localhost \
   --query-file     "$TUT/image_evaluation/arkplus_baseline_classification_evaluation/query.sql" \
   --project-name "Ark+ Baseline Eval" \
   --model-name   "Ark+ Baseline Eval" \
-  --no-dicom-to-nifti \
   --training-start-timeout 1200
 ```
 
 Key flags (all optional, sensible defaults):
 
 - `--project-name` / `--model-name` — name each experiment distinctly (reused per run).
-- `--no-dicom-to-nifti` — the Ark+ apps read DICOMs directly (`ResourceType.ALL`); disable the
-  XNAT dcm2niix conversion. **Set at project creation; immutable afterwards** (the edit-project
-  form shows it read-only).
+- `--[no-]dicom-to-nifti` — the project's XNAT dcm2niix conversion. The Ark+ apps read DICOMs
+  directly (`ResourceType.ALL`), so the smoke creates their projects with it off by default.
+  **Set at project creation; immutable afterwards** (the edit-project form shows it read-only).
 - `--project-id <UUID>` — reuse an already-approved project to **skip cohort submission + the
   image pull** (printed as `project_id=…` on the first run); great for iterating on training/eval
   code without re-pulling ~6 min of DICOM per backend.
