@@ -13,12 +13,14 @@
 name: Build and Push Docker Image for MONAI Label
 
 # Direct push trigger like orthanc / xnat_* — monailabel has no test suite to
-# gate on. workflow_dispatch covers branch-pinned testing (see CLAUDE.md
+# gate on. workflow_dispatch covers branch-pinned testing (see AGENTS.md
 # "Docker image builds").
 on:
   workflow_dispatch:
+  # Release builds (FLIP#1204): every image, at the tag — see AGENTS.md "Docker image builds".
   push:
     branches: [main, develop]
+    tags: ['v*.*.*']
     paths:
       - "trust/monailabel/**"
       - ".github/workflows/docker_build_monailabel.yml"
@@ -48,11 +50,15 @@ jobs:
       IMAGE_NAME: londonaicentre/monailabel
       BUILD_ARGS: ""
     steps:
+      # Default checkout on purpose: no workflow_run trigger here (FLIP#882,
+      # scripts/tests/test_workflow_trust_guards.py).
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # A stable v<X.Y.Z> tag must point at a commit on main — releases are cut there by
+      # release.yml; pre-release (-rc.N) tags are the release-candidate path and pass.
+      - name: Release tag guard
+        uses: ./.github/actions/release-tag-guard
 
       # The image is ~10.4 GB (torch + CUDA runtime wheels + SAM2); a stock
       # ubuntu-latest runner has ~14 GB free, which the build blows through in
@@ -97,9 +103,14 @@ jobs:
           # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
 
-          # Branch name sanitization
-          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            TAGS="${REGISTRY}/${IMAGE_NAME}:${GH_REF_NAME}"
+          else
+            # Branch name sanitization
+            SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          fi
 
           # Branch number (if starts with number)
           if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then
