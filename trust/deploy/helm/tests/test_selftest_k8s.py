@@ -432,6 +432,22 @@ def test_another_projects_container_is_not_mistaken_for_ours():
     assert "Failed" in check.detail
 
 
+def test_an_earlier_runs_container_is_not_read_while_ours_is_not_listed_yet():
+    # XNAT keeps a deleted project's container rows, so the re-created project lists the last run's.
+    xnat = FakeXnat(
+        container_answers=[
+            [{"workflow-id": "wf-old", "status": "Complete"}],
+            [{"workflow-id": "wf-old", "status": "Complete"}, {"workflow-id": "wf-1", "status": "Failed"}],
+        ]
+    )
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "Failed" in check.detail
+    assert sum(1 for call in xnat.calls if call[1] == "/xapi/projects/FLIPSELFTEST/containers") == 2
+
+
 @pytest.mark.parametrize(
     ("route", "answer", "says"),
     [

@@ -506,7 +506,9 @@ def _convert(
             containers = [c for c in json.loads(body) if isinstance(c, dict)]
         except (json.JSONDecodeError, TypeError):
             containers = []
-        mine = [c for c in containers if c.get("workflow-id") == workflow] or containers
+        # Only this launch's own container counts. XNAT keeps container rows after a project is deleted, so
+        # the re-created FLIPSELFTEST lists earlier runs' rows, and ours appears only once its Job exists.
+        mine = [c for c in containers if c.get("workflow-id") == workflow]
         if mine:
             last = mine[0].get("status") or "no status"
         if last.startswith(("Complete", "Failed", "Killed")):
