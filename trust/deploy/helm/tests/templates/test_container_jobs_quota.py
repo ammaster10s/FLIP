@@ -51,6 +51,19 @@ def _quotas(*sets: str) -> list[dict]:
     return [d for d in _docs(*args) if d["kind"] == "ResourceQuota"]
 
 
+def registration_body(script: str) -> str:
+    """The file the command registration POSTs: the `-d @<file>` within that curl's continuation lines."""
+    lines = script.splitlines()
+    start = next((i for i, line in enumerate(lines) if '-X POST "${XNAT_URL}/xapi/commands"' in line), None)
+    assert start is not None, "the command registration call moved; update this test"
+    for line in lines[start:]:
+        if found := re.search(r"-d @(\S+)", line):
+            return found.group(1)
+        if not line.rstrip().endswith("\\"):
+            break
+    raise AssertionError("the command registration posts no -d @<file>")
+
+
 def test_the_quota_admits_the_configured_number_of_best_effort_pods():
     (quota,) = _quotas()
     assert quota["spec"]["scopes"] == ["BestEffort"]
@@ -133,6 +146,4 @@ def test_dcm2niix_is_registered_without_any_resource_setting():
     assert not [key for key in stripped if RESOURCE_KEY.match(key)], stripped
     assert {k: v for k, v in command.items() if not RESOURCE_KEY.match(k)} == stripped
 
-    registration = re.search(r'-X POST "\$\{XNAT_URL\}/xapi/commands" \\(?:\s*[^\n]*\\)*\s*-d @(\S+)', script)
-    assert registration, "the command registration call moved; update this test"
-    assert registration.group(1) == stripped_path, "the registration must post the filtered command"
+    assert registration_body(script) == stripped_path, "the registration must post the filtered command"
