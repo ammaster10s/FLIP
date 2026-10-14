@@ -202,8 +202,9 @@ with ``values-aks.yaml`` and ``values-small-node.yaml``. The first install takes
 hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
 chart's Orthanc, which a test node needs for an imaging pull and for the self-test.
 
-The chart loads no OMOP core vocabulary here, because its loader reads S3. Cohort queries that
-name concepts through ``omop.concept`` return nothing, so test with a query that does not.
+The chart loads no OMOP core vocabulary: it is licensed, so each site loads its own copy, as
+:ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through
+``omop.concept`` return nothing, so test with a query that does not.
 
 ``aks-selftest`` runs the VM self-test's checks against the release
 and writes its report under ``build/selftest/``; it needs no hub. The trust has joined when its

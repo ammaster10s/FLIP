@@ -266,8 +266,8 @@ aks-allow-ip: ## Admit only your current IP to the running cluster's API server,
 
 # The trust on the cluster: trust/deploy/helm's targets, on the kube context aks-credentials wrote
 # (named after the cluster). values-aks.yaml takes the FL kit from a Secret, values-small-node.yaml
-# fits the trust on the one 4-vCPU node, and the vocabulary load is off: it reads S3, which a node
-# outside AWS cannot. MOCK_PACS=1 seeds the mock studies into Orthanc, for a test node.
+# fits the trust on the one 4-vCPU node, and the vocabulary load is off: the site loads its own
+# licensed copy (see the runbook). MOCK_PACS=1 seeds the mock studies into Orthanc, for a test node.
 REPO_ROOT := $(abspath $(CURDIR)/../../..)
 HELM_DIR := $(REPO_ROOT)/trust/deploy/helm
 K8S_NAMESPACE ?= flip-trust
