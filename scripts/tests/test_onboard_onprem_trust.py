@@ -604,6 +604,21 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
             )
 
 
+def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
+    """Every kit is scaffolded from trust/.env.example, so that is the template its defaults come from."""
+    print("\n[31] Trust-local passwords: compared against trust/.env.example")
+    repo_root = SCRIPTS_DIR.parent
+    defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
+    rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
+    for kit_vars, root, status in (
+        ({"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}, repo_root, mod.Status.WARN),
+        (rotated, repo_root, mod.Status.PASS),
+        (rotated, Path(tempfile.mkdtemp()), mod.Status.WARN),  # no template: say so, never PASS
+    ):
+        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE")
+        _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -638,6 +653,7 @@ def main() -> None:
     test_28_missing_file_heading_and_advice_name_the_selected_path()
     test_29_ready_command_preserves_and_quotes_the_selected_kit()
     test_30_governance_action_preserves_and_quotes_the_selected_kit()
+    test_31_unrotated_passwords_compare_against_the_kit_template()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

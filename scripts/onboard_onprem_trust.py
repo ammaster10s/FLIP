@@ -294,7 +294,8 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
         kit_path,
         hints=[
             "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
-            f"  KIT={kit}` from deploy/providers/AWS), extract the tarball, then:",
+            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/providers/AWS),",
+            "  extract the tarball, then:",
             f"    cp <extracted-dir>/<kit-file> {kit_path}",
         ],
     )
@@ -380,7 +381,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
             "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
-            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>"
+            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]
@@ -777,41 +778,19 @@ def check_unrotated_passwords(
     kit: str,
     kit_path: str | None = None,
 ) -> Check:
-    """Soft-warn if any Trust-local password still matches the .example template.
+    """Soft-warn if any Trust-local password still matches the template default.
 
-    The packager hands the operator a kit whose Trust-local credentials section
-    is verbatim from the .production.example (dev-friendly defaults). For a
-    real on-prem hospital deployment the operator must rotate these before
-    bringing the stack up. Returns Status.WARN (not FAIL) — defaults are
-    technically usable for dev/testing and we don't want to block that path.
+    Every kit is scaffolded from trust/.env.example (`make new-trust`), whose Trust-local
+    credentials are dev-friendly defaults. For a real on-prem hospital deployment the
+    operator must rotate these before bringing the stack up. Returns Status.WARN (not FAIL)
+    — defaults are technically usable for dev/testing and we don't want to block that path.
     """
     kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
-    # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
-    # template — not the KIT argument. They CAN differ: a kit is named by its
-    # trust CODE (e.g. .env.<CODE>.prod) while its FL_KIT_SLOT is the
-    # hub-assigned slot (e.g. Trust_2) — the two are independent.
-    # Without this fall-through the check would silently skip on every
-    # custom-named kit. Falls back to KIT when the slot isn't filled in yet
-    # (the kit-credentials check below will already be failing in that case).
-    canonical = kit_vars.get("FL_KIT_SLOT") or kit
-    if not canonical or "<run-make-" in canonical:
-        canonical = kit
-    # Prefer the production template (closer to what an on-prem operator copied);
-    # fall back to the dev template; skip silently if neither exists.
-    candidates = [
-        repo_root / "trust" / f".env.{canonical}.production.example",
-        repo_root / "trust" / f".env.{canonical}.example",
-    ]
-    template = next((c for c in candidates if c.is_file()), None)
-    if template is None:
-        names = " or ".join(c.name for c in candidates)
-        return Check(
-            "Trust-local passwords",
-            Status.PASS,
-            f"skipped — no template found ({names})",
-        )
+    template = repo_root / "trust" / ".env.example"
+    if not template.is_file():
+        return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
     unchanged = [
         key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
