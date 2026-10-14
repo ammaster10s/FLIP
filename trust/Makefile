@@ -68,6 +68,10 @@ export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
 # (no CAP_DAC_OVERRIDE) that root cannot write a host-user-owned dir. The visible symptom is
 # every FL image download failing 500 and training dying with num_samples=0.
 export UID GID UNAME
+else
+# A deployed trust pulls from GHCR (the production compose files hardcode it) and its kit carries no
+# registry (FLIP#1480). Set so DOCKER_FL_REGISTRY's default, and UP_PULL_FLAGS' --pull always, still hold.
+DOCKER_REGISTRY := ghcr.io/londonaicentre/
 endif
 
 include ../deploy/fl_backend.mk

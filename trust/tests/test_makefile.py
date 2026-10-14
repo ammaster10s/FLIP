@@ -25,6 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
@@ -240,6 +241,15 @@ class DevelopmentFlRegistry(unittest.TestCase):
 
     def test_an_explicit_empty_fl_registry_still_selects_local_images(self):
         assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
+
+
+class DeployedPull(unittest.TestCase):
+    def test_a_deployed_trust_without_a_kit_registry_still_pulls_fresh(self):
+        """Kits carry no registry since FLIP#1480; the FL client's `--pull always` must not go with it."""
+        # A calling make (this suite's own runner) exports an empty DOCKER_FL_REGISTRY, which would decide it.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k != "MAKEFLAGS"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            assert "up -d --pull always" in dry_run("up-trust")
 
 
 if __name__ == "__main__":
