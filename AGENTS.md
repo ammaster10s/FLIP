@@ -512,7 +512,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
 the branch build of the same commit and stay immutable (a second push would swap the image under a
 sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
-**dispatches** the thirteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+**dispatches** the fourteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
 `.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every

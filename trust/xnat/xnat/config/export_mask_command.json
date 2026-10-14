@@ -4,11 +4,11 @@
   "description": "Convert an OHIF DICOM-SEG assessor to NIfTI and upload it back to XNAT",
   "version": "1.0",
   "schema-version": "1.0",
-  "info-url": "https://hub.docker.com/repository/docker/atriaybagur/aic-ohif-dicomseg-to-nifti/general",
+  "info-url": "https://github.com/londonaicentre/FLIP/tree/develop/trust/xnat/export-mask",
   "type": "docker",
-  "image": "atriaybagur/aic-ohif-dicomseg-to-nifti:latest",
+  "image": "ghcr.io/londonaicentre/xnat-export-mask:1.0.0",
   "network": "#PLACEHOLDER_NETWORK#",
-  "command-line": "uv run convert_dicom_seg_assessor_to_nifti.py -i /segmentation-in -o /output --project #PROJECT# --experiment #SESSION# --assessor #ASSESSOR#",
+  "command-line": "python /app/src/export_mask.py -i /segmentation-in -o /output --project #PROJECT# --experiment #SESSION# --assessor #ASSESSOR#",
   "mounts": [
     {
       "name": "output",

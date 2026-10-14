@@ -23,10 +23,10 @@ set -euo pipefail
 # thread on MONAI Label + OHIF, where the missing DICOM-SEG -> NIfTI step is the open problem.
 #
 # Run ONLY on trusts that enable MONAI Label — `make xnat-configure` gates this on
-# MONAI_LABEL=true (see xnat-configure-export-mask in trust/xnat/Makefile). A trust without
-# MONAI Label has no OHIF viewer plugin, so it can never create the assessors this reacts to;
-# registering the converter command and a site-wide subscription there would be pure blast
-# radius. Turning MONAI Label on later requires re-running `make xnat-configure`.
+# MONAI_LABEL=true (see xnat-configure-export-mask in trust/xnat/Makefile). Without MONAI Label
+# nobody is annotating in the viewer, so registering the converter command and a site-wide
+# subscription would be pure blast radius. Turning MONAI Label on later requires re-running
+# `make xnat-configure`.
 #
 # Must run AFTER configure-dcm2niix.sh, which registers the Docker backend and verifies the
 # socket proxy. The subscription created here is deliberately site-wide: a DICOM-SEG can be

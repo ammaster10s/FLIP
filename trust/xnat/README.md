@@ -122,10 +122,16 @@ in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> imag
 what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
 `xnat-init` job on Kubernetes, if the image named there is not the current pin.
 
-#### Operator action: the GHCR package must be public
+MONAI Label trusts also run a fifth image, `ghcr.io/londonaicentre/xnat-export-mask` (built from
+[`export-mask/`](export-mask/), published by `docker_build_xnat_export_mask.yml`): the `export_mask`
+command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives in the Dockerfile's
+`EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
+[`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
 
-**After the first publish, and again after any delete-and-recreate of the package, set
-`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+#### Operator action: the GHCR packages must be public
+
+**After the first publish, and again after any delete-and-recreate of a package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` (and `xnat-export-mask`) to public.** New org packages default to **private**, and
 `GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
 
 > github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →

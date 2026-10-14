@@ -437,11 +437,13 @@ Two things to know:
   neither the converter command nor the subscription. **If you enable MONAI Label on a trust
   that was already up, re-run `make -C trust/xnat xnat-configure KIT=<CODE>`** (or bring XNAT
   up again) — otherwise the annotation UI works but masks are never converted.
-- **The converter image is currently `atriaybagur/aic-ohif-dicomseg-to-nifti:latest`** — a
-  personal Docker Hub namespace on a mutable tag, pulled and run on the trust network with
-  XNAT admin credentials injected by the container service. Moving it to
-  `ghcr.io/londonaicentre` on an immutable digest is outstanding; until then, treat enabling
-  MONAI Label as also trusting that image.
+- **The converter is FLIP-built:** `ghcr.io/londonaicentre/xnat-export-mask:<version>`, from
+  [`xnat/export-mask/`](xnat/export-mask/), pinned by an immutable version tag in
+  `export_mask_command.json`. It runs on the trust network with the XNAT credentials the
+  container service injects, reads the assessor's DICOM-SEG, resamples the mask onto the
+  session's NIfTI scan when there is exactly one, and uploads the `.nii.gz` into the
+  assessor's `SEG` resource. Like `xnat-dcm2niix`, the GHCR package must be **public**
+  (see [xnat/README.md](xnat/README.md#operator-action-the-ghcr-packages-must-be-public)).
 
 Notes:
 
