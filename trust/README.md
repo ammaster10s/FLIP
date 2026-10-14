@@ -422,6 +422,9 @@ verifiable in the monailabel container's logs):
   SAM/DeepGrow as single-target — rename the first segment afterwards — and use `deepedit_seg`
   for multi-organ work.
 
+A recorded walkthrough of all this (enable, run, export, convert) can be regenerated on any trust with
+`make -C trust/monailabel-demo demo-video`; see [monailabel-demo/README.md](monailabel-demo/README.md).
+
 ### Getting labels back out: the `export_mask` pipeline
 
 A mask saved in the viewer lands in XNAT as a **DICOM-SEG assessor**, which FL training cannot

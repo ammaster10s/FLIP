@@ -982,6 +982,15 @@ make -C flip-api backfill_cohort_snapshots
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 
+To record the MONAI Label demo video against a running trust with MONAI Label on (a spleen CT segmented in the XNAT
+OHIF viewer, exported and converted to NIfTI; it doubles as an end-to-end check), run on the trust host:
+
+```bash
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=<CT session ID>
+```
+
+See [`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md) for the prerequisites.
+
 ## Building the documentation
 
 The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see

@@ -243,6 +243,11 @@ assembles one mp4 (local dev tool, not run in CI; Cypress segments plus off-came
 Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
+`make -C trust/monailabel-demo demo-video KIT=<CODE> XNAT_EXPERIMENT=<session>` records the MONAI Label
+walkthrough on a live trust (Playwright on the trust host: spleen CT segmented in the XNAT OHIF viewer,
+exported, converted by `export_mask`); it fails unless the NIfTI appears. See
+[`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md).
+
 ### Database migrations (flip-api)
 
 flip-api's PostgreSQL schema is owned by **Alembic** (`flip-api/src/flip_api/db/migrations/`), not `SQLModel.metadata.create_all`. The flip-api entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Any schema-affecting change to `flip-api/src/flip_api/db/models/*.py` **must** ship a revision in the same PR — the integration drift guard (`flip-api/tests/integration/test_migrations.py`) fails otherwise.
