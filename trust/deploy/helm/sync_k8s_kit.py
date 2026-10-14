@@ -1051,6 +1051,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
+    # Run directly, nothing else has checked the selector, so refuse what env_mode.mk refuses.
+    if os.environ.get("PROD"):
+        sys.exit("❌ PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod or HUB=stag.")
+    if os.environ.get("HUB", "") not in ("", "stag", "prod"):
+        sys.exit(f"❌ HUB must be unset, stag or prod — got {os.environ['HUB']!r}.")
 
     main(
         code=args.kit,
