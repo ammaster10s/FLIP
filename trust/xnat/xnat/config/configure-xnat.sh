@@ -21,6 +21,9 @@
 
 set -euo pipefail
 
+# shellcheck source=./xnat-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
+
 # Required, non-empty (":?" also rejects set-but-empty, which `set -u` does
 # not): an empty value interpolated into a JSON payload produces invalid JSON
 # that XNAT rejects — the failure mode behind the silent PACS registration
@@ -154,105 +157,12 @@ if ! jq -en --arg ae "${XNAT_AETITLE}" \
   exit 1
 fi
 
-# Wait for XNAT to be available (wall-clock bounded, and each probe carries
-# its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
-# of printing dots forever — same shape as configure-dcm2niix.sh).
-echo "Waiting for XNAT to be available..."
-wait_start=$SECONDS
-deadline=$((wait_start + 900))
-until curl --output /dev/null --silent --head --fail \
-  --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
-  if [[ "$SECONDS" -ge "$deadline" ]]; then
-    echo "ERROR: XNAT did not become available within $((SECONDS - wait_start))s" >&2
-    exit 1
-  fi
-  printf '.'
-  sleep 1
-done
-echo "XNAT is up!"
+wait_for_xnat 900
 
 # NOTE: the plugin-readiness wait deliberately does NOT run here. It cannot: the probe is an
 # authenticated plugin route, and an uninitialized XNAT redirects every authenticated route to
 # /setup, so it can only answer once the site has been initialized below. See FLIP#966 — running
 # it here deadlocked every fresh bring-up against a step downstream of itself.
-
-# Helper: curl wrapper for XNAT's REST API — same contract as xnat_curl in
-# configure-dcm2niix.sh, except credentials are passed by the caller: this
-# script authenticates its first two calls with the *initial* admin password
-# and everything after the rotation with the new one. On 2xx, emits the
-# response body on stdout. On any other status — or a curl transport failure —
-# reports the request (and, for HTTP failures, the response body) on stderr
-# and returns non-zero, which `set -e` turns into an abort at the call site.
-# Bare `curl -s` exits 0 on HTTP errors, so a rejected configuration call
-# used to skip that step invisibly — silently-unregistered PACS was how the
-# empty-PACS_DICOM_PORT bug stayed hidden (FLIP#822 / FLIP#862).
-# Unlike the dcm2niix variant, credentials and payloads travel through "$@"
-# here, so the args echoed on failure are scrubbed first: the value following
-# -u (credentials) or -d/--data-binary (payloads carry the admin and service
-# passwords) must never reach the tee'd configure log.
-#
-# --allow-not-modified as the first argument also accepts a 304, which DQR answers
-# to a PUT of an availability interval that already matches.
-scrub_args() {
-  local redact_next=""
-  local arg
-  local out=""
-  for arg in "$@"; do
-    if [[ -n "$redact_next" ]]; then
-      out+=" <redacted>"
-      redact_next=""
-    elif [[ "$arg" == "-u" || "$arg" == "-d" || "$arg" == "--data-binary" ]]; then
-      out+=" $arg"
-      redact_next=1
-    else
-      out+=" $arg"
-    fi
-  done
-  printf '%s' "${out# }"
-}
-
-xnat_curl() {
-  local response
-  local status
-  local body
-  local curl_exit=0
-  local accepted='^2[0-9]{2}$'
-  if [[ "${1:-}" == "--allow-not-modified" ]]; then
-    accepted='^(2[0-9]{2}|304)$'
-    shift
-  fi
-  response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@") || curl_exit=$?
-  if [[ "$curl_exit" -ne 0 ]]; then
-    echo "ERROR: curl transport failure (exit $curl_exit)" >&2
-    echo "  args: $(scrub_args "$@")" >&2
-    return 1
-  fi
-  status=$(printf '%s' "$response" | tail -n1)
-  body=$(printf '%s' "$response" | sed '$d')
-  # Strip CRs so a middlebox emitting \r\n line endings can't make the
-  # callers' guards fail on an invisible character (a raw CR is not valid
-  # inside JSON strings, so this is lossless).
-  status=${status//$'\r'/}
-  body=${body//$'\r'/}
-  # Fail closed: anything other than a literal 2xx status line (including
-  # an empty or non-numeric one) is an error, apart from the opted-in 304.
-  if ! [[ "$status" =~ $accepted ]]; then
-    echo "ERROR: XNAT request failed with HTTP $status" >&2
-    echo "  args: $(scrub_args "$@")" >&2
-    echo "  body: $body" >&2
-    return 1
-  fi
-  if [[ -n "$body" ]]; then
-    printf '%s\n' "$body"
-  fi
-}
-
-# An id XNAT returns goes into a URL. XNAT generates it, but check it is a plain number before using it.
-require_numeric_id() {  # require_numeric_id <what XNAT returned> <id>
-  [[ "$2" =~ ^[0-9]+$ ]] && return
-  echo "ERROR: $1 with id '$2'" >&2
-  exit 1
-}
 
 # Which admin password this XNAT accepts decides the mode. FIRST BOOT: the initial password still
 # authenticates — activate with it, then rotate it. CONVERGE: only the configured (rotated) password
@@ -263,10 +173,10 @@ require_numeric_id() {  # require_numeric_id <what XNAT returned> <id>
 # NOTE: when the configured admin password equals the initial one (the dev kits do this), every run
 # is a first boot — so the conflict-prone calls below (service account, PACS registration,
 # availability intervals) carry their own already-configured guards rather than relying on the mode.
-# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they
-# stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
-# timeout reaches the checks below instead of ending the script under set -e with no output: the
-# wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they use
+# xnat_request rather than xnat_curl, with their own deadlines. A timeout reads as status 000 and
+# reaches the checks below: the wait above proves XNAT serves the login page, not that an
+# authenticated route answers.)
 #
 # On a first boot XNAT serves that login page before its database initialisation finishes, and until
 # then both passwords get 401 (FLIP#1384), so the probes are retried a few times. The cap is a count,
@@ -289,18 +199,16 @@ if ! [[ "$auth_wait" =~ ^[1-9][0-9]*$ ]]; then
 fi
 ADMIN_PASSWORD_ROTATED=false
 for ((attempt = 1; ; attempt++)); do
-  init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-    "$XNAT_URL/xapi/siteConfig/initialized") || true
+  xnat_request 5 15 -o /dev/null -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+    "$XNAT_URL/xapi/siteConfig/initialized"
+  init_pw_status=$xnat_status
   [[ "${init_pw_status}" == "200" ]] && break
   if [[ "${XNAT_ADMIN_PASSWORD}" == "${XNAT_ADMIN_INITIAL_PASSWORD}" ]]; then
     rotated_status="${init_pw_status}"
   else
-    rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
-      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-      "$XNAT_URL/xapi/siteConfig/initialized") || true
-    rotated_status="${rotated_probe##*$'\n'}"
-    initialized="${rotated_probe%$'\n'*}"
+    xnat_request 5 15 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/siteConfig/initialized"
+    rotated_status=$xnat_status
+    initialized=$xnat_body
     [[ "${rotated_status}" == "200" ]] && break
   fi
   statuses="initial: HTTP ${init_pw_status:-000}, configured: HTTP ${rotated_status:-000}"
@@ -386,8 +294,7 @@ fi
 # already exists (re-run on an already-configured instance — see the
 # idempotency note above); anything else non-2xx fails the deploy.
 echo "Creating service account..."
-create_user_status=$(curl -s -o /tmp/create-user-response.json --connect-timeout 10 --max-time 120 \
-  -w '%{http_code}' -X POST "$XNAT_URL/xapi/users" \
+xnat_request 10 120 -X POST "$XNAT_URL/xapi/users" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{
@@ -396,14 +303,15 @@ create_user_status=$(curl -s -o /tmp/create-user-response.json --connect-timeout
     \"firstName\": \"flip Service Account\",
     \"lastName\": \"flip Service Account\",
     \"email\": \"xnat@example.com\"
-  }") || create_user_status="000"
+  }"
+create_user_status=$xnat_status
 if [[ "$create_user_status" == 2* ]]; then
   echo "Service account created."
 elif [[ "$create_user_status" == "409" ]]; then
   echo "Service account already exists (HTTP 409) — leaving as-is."
 else
   echo "ERROR: creating service account failed (HTTP $create_user_status)" >&2
-  cat /tmp/create-user-response.json >&2 || true
+  printf '%s\n' "$xnat_body" >&2
   exit 1
 fi
 

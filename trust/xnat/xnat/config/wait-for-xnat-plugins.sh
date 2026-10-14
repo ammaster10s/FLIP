@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# shellcheck source=./xnat-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
+
 # Blocks until XNAT's DQR plugin route answers, so configure-xnat.sh never POSTs plugin settings at
 # a Tomcat that is up but has not registered its plugins yet.
 #
@@ -89,34 +92,27 @@ if [[ "$ROSTER" == 1 ]]; then
   (( ${#expected_ids[@]} )) || { echo "ERROR: no XNAT plugin jars in $PLUGIN_DIR." >&2; exit 1; }
 fi
 
-# GETs one route with one admin password. Prints the response body, a newline, then the HTTP
-# status; the status is 000 when curl got no answer (refused, timed out), in which case curl's own
-# -w output and the fallback below both end in it, so the last line is the status either way.
-xnat_get() {
-  curl -sS --connect-timeout 5 --max-time 10 -w '\n%{http_code}' \
-    -u "${XNAT_ADMIN_USER}:$2" "$1" || printf '\n000'
-}
 
 # One readiness attempt with one admin password. Sets attempt_status and attempt_url (the request
 # that decided it) and attempt_missing (expected ids /xapi/plugins did not list).
 attempt() {
-  local response loaded id
+  local loaded id
   attempt_missing=""
   if [[ "$ROSTER" == 1 ]]; then
     attempt_url="$PLUGINS_URL"
-    response=$(xnat_get "$PLUGINS_URL" "$1")
-    attempt_status="${response##*$'\n'}"
+    xnat_request 5 10 -u "${XNAT_ADMIN_USER}:$1" "$PLUGINS_URL"
+    attempt_status=$xnat_status
     [[ "$attempt_status" == 2* ]] || return 0
     # A body that is not a JSON object lists nothing, so every plugin reads as missing.
-    loaded=$(printf '%s' "${response%$'\n'*}" | jq -r 'keys[]?' 2>/dev/null) || loaded=""
+    loaded=$(printf '%s' "$xnat_body" | jq -r 'keys[]?' 2>/dev/null) || loaded=""
     for id in "${expected_ids[@]}"; do
       grep -Fxq -- "$id" <<< "$loaded" || attempt_missing+="${attempt_missing:+ }$id"
     done
     [[ -z "$attempt_missing" ]] || return 0
   fi
   attempt_url="$DQR_URL"
-  response=$(xnat_get "$DQR_URL" "$1")
-  attempt_status="${response##*$'\n'}"
+  xnat_request 5 10 -u "${XNAT_ADMIN_USER}:$1" "$DQR_URL"
+  attempt_status=$xnat_status
 }
 
 # Only called on the fatal redirect path, to name the destination in the error. Worth one extra

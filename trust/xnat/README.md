@@ -166,7 +166,8 @@ registration, dcm2niix command). The repo-root `make up` follows the same path a
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
 HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
 bring-up — the log is written host-side), instead of silently skipping
-that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
+that step. The three configuration scripts share that request handling from one file,
+`xnat/config/xnat-lib.sh`, which also keeps credentials and payloads out of the log. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
 tolerated and converges it onto the kit: the existing service account is left as-is, the DICOM SCP receiver and the
 PACS registration are each updated in place if a kit-managed field drifted, and the PACS availability schedule is

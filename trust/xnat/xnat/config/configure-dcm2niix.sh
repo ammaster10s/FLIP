@@ -15,6 +15,9 @@
 # Exit on first error, undefined variable, or pipe failure.
 set -euo pipefail
 
+# shellcheck source=./xnat-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
+
 # This script configures the dcm2niix container service in XNAT, for Compose (inside xnat-web) and
 # for the Helm chart's xnat-init Job, which runs this same file from the xnat-web image.
 # It is intended to be run after configure-xnat.sh (which changes the admin password).
@@ -51,64 +54,13 @@ fi
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Wait for XNAT to be available (wall-clock bounded, and each probe carries
-# its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
-# of printing dots forever).
-echo "Waiting for XNAT to be available..."
-wait_start=$SECONDS
-deadline=$((wait_start + 900))
-until curl --output /dev/null --silent --head --fail \
-  --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
-  if [[ "$SECONDS" -ge "$deadline" ]]; then
-    echo "ERROR: XNAT did not become available within $((SECONDS - wait_start))s" >&2
-    exit 1
-  fi
-  printf '.'
-  sleep 1
-done
-echo "XNAT is up!"
+wait_for_xnat 900
 
-# Helper: curl wrapper for XNAT's REST API. On 2xx, emits the response body
-# on stdout for the caller to capture. On any other status — or a curl
-# transport failure — reports the request (and, for HTTP failures, the
-# response body) on stderr and returns non-zero, which the script's
-# `set -e` turns into an abort at the call site (so don't call this inside
-# `if`/`||` without handling the failure). Use it for every request to
-# XNAT's REST API, reads included: an unnoticed bad GET response is how the
-# original empty-CMD_ID deploy failure slipped through — bare `curl -s`
-# surfaced neither HTTP errors nor unexpected bodies.
-xnat_curl() {
-  local response
-  local status
-  local body
-  local curl_exit=0
-  response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@" \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}") || curl_exit=$?
-  if [[ "$curl_exit" -ne 0 ]]; then
-    echo "ERROR: curl transport failure (exit $curl_exit)" >&2
-    echo "  args: $*" >&2
-    return 1
-  fi
-  status=$(printf '%s' "$response" | tail -n1)
-  body=$(printf '%s' "$response" | sed '$d')
-  # Strip CRs so a middlebox emitting \r\n line endings can't make the
-  # callers' numeric/boolean guards fail on an invisible character (a raw
-  # CR is not valid inside JSON strings, so this is lossless).
-  status=${status//$'\r'/}
-  body=${body//$'\r'/}
-  # Fail closed: anything other than a literal 2xx status line (including
-  # an empty or non-numeric one) is an error.
-  if ! [[ "$status" =~ ^2[0-9]{2}$ ]]; then
-    echo "ERROR: XNAT request failed with HTTP $status" >&2
-    echo "  args: $*" >&2
-    echo "  body: $body" >&2
-    return 1
-  fi
-  printf '%s' "$body"
-}
+# xnat_curl (xnat-lib.sh) as the admin, which every call here is.
+admin_curl() { xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$@"; }
 
 # Name the usual cause of refused Container Service calls up front (TROUBLESHOOTING 2.3a).
-ADMIN_ROLES=$(xnat_curl "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles/")
+ADMIN_ROLES=$(admin_curl "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles/")
 if ! jq -e 'index("ContainerManager")' >/dev/null <<<"$ADMIN_ROLES"; then
   echo "ERROR: ${XNAT_ADMIN_USER} does not hold the ContainerManager role, which configure-xnat.sh grants (TROUBLESHOOTING 2.3a)." >&2
   exit 1
@@ -124,27 +76,24 @@ else
 fi
 
 echo "backend_config: $backend_config"
-# curl exits 0 on HTTP 4xx/5xx (no --fail), so check the status explicitly — if XNAT
-# rejects the new backend config, the ping below could still pass against a previously
-# registered backend and mask the failure. "000" = transport error / timeout.
-post_status=$(curl -s -o /tmp/docker-server-post.json --max-time 60 -w "%{http_code}" \
-  -X POST "$XNAT_URL/xapi/docker/server" \
+# The status is checked here, not left to the ping: if XNAT rejects the new backend config, the
+# ping below could still pass against a previously registered backend. 000 = no answer.
+xnat_request 10 60 -X POST "$XNAT_URL/xapi/docker/server" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "$backend_config") || post_status="000"
-if [[ "$post_status" != 2* ]]; then
-  echo "ERROR: POST /xapi/docker/server returned HTTP $post_status"
-  cat /tmp/docker-server-post.json 2>/dev/null || true
+  -d "$backend_config"
+if [[ "$xnat_status" != 2* ]]; then
+  echo "ERROR: POST /xapi/docker/server returned HTTP $xnat_status"
+  printf '%s\n' "$xnat_body"
   exit 1
 fi
 
 # Fail loudly here if the backend is unreachable — the command registration below would still
 # "succeed", but every dcm2niix launch would then fail at conversion time.
 echo "Pinging the $XNAT_CS_BACKEND backend..."
-ping_status=$(curl -s -o /dev/null --max-time 60 -w "%{http_code}" "$XNAT_URL/xapi/docker/server/ping" \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}") || ping_status="000"
-if [[ "$ping_status" != "200" ]]; then
-  echo "ERROR: Container Service cannot reach its $XNAT_CS_BACKEND backend (HTTP $ping_status)"
+xnat_request 10 60 -o /dev/null -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/docker/server/ping"
+if [[ "$xnat_status" != "200" ]]; then
+  echo "ERROR: Container Service cannot reach its $XNAT_CS_BACKEND backend (HTTP $xnat_status)"
   exit 1
 fi
 echo "Container Service -> $XNAT_CS_BACKEND backend: OK"
@@ -181,10 +130,10 @@ if [[ "$XNAT_CS_BACKEND" == docker ]] \
 fi
 if [[ "$needs_image_host" == true ]]; then
   echo "Ensuring image host '$DCM2NIIX_REGISTRY' is registered..."
-  HUB_ID=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
+  HUB_ID=$(admin_curl "$XNAT_URL/xapi/docker/hubs" \
     | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | .[0].id // empty')
   if [[ -z "$HUB_ID" ]]; then
-    xnat_curl -X POST "$XNAT_URL/xapi/docker/hubs" \
+    admin_curl -X POST "$XNAT_URL/xapi/docker/hubs" \
       -H "Content-Type: application/json" \
       -d "{\"name\": \"$DCM2NIIX_REGISTRY\", \"url\": \"$DCM2NIIX_REGISTRY\"}" >/dev/null
     echo "Image host '$DCM2NIIX_REGISTRY' registered."
@@ -207,7 +156,7 @@ fi
 
 # Update the command in place, so its wrapper keeps the id every project trigger names (FLIP#1451).
 echo "Checking if $DCM2NIIX_NAME command exists..."
-EXISTING=$(xnat_curl "$XNAT_URL/xapi/commands?name=$DCM2NIIX_NAME")
+EXISTING=$(admin_curl "$XNAT_URL/xapi/commands?name=$DCM2NIIX_NAME")
 if [[ $(jq 'length' <<<"$EXISTING") -gt 1 ]]; then
   echo "ERROR: more than one '$DCM2NIIX_NAME' command is registered ($(jq -r '[.[] | "command \(.id) (wrapper \(.xnat[0].id // "none"))"] | join(", ")' <<<"$EXISTING")); expected at most one: delete the one no subscription names, then re-run." >&2
   exit 1
@@ -216,13 +165,13 @@ CMD_ID=$(jq -r '.[0].id // empty' <<<"$EXISTING")
 
 if [[ -n "$CMD_ID" ]]; then
   echo "Found existing command ID: $CMD_ID. Updating it in place..."
-  xnat_curl -X POST "$XNAT_URL/xapi/commands/$CMD_ID" \
+  admin_curl -X POST "$XNAT_URL/xapi/commands/$CMD_ID" \
     -H "Content-Type: application/json" \
     -d @"$DCM2NIIX_COMMAND_JSON" >/dev/null
 else
   # The POST returns the new id as a bare number, used directly because a re-GET by name once came back empty on prod.
   echo "Command not found. Adding dcm2niix command..."
-  CMD_ID=$(xnat_curl -X POST "$XNAT_URL/xapi/commands" \
+  CMD_ID=$(admin_curl -X POST "$XNAT_URL/xapi/commands" \
     -H "Content-Type: application/json" \
     -d @"$DCM2NIIX_COMMAND_JSON")
 fi
@@ -234,7 +183,7 @@ if ! [[ "$CMD_ID" =~ ^[0-9]+$ ]]; then
 fi
 
 # Read it back: the wrapper id is what triggers name, and the image shows the pin landed.
-REGISTERED=$(xnat_curl "$XNAT_URL/xapi/commands/$CMD_ID")
+REGISTERED=$(admin_curl "$XNAT_URL/xapi/commands/$CMD_ID")
 WRAPPER_ID=$(jq -r --arg w "$dcm2niix_wrapper_name" '[.xnat[]? | select(.name == $w) | .id][0] // empty' <<<"$REGISTERED")
 REGISTERED_IMAGE=$(jq -r '.image // empty' <<<"$REGISTERED")
 if [[ -z "$WRAPPER_ID" ]]; then
@@ -252,7 +201,7 @@ echo "Wrapper Name: $dcm2niix_wrapper_name (id $WRAPPER_ID)"
 # Enable the dcm2niix command at the site level (makes it available for per-project use)
 # See https://wiki.xnat.org/container-service/container-service-api for more details
 echo "Enabling $DCM2NIIX_NAME command..."
-xnat_curl -X PUT "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
+admin_curl -X PUT "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
 
 # Note: this only enables the command site-wide so it can be used per-project.
 
@@ -262,7 +211,7 @@ xnat_curl -X PUT "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_nam
 
 # Enable Event Service (required for per-project event subscriptions to work)
 echo "Enabling event service..."
-xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
+admin_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}' >/dev/null
 
@@ -275,7 +224,7 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # VALIDATION
 # ----------------------------------------------------------------
 
-# Every xnat_curl above aborts the script (via set -e) on a non-2xx
+# Every admin_curl above aborts the script (via set -e) on a non-2xx
 # response, so reaching this block means every write was accepted; these
 # re-GETs check the resulting state actually persisted. The wrapper-enabled
 # endpoint returns a bare JSON boolean (container-service 3.8.1 —
@@ -283,7 +232,7 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # the 3.8.1 source; re-verified live during the XNAT 1.10.0 upgrade smoke test).
 echo " "
 echo "Validating dcm2niix setup..."
-WRAPPER_ENABLED=$(xnat_curl "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled")
+WRAPPER_ENABLED=$(admin_curl "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled")
 if [ "$WRAPPER_ENABLED" != "true" ]; then
   echo "ERROR: dcm2niix wrapper is not enabled site-wide (expected true)" >&2
   echo "  body: $WRAPPER_ENABLED" >&2
@@ -292,7 +241,7 @@ fi
 
 # Verify the image host for the pinned image's registry persisted (swarm launches NPE without it)
 if [[ "$needs_image_host" == true ]]; then
-  HUB_COUNT=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
+  HUB_COUNT=$(admin_curl "$XNAT_URL/xapi/docker/hubs" \
     | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | length')
   if [ "$HUB_COUNT" -lt 1 ]; then
     echo "ERROR: no image host registered with url '$DCM2NIIX_REGISTRY' (expected >= 1)" >&2
@@ -301,7 +250,7 @@ if [[ "$needs_image_host" == true ]]; then
 fi
 
 # Verify event service is enabled
-EVENT_PREFS=$(xnat_curl "$XNAT_URL/xapi/events/prefs")
+EVENT_PREFS=$(admin_curl "$XNAT_URL/xapi/events/prefs")
 EVENT_STATUS=$(echo "$EVENT_PREFS" | jq -r '.enabled // empty')
 if [ "$EVENT_STATUS" != "true" ]; then
   echo "ERROR: Event service is not enabled (expected true)" >&2
@@ -310,7 +259,7 @@ if [ "$EVENT_STATUS" != "true" ]; then
 fi
 
 # A warning, not a failure, so one broken trigger does not block every later deploy.
-xnat_curl "$XNAT_URL/xapi/events/subscriptions" \
+admin_curl "$XNAT_URL/xapi/events/subscriptions" \
   | jq -r --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" '(. // [])[]
     | select(.name == $name and .valid != true)
     | "WARNING: invalid DICOM->NIfTI trigger: subscription \(.id) (\(.["action-key"])) for project(s) \((.["event-filter"]["project-ids"] // []) | join(", ")): \(.["validation-message"] // "no message")"' >&2
