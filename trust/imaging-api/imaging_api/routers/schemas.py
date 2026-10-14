@@ -32,9 +32,9 @@ XNAT_AETITLE = get_settings().XNAT_AETITLE
 # instead of letting the corrupted entity reach XNAT.
 _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
-# Accession IDs, scan IDs and resource IDs are all interpolated directly into
-# XNAT URLs issued with the XNAT service-admin session, so a traversal payload
-# would reach XNAT before any filesystem guard could run.
+# Accession IDs, scan IDs and resource IDs become path segments in XNAT URLs
+# issued with the XNAT service-admin session. Reject unsafe input at the request
+# boundary as well as quoting it at the URL sinks, before any filesystem guard.
 #
 # Charset: RFC 3986 §2.3 *unreserved* characters — the only characters that
 # are never percent-encoded and never a URL delimiter, so a value composed
@@ -86,6 +86,7 @@ class _AccessionIdRequest(BaseModel):
     @classmethod
     def _reject_unsafe_accession_id(cls, v: str) -> str:
         return _validate_url_path_segment(v)
+
 
 # #########################
 # Users
@@ -193,9 +194,7 @@ class CentralHubProject(BaseModel):
     @classmethod
     def _reject_xml_control_chars(cls, v: str) -> str:
         if any(c in v for c in _XML_FORBIDDEN_CHARS):
-            raise ValueError(
-                f"project_name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
-            )
+            raise ValueError(f"project_name must not contain XML control characters {_XML_FORBIDDEN_CHARS}")
         return v
 
 

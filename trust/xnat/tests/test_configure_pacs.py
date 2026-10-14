@@ -31,10 +31,10 @@ SCRIPT = CONFIG_DIR / "configure-xnat.sh"
 # The earlier stub echoed the *configured* AE title back, which made "the configured title reached
 # XNAT" assertions circular — they held even when the script sent something else.
 STUB_CURL = r"""#!/bin/bash
-url=""; data=""; method="GET"; status_only=0; outfile=""
+url=""; data=""; method="GET"; status_only=0; outfile=""; creds=""
 prev=""
 for a in "$@"; do
-  case "$prev" in -d) data="$a";; -X) method="$a";; -o|--output) outfile="$a";; esac
+  case "$prev" in -d) data="$a";; -X) method="$a";; -o|--output) outfile="$a";; -u) creds="$a";; esac
   case "$a" in http*) url="$a";; '%{http_code}') status_only=1;; esac
   prev="$a"
 done
@@ -43,6 +43,7 @@ done
 # (/xapi/users/guest/enabled/false) is otherwise invisible to the tests.
 printf '%s\n' "=== $method $url" >> "$PAYLOADS"
 [ -n "$data" ] && printf '%s\n' "$data" >> "$PAYLOADS"
+[ -n "$CREDS_LOG" ] && printf '%s %s %s\n' "$method" "$url" "$creds" >> "$CREDS_LOG"
 
 edit() {  # edit <state-file> <jq-filter> [args...]
   local f="$1"; shift
@@ -52,6 +53,9 @@ edit() {  # edit <state-file> <jq-filter> [args...]
 status=200
 body='{}'
 case "$url" in
+  *"/xapi/siteConfig/initialized")
+    body="${INITIALIZED_BODY:-true}"
+    ;;
   *"/xapi/pacs/"*"/availability")
     status="${AVAIL_STATUS:-200}"
     body="${AVAIL_BODY:-{\}}"
@@ -92,6 +96,19 @@ case "${FAIL_ON_URL:-__none__}" in
   __none__) ;;
   *) case "$url" in *"$FAIL_ON_URL"*) status="${FAIL_STATUS:-500}"; body='{"error":"stub failure"}' ;; esac ;;
 esac
+
+# XNAT refuses a password it does not hold (comma-separated list, e.g. the rotated-away initial one).
+case ",${WRONG_LOGINS:-}," in
+  *",${creds#*:},"*) [ -n "$creds" ] && { status=401; body='{"error":"unauthorized"}'; } ;;
+esac
+
+# A first boot still initialising its database: the first N logins fail whatever the password.
+# The count covers every authenticated request, so keep N below the number of probe logins.
+if [ -n "${UNREADY_LOGINS:-}" ] && [ -n "$creds" ]; then
+  seen=$(( $(cat "$UNREADY_COUNT" 2>/dev/null || echo 0) + 1 ))
+  echo "$seen" > "$UNREADY_COUNT"
+  [ "$seen" -le "$UNREADY_LOGINS" ] && { status=401; body='{"error":"unauthorized"}'; }
+fi
 
 [ -n "$outfile" ] && [ "$outfile" != "/dev/null" ] && printf '%s' "$body" > "$outfile"
 if [ "$status_only" = "1" ]; then printf '%s' "$status"; else printf '%s\n%s' "$body" "$status"; fi
@@ -175,12 +192,12 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "PAYLOADS": str(payloads),
         "PACS_STATE": str(pacs_file),
         "SCP_STATE": str(scp_file),
+        "CREDS_LOG": str(tmp_path / "creds.txt"),
+        "UNREADY_COUNT": str(tmp_path / "unready-count.txt"),
         **(env_overrides or {}),
     }
 
-    result = subprocess.run(
-        ["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120
-    )
+    result = subprocess.run(["bash", str(SCRIPT)], cwd=CONFIG_DIR, env=env, capture_output=True, text=True, timeout=120)
     body = payloads.read_text() if payloads.exists() else ""
     return result.returncode, body, result.stdout + result.stderr
 
@@ -646,3 +663,145 @@ def test_credentials_are_not_echoed_when_a_call_fails(tmp_path):
     assert "<redacted>" in output, "the failing request was echoed without redaction"
     for secret in ("rotated", "initial", "service"):
         assert secret not in output, f"the {secret!r} password reached the configure log"
+
+
+# ── Which admin password XNAT accepts picks the mode (FLIP#1204) ─────────────────────────────
+
+
+def credentials_used(tmp_path, method: str, endpoint: str) -> list[str]:
+    """The ``user:password`` every ``method`` request to ``endpoint`` authenticated with."""
+    log = tmp_path / "creds.txt"
+    used = []
+    for line in log.read_text().splitlines() if log.exists() else []:
+        made, url, creds = line.split(" ", 2)
+        if made == method and url.endswith(endpoint):
+            used.append(creds)
+    return used
+
+
+def test_a_configured_instance_converges_with_the_rotated_password(tmp_path):
+    """upgrade-xnat redeploys onto a live data dir: the initial password is long gone."""
+    code, payloads, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial", "INITIALIZED_BODY": "true"}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert "converging" in output
+    made = requests_made(payloads)
+    assert not any(m == "PUT" and u.endswith("/xapi/users/admin") for m, u in made), "rotated a rotated password"
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:rotated"  # the activation call
+    assert any(m == "POST" and u.endswith("/xapi/dicomscp") for m, u in made), "receiver not re-applied"
+    assert any(u.endswith("/xapi/dqr/settings") for _, u in made), "DQR lockdown not re-applied"
+
+
+def test_a_migrated_instance_is_activated_with_the_rotated_password(tmp_path):
+    """A 1.9→1.10 migration re-reports initialized=false; the initial password still does not work,
+    so activating with it would 401 and leave XNAT stuck in /setup with no siteUrl."""
+    code, payloads, output = run_configure(
+        tmp_path, {"WRONG_LOGINS": "initial", "INITIALIZED_BODY": "false"}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code == 0, output
+    assert "migrated" in output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:rotated"  # the activation call
+    assert not any(m == "PUT" and u.endswith("/xapi/users/admin") for m, u in requests_made(payloads))
+
+
+def test_first_boot_activates_with_the_initial_password_and_rotates_it(tmp_path):
+    code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:initial"  # the activation call
+    assert credentials_used(tmp_path, "PUT", "/xapi/users/admin") == ["admin:initial"]
+
+
+def test_neither_password_working_stops_before_touching_xnat(tmp_path):
+    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    assert code == 1, output
+    assert "neither admin password authenticates" in output
+    assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+# ── First boot: the login page answers before the database is ready (FLIP#1384) ──────────────
+
+
+def logins_probed(tmp_path) -> int:
+    """How many admin logins the password probes made (each failed one counts toward the lockout)."""
+    return len(credentials_used(tmp_path, "GET", "/xapi/siteConfig/initialized"))
+
+
+def test_first_boot_waits_out_the_window_where_no_password_works(tmp_path):
+    # Two rounds of 401/401 (four logins), then XNAT is ready and the initial password works.
+    code, _, output = run_configure(tmp_path, {"UNREADY_LOGINS": "4"}, pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert output.count("Retrying in") == 2, output
+    assert "attempt 2/6" in output
+    assert "attempt 3/6" not in output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:initial"  # the activation call
+
+
+@pytest.mark.parametrize(
+    ("initialized", "mode_message"), [("true", "already configured"), ("false", "migrated from an older XNAT")]
+)
+def test_a_configured_instance_still_converges_after_the_unready_window(tmp_path, initialized, mode_message):
+    """An upgrade onto a live data dir can hit the same window; the rotated password must still win."""
+    code, _, output = run_configure(
+        tmp_path,
+        {"WRONG_LOGINS": "initial", "UNREADY_LOGINS": "4", "INITIALIZED_BODY": initialized},
+        pacs_state=MOCK_PACS_REGISTRATION,
+    )
+    assert code == 0, output
+    assert output.count("Retrying in") == 2, output
+    assert mode_message in output
+    assert credentials_used(tmp_path, "POST", "/xapi/siteConfig")[0] == "admin:rotated"  # the activation call
+
+
+def test_a_wrong_password_fails_well_short_of_the_xnat_lockout(tmp_path):
+    """XNAT locks the account after about 20 failed logins; the retries must not get it there."""
+    code, payloads, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated"})
+    assert code == 1, output
+    assert "after 6 attempt(s)" in output
+    assert "locks the account" in output
+    assert logins_probed(tmp_path) == 12
+    assert not any(m in {"POST", "PUT", "DELETE"} for m, _ in requests_made(payloads))
+
+
+def test_identical_passwords_are_probed_once_per_round(tmp_path):
+    """The dev kits set both passwords alike; a second probe of the same password is a wasted failed login."""
+    code, _, output = run_configure(
+        tmp_path,
+        {"WRONG_LOGINS": "initial", "XNAT_ADMIN_PASSWORD": "initial"},  # pragma: allowlist secret
+    )
+    assert code == 1, output
+    assert logins_probed(tmp_path) == 6
+
+
+@pytest.mark.parametrize("value", ["0", "9", "6s", "1.5", "08", "abc", ""])
+def test_an_unsafe_attempt_count_is_refused_before_any_login(tmp_path, value):
+    """A count outside 1-8 could pass the lockout, and a non-number would never end the loop."""
+    code, _, output = run_configure(tmp_path, {"WRONG_LOGINS": "initial,rotated", "XNAT_AUTH_PROBE_ATTEMPTS": value})
+    if value == "":  # unset → the default of 6
+        assert "after 6 attempt(s)" in output
+        return
+    assert code == 1, output
+    assert "XNAT_AUTH_PROBE_ATTEMPTS must be" in output
+    assert logins_probed(tmp_path) == 0
+
+
+@pytest.mark.parametrize("value", ["20s", "0", "00", "-1", "1.5"])
+def test_an_unusable_wait_is_refused_before_any_login(tmp_path, value):
+    """A zero wait would spend the failed logins without giving XNAT any time to initialise."""
+    code, _, output = run_configure(tmp_path, {"XNAT_AUTH_PROBE_WAIT_SECONDS": value})
+    assert code == 1, output
+    assert "XNAT_AUTH_PROBE_WAIT_SECONDS must be" in output
+    assert logins_probed(tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    ("status", "hint"), [("000", "Nothing answered"), ("503", "server error"), ("401", "locks the account")]
+)
+def test_the_final_error_points_at_the_cause(tmp_path, status, hint):
+    code, _, output = run_configure(
+        tmp_path,
+        {"FAIL_ON_URL": "/xapi/siteConfig/initialized", "FAIL_STATUS": status, "XNAT_AUTH_PROBE_ATTEMPTS": "2"},
+    )
+    assert code == 1, output
+    assert f"initial: HTTP {status}, configured: HTTP {status}" in output
+    assert hint in output

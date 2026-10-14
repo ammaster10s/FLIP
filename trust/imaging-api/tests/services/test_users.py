@@ -12,10 +12,13 @@
 
 import re
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
+import requests
 
+from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubUser, CreatedUser, CreateUser, User
 from imaging_api.services.users import (
     add_user_to_project,
@@ -109,13 +112,21 @@ def test_user_exists_false(mock_get_xnat_users, headers):
 def test_get_xnat_users_success(mock_get, headers):
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=MagicMock(return_value=[
-            {
-                "lastModified": 123, "username": "alice", "enabled": True,
-                "id": 1, "secured": False, "email": "alice@test.com",
-                "verified": True, "firstName": "Alice", "lastName": "A",
-            },
-        ]),
+        json=MagicMock(
+            return_value=[
+                {
+                    "lastModified": 123,
+                    "username": "alice",
+                    "enabled": True,
+                    "id": 1,
+                    "secured": False,
+                    "email": "alice@test.com",
+                    "verified": True,
+                    "firstName": "Alice",
+                    "lastName": "A",
+                },
+            ]
+        ),
     )
     users = get_xnat_users(headers)
     assert len(users) == 1
@@ -129,13 +140,21 @@ def test_get_xnat_users_admin_missing_last_modified(mock_get, headers):
     optional — otherwise get_xnat_users raises and project creation 500s."""
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=MagicMock(return_value=[
-            {
-                "username": "admin", "enabled": True, "id": 1, "secured": True,
-                "email": "admin@test.com", "verified": True, "firstName": "Admin",
-                "lastName": "User", "lastSuccessfulLogin": 1780012450777,
-            },
-        ]),
+        json=MagicMock(
+            return_value=[
+                {
+                    "username": "admin",
+                    "enabled": True,
+                    "id": 1,
+                    "secured": True,
+                    "email": "admin@test.com",
+                    "verified": True,
+                    "firstName": "Admin",
+                    "lastName": "User",
+                    "lastSuccessfulLogin": 1780012450777,
+                },
+            ]
+        ),
     )
     users = get_xnat_users(headers)
     assert len(users) == 1
@@ -259,9 +278,15 @@ def test_to_create_imaging_user_fetch_error(mock_get_users, headers):
 # create_user
 # ---------------------------------------------------------------------------
 _SAMPLE_USER_DICT = {
-    "lastModified": 123, "username": "alice", "enabled": True,
-    "id": 1, "secured": False, "email": "alice@test.com",
-    "verified": True, "firstName": "Alice", "lastName": "A",
+    "lastModified": 123,
+    "username": "alice",
+    "enabled": True,
+    "id": 1,
+    "secured": False,
+    "email": "alice@test.com",
+    "verified": True,
+    "firstName": "Alice",
+    "lastName": "A",
 }
 
 
@@ -272,8 +297,11 @@ def test_create_user_success(mock_post, mock_get_profile, headers):
     mock_get_profile.return_value = User(**_SAMPLE_USER_DICT)
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
-        lastName="A", email="alice@test.com",
+        username="alice",
+        password="pass",  # pragma: allowlist secret
+        firstName="Alice",
+        lastName="A",
+        email="alice@test.com",
     )
     profile = create_user(user_req, headers)
     assert profile.username == "alice"
@@ -284,8 +312,11 @@ def test_create_user_conflict(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=409, text="conflict")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
-        lastName="A", email="alice@test.com",
+        username="alice",
+        password="pass",  # pragma: allowlist secret
+        firstName="Alice",
+        lastName="A",
+        email="alice@test.com",
     )
     with pytest.raises(AlreadyExistsError, match="already exists"):
         create_user(user_req, headers)
@@ -296,8 +327,11 @@ def test_create_user_server_error(mock_post, headers):
     mock_post.return_value = MagicMock(status_code=500, text="Server Error")
 
     user_req = CreateUser(
-        username="alice", password="pass", firstName="Alice",  # pragma: allowlist secret
-        lastName="A", email="alice@test.com",
+        username="alice",
+        password="pass",  # pragma: allowlist secret
+        firstName="Alice",
+        lastName="A",
+        email="alice@test.com",
     )
     with pytest.raises(Exception, match="XNAT user creation failed"):
         create_user(user_req, headers)
@@ -354,6 +388,31 @@ def test_issue_setup_token_raises_on_unexpected_200_body(mock_get, body, text, h
         issue_setup_token("alice", headers)
 
 
+def test_issue_setup_token_quotes_username_at_http_boundary(xnat_path_segment, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    with patch.object(
+        requests.Response,
+        "json",
+        return_value={"alias": "alias", "secret": "secret"},  # pragma: allowlist secret (synthetic setup token)
+    ):
+        assert issue_setup_token(raw, {"X-Request-ID": "trace-1"}) == (
+            "/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret"
+        )
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == f"/data/services/tokens/issue/user/{encoded}"
+    assert parsed.query == parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("username", ["", ".", ".."])
+def test_issue_setup_token_rejects_empty_and_dot_username_before_http(username, sent_xnat_requests):
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        issue_setup_token(username, {})
+    assert sent_xnat_requests == []
+
+
 # ---------------------------------------------------------------------------
 # issue_invite
 # ---------------------------------------------------------------------------
@@ -378,8 +437,11 @@ def test_issue_invite_seals_the_setup_path_for_the_profile(mock_issue, mock_encr
 @patch("imaging_api.services.users.to_create_imaging_user")
 def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_issue, mock_encrypt, headers):
     mock_to_create.return_value = CreateUser(
-        username="alice", password="secret", firstName="Alice",  # pragma: allowlist secret
-        lastName="A", email="alice@test.com",
+        username="alice",
+        password="secret",  # pragma: allowlist secret
+        firstName="Alice",
+        lastName="A",
+        email="alice@test.com",
     )
     mock_create.return_value = User(**_SAMPLE_USER_DICT)
 
@@ -425,3 +487,38 @@ def test_add_user_to_project_failure(mock_exists, mock_put, headers):
 
     with pytest.raises(Exception, match="could not be added to project"):
         add_user_to_project(user, "PROJ1", headers)
+
+
+# ---------------------------------------------------------------------------
+# Request URLs go through xnat_url (#1386)
+# ---------------------------------------------------------------------------
+_XNAT = get_settings().XNAT_URL
+
+
+def test_user_request_urls_are_unchanged_for_ordinary_identifiers(sent_xnat_requests):
+    project_id = "6f1c2a9e-3b7d-4c55-9a0e-2d4f8b1c7e10"
+    with (
+        patch("imaging_api.services.users.user_exists", return_value=True),
+        patch.object(requests.Response, "json", return_value=[]),
+    ):
+        add_user_to_project(User(**_SAMPLE_USER_DICT), project_id, {})
+        get_xnat_users({})
+
+    expected = [
+        ("PUT", f"{_XNAT}/data/projects/{project_id}/users/Members/alice"),
+        ("GET", f"{_XNAT}/xapi/users/profiles"),
+    ]
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [
+        (m, requests.Request(m, u).prepare().url) for m, u in expected
+    ]
+
+
+def test_add_user_to_project_keeps_identifiers_in_one_segment(sent_xnat_requests, xnat_path_segment):
+    raw, encoded = xnat_path_segment
+    user = User(**{**_SAMPLE_USER_DICT, "username": raw})
+    with patch("imaging_api.services.users.user_exists", return_value=True):
+        add_user_to_project(user, raw, {})
+
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parsed.path == f"/data/projects/{encoded}/users/Members/{encoded}"
+    assert parsed.query == parsed.fragment == ""

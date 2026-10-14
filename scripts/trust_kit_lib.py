@@ -51,7 +51,7 @@ HUB_SHARED_DEV_NOTE = (
 )
 
 # The closed set of hub-shared keys. Kept in lockstep with
-# flip_api/scripts/register_trust.py:HUB_SHARED_ENV_KEYS (the emitter, which
+# flip-api/src/flip_api/scripts/register_trust.py:HUB_SHARED_ENV_KEYS (the emitter, which
 # runs inside the flip-api container and cannot import this module). The
 # lockstep is asserted by flip-api's test_register_trust_cli.py.
 HUB_SHARED_KEYS: tuple[str, ...] = (
@@ -62,9 +62,7 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
-    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
-    "DOCKER_FL_REGISTRY",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )

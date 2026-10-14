@@ -42,12 +42,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import trust_kit_lib as tkl  # noqa: E402
 
-# Hub-shared keys that legitimately default downstream and so may be absent from
-# a populated env file. DOCKER_FL_REGISTRY falls back to DOCKER_REGISTRY in
-# deploy/fl_backend.mk, so prod env files routinely omit it — its absence must
-# not abort the sync (it just isn't written to the kit; the trust defaults it).
-OPTIONAL_HUB_SHARED_KEYS: tuple[str, ...] = ("DOCKER_FL_REGISTRY",)
-
 
 def die(msg: str) -> NoReturn:
     """Print an error and exit 1.
@@ -73,20 +67,15 @@ def main() -> None:
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")
 
-    # Require every NON-optional hub-shared key; an absent optional key (one
-    # that defaults downstream) is tolerated. This still catches the common
-    # footgun — forgetting to source the env file leaves the required keys unset.
-    missing = [k for k in tkl.HUB_SHARED_KEYS if k not in OPTIONAL_HUB_SHARED_KEYS and not os.environ.get(k)]
+    # Require every hub-shared key: forgetting to source the env file leaves them unset.
+    missing = [k for k in tkl.HUB_SHARED_KEYS if not os.environ.get(k)]
     if missing:
         die(
             f"❌ These Hub-shared keys are unset in the environment: {', '.join(missing)}\n"
             f"   Make sure the matching .env.<env> file is present and populated."
         )
 
-    # Write only the keys present (non-empty) in the environment — like
-    # register_trust's _hub_shared_from_env. An absent optional key is skipped,
-    # so the kit never carries a stale/empty value the trust would default anyway.
-    new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS if os.environ.get(k)}
+    new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
 
     # Surface the source env file + destination URL up-front — doubles as a
     # footgun guard: an on-prem-pointed kit accidentally synced without PROD=true
