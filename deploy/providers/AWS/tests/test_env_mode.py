@@ -147,13 +147,25 @@ def test_a_kit_under_two_names_is_refused(root: Path, tmp_path: Path, hub: str, 
     assert f"keep the live one as {tmp_path}/.env.ABC.{hub}" in result.stderr, result.stderr
 
 
-def test_kit_codes_lists_every_kit_for_the_hub_old_names_included(root: Path, tmp_path: Path) -> None:
+def test_kit_codes_lists_current_names_only(root: Path, tmp_path: Path) -> None:
+    """What a sweep loops over: an old name answers only to KIT=, and .env.<word> is no kit."""
     names = [".env.A.prod", ".env.B.production", ".env.C.lza-prod", ".env.D.lza-stag", ".env.E.prod.example"]
-    for name in [*names, ".env.F", ".env.example"]:
+    for name in [*names, ".env.F", ".env.local", ".env.example", ".env.G.stag"]:
         (tmp_path / name).touch()
-    assert _table(root, "HUB=prod", f"DIR={tmp_path}/")[6] == "A B C F"
-    assert _table(root, "HUB=stag", f"DIR={tmp_path}/")[6] == "D"
+    assert _table(root, "HUB=prod", f"DIR={tmp_path}/")[6] == "A"
+    assert _table(root, "HUB=stag", f"DIR={tmp_path}/")[6] == "G"
     assert _table(root, f"DIR={tmp_path}/")[6] == ""
+
+
+def test_a_sweep_names_the_old_kits_it_skips_in_one_line(root: Path, tmp_path: Path) -> None:
+    for name in (".env.A.prod", ".env.B.production", ".env.C.lza-prod", ".env.D.lza-stag", ".env.F"):
+        (tmp_path / name).touch()
+    probe = f"include deploy/env_mode.mk\n__probe:\n\t@:$(call old_kits_hint,{tmp_path}/)\n"
+    assert _run(root, "HUB=prod", probe=probe).stdout.splitlines() == [
+        "⚠️  Skipped, still under an old kit name — rename (mv) to include them:"
+        " trust/.env.B.production → .env.B.prod trust/.env.C.lza-prod → .env.C.prod"
+    ]
+    assert _run(root, probe=probe).stdout == ""
 
 
 @pytest.mark.parametrize(
@@ -190,18 +202,18 @@ def test_the_hub_env_check_stays_out_of_the_way(root: Path, variables: tuple[str
     assert _run(root, *variables).returncode == 0
 
 
-def test_old_kit_hint_names_the_rename(root: Path) -> None:
+def test_kit_hint_names_the_rename(root: Path) -> None:
     probe = """\
 include deploy/env_mode.mk
 __probe:
-\t@:$(call old_kit_hint,trust/.env.ABC.lza-prod)$(call old_kit_hint,trust/.env.XYZ)
-\t@:$(call old_kit_hint,trust/.env.OK.prod)
+\t@:$(call kit_hint,trust/.env.ABC.lza-prod)$(call kit_hint,trust/.env.XYZ)
+\t@:$(call kit_hint,trust/.env.OK.prod)
 """
     result = _run(root, "HUB=prod", probe=probe)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "⚠️  trust/.env.ABC.lza-prod is an old kit name — rename it to trust/.env.ABC.prod",
-        "⚠️  trust/.env.XYZ is an old kit name — rename it to trust/.env.XYZ.prod",
+        "⚠️  trust/.env.ABC.lza-prod is an old kit name — rename (mv) it to trust/.env.ABC.prod",
+        "⚠️  trust/.env.XYZ is an old kit name — rename (mv) it to trust/.env.XYZ.prod",
     ]
 
 
@@ -214,7 +226,7 @@ __probe:
 """
     once = _run(root, "HUB=prod", probe=probe)
     assert once.stdout.splitlines() == [
-        "⚠️  trust/.env.ABC.lza-prod is an old kit name — rename it to trust/.env.ABC.prod",
+        "⚠️  trust/.env.ABC.lza-prod is an old kit name — rename (mv) it to trust/.env.ABC.prod",
         "trust/.env.ABC.lza-prod",  # exported, so a sub-make does not repeat it
     ]
     assert "old kit name" not in _run(root, "HUB=prod", "KIT_FILE=x", probe=probe).stdout

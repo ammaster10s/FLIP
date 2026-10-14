@@ -52,8 +52,8 @@ IS_DEPLOYED := $(strip $(HUB))
 # kit CA workspace key on. Development counts as stag.
 ENV_CLASS := $(if $(filter prod,$(ENV)),prod,stag)
 
-# Pre-FLIP#1479 names, still found for one release so a live site's next upgrade does
-# not break. Remove with the fallback: these two lines and the bare .env.<CODE> below.
+# Pre-FLIP#1479 names. An old hub env-file name stops make; an old kit name is still found
+# for one release, through KIT= only, so a live site's next upgrade does not break.
 OLD_ENV_NAMES := $(if $(filter prod,$(ENV)),lza-prod production,$(if $(filter stag,$(ENV)),lza-stag))
 OLD_KIT_ENVS := $(if $(filter prod,$(ENV)),production lza-prod,$(if $(filter stag,$(ENV)),lza-stag))
 
@@ -70,21 +70,21 @@ $(error $(_HUB_ENV_FILES) is the hub env file's pre-FLIP#1479 name: rename it to
 endif
 endif
 
-# Kit files. A trust's kit is trust/.env.<CODE>.$(ENV), else one of its old names —
-# .production / .lza-prod / a bare .env.<CODE> for prod, .lza-stag for stag.
-_kit_names = $(1).env.$(2).$(ENV) $(foreach e,$(OLD_KIT_ENVS),$(1).env.$(2).$(e)) $(if $(filter prod,$(ENV)),$(1).env.$(2))
+# Kit files. A trust's kit is trust/.env.<CODE>.$(ENV). $(call kit_names,<CODE>) adds the
+# old names KIT=<CODE> still answers to: .production / .lza-prod / a bare .env.<CODE> for
+# prod, .lza-stag for stag.
+kit_names = .env.$(1).$(ENV) $(foreach e,$(OLD_KIT_ENVS),.env.$(1).$(e)) $(if $(filter prod,$(ENV)),.env.$(1))
 # $(call kit_file,<trust dir with trailing / or empty>,<CODE>): the one of those names
 # that exists, else the current one. Two that exist stop make: only one holds the live kit.
-kit_file = $(call _one_kit,$(wildcard $(call _kit_names,$(1),$(2))),$(1).env.$(2).$(ENV))
+kit_file = $(call _one_kit,$(wildcard $(addprefix $(1),$(call kit_names,$(2)))),$(1).env.$(2).$(ENV))
 _one_kit = $(if $(word 2,$(1)),$(error $(1) are all kits for one trust (HUB=$(HUB)): keep the live one as $(2) and delete the others),$(or $(1),$(2)))
-# $(call kit_codes,<trust dir>): the CODE of every kit present for this hub, under any of those names.
-kit_codes = $(sort $(foreach e,$(ENV) $(OLD_KIT_ENVS),$(patsubst $(1).env.%.$(e),%,$(wildcard $(1).env.*.$(e)))) $(if $(filter prod,$(ENV)),$(call _bare_kit_codes,$(1))))
-# A bare .env.<CODE> has no further dot; .env.example is the template, not a kit.
-_bare_kit_codes = $(filter-out example,$(foreach c,$(patsubst $(1).env.%,%,$(wildcard $(1).env.*)),$(if $(findstring .,$(c)),,$(c))))
-# $(call kit_files,<trust dir>): every such kit file, as kit_file resolves it.
-kit_files = $(foreach c,$(call kit_codes,$(1)),$(call kit_file,$(1),$(c)))
-# $(call old_kit_hint,<kit file>): one line asking to rename a kit found under an old name.
-old_kit_hint = $(if $(filter-out %.$(ENV),$(1)),$(info ⚠️  $(1) is an old kit name — rename it to $(or $(firstword $(foreach e,$(OLD_KIT_ENVS),$(patsubst %.$(e),%.$(ENV),$(filter %.$(e),$(1))))),$(1).$(ENV))))
-# $(call kit_hint,<repo-relative kit file>): old_kit_hint once per command — sub-makes
-# inherit _KIT_HINTED — and never for a KIT_FILE the user named outright.
-kit_hint = $(if $(filter $(1),$(_KIT_HINTED))$(filter command line environment,$(origin KIT_FILE)),,$(call old_kit_hint,$(1))$(eval export _KIT_HINTED := $(1)))
+# $(call kit_codes,<trust dir>): the CODE of every kit under its current name — what a
+# sweep (a target run without KIT=) loops over.
+kit_codes = $(sort $(patsubst $(1).env.%.$(ENV),%,$(wildcard $(1).env.*.$(ENV))))
+# $(call old_kits_hint,<trust dir>): the one line a sweep prints for the kits it skips
+# because they still carry an old name.
+old_kits_hint = $(call _skipped_kits,$(notdir $(wildcard $(foreach e,$(OLD_KIT_ENVS),$(1).env.*.$(e)))))
+_skipped_kits = $(if $(1),$(info ⚠️  Skipped, still under an old kit name — rename (mv) to include them: $(foreach f,$(1),trust/$(f) → $(basename $(f)).$(ENV))))
+# $(call kit_hint,<repo-relative kit file>): when KIT= found its kit under an old name, the
+# rename, once per command (sub-makes inherit _KIT_HINTED) and never for a KIT_FILE named outright.
+kit_hint = $(if $(filter %.$(ENV) $(_KIT_HINTED),$(1))$(filter command line environment,$(origin KIT_FILE)),,$(info ⚠️  $(1) is an old kit name — rename (mv) it to $(if $(filter $(addprefix %.,$(OLD_KIT_ENVS)),$(1)),$(basename $(1)),$(1)).$(ENV))$(eval export _KIT_HINTED := $(1)))

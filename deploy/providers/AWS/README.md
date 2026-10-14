@@ -755,8 +755,10 @@ files once:
   two files for one hub:
   keep the one holding the live values (`scripts/reconcile_ci_env.py --env prod --compare <file>` tells).
 - Kits `trust/.env.<CODE>.lza-prod` / `.production` / a bare `trust/.env.<CODE>` → `.prod`, `.lza-stag` → `.stag`.
-  Until renamed, `env_mode.mk`'s `kit_file` finds the old name and prints the rename; two names for one kit stop
-  make. A site renames only once it will not roll back past this release, whose predecessors know only the old names.
+  Until renamed, `KIT=<CODE>` finds the old name (`env_mode.mk`'s `kit_file`) and prints the rename; a target run
+  without `KIT=` (`register-trusts`, `sync-trust-kits`) skips it and lists it. Move the file (`mv`), never copy it:
+  two names for one kit stop make. A site renames only once it will not roll back past this release, whose
+  predecessors know only the old names.
 
 On GitHub, add `TF_HUB` to `aws-stag` / `aws-prod` before the merge. Delete `TF_PROD`, `LOCAL_TRUST_PUBLIC_IPS`,
 `K8S_TRUST_PUBLIC_IPS`, `LZA_ELB_ACCESS_LOGS_BUCKET` and any `RELEASE_WEB_ALIAS` from `aws-stag` once this is on `develop`, but from `aws-prod`

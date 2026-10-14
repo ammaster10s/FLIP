@@ -80,7 +80,9 @@ follow.
       ``PROD`` now stops make. An old-named kit keeps working for one release — the verbs find it
       and print the exact rename — but rename it to ``trust/.env.<slot>.prod`` before the next
       one, and only once you will not roll back past this release: earlier releases know only
-      the old names.
+      the old names. Move it (``mv``), never copy it: two names for one kit stop make. The
+      running stack needs nothing: the verbs recognise it as this trust under either name, so
+      never move the trust to another slot because of the rename.
 
    .. note::
 

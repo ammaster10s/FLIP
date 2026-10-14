@@ -101,7 +101,9 @@ export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 
 # The trust kit file the trust-deploy targets read — trust/.env.<KIT>.$(ENV), or an old
 # name resolved by env_mode.mk's kit_file.
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
+endif
 KIT_FILE_LABEL := $(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))
 $(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
 # Only the trust security group's DNS rules read it (module.trust_security_group).
@@ -1176,9 +1178,9 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	## stores only the SHA-256 hash), so re-running is safe. Delivery is command-driven
 	## (deploy-trust pushes to the EC2 host; package-onprem-trust-kit tarballs for on-prem).
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
-	##   (no KIT)   → register every live trust/.env.*.<env> kit; none is an error unless
-	##                 DEPLOY_TRUST_EC2=false (a hub-only deploy may register its trusts later)
-	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(foreach f,$(call kit_files,$(REPO_ROOT)/trust/),$(call old_kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(f)))$(f)))" bash scripts/register-trusts.sh
+	##   (no KIT)   → register every live trust/.env.*.<env> kit (an old-named one only with KIT=);
+	##                 none is an error unless DEPLOY_TRUST_EC2=false (a hub-only deploy may register later)
+	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(call old_kits_hint,$(REPO_ROOT)/trust/)$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))" bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator

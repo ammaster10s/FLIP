@@ -126,6 +126,7 @@ AWS_STUB_ENV = {
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
 }
+AWS = "deploy/providers/AWS"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -227,7 +228,7 @@ class MakeKitSelection(unittest.TestCase):
             with self.subTest(filename=filename):
                 self.write_kits(filename)
                 output = self.check_selected(filename, hub)
-                hint = f"trust/{filename} is an old kit name — rename it to trust/.env.SITE.{hub}"
+                hint = f"trust/{filename} is an old kit name — rename (mv) it to trust/.env.SITE.{hub}"
                 assert output.count(hint) == 1, output  # once, though several makes resolve it
                 xnat = subprocess.run(
                     ["make", "-s", "-f", "-", "__probe", "KIT=SITE", f"HUB={hub}", "TRUST_NUM=9"],
@@ -251,15 +252,28 @@ class MakeKitSelection(unittest.TestCase):
         assert result.returncode == 0, result.stdout + result.stderr
         assert "scripts/new_trust.py" in self.args_file.read_text()
 
-    def test_loop_targets_dispatch_an_old_named_kit(self):
-        self.write_kits(".env.SITE.production")
+    def test_sweeps_take_current_names_and_name_the_old_kits_they_skip(self):
+        """Only KIT= finds an old name: a sweep also took trust/.env.<word> (.env.local) for a kit."""
+        self.write_kits(".env.SITE.production", ".env.OK.prod", ".env.local")
         for target, subdir, loop in (
-            ("down-fl-clients", "trust", "for kit in SITE;"),
-            ("sync-trust-kits", ".", "for code in SITE;"),
+            ("down-fl-clients", "trust", "for kit in OK;"),
+            ("sync-trust-kits", ".", "for code in OK;"),
         ):
             with self.subTest(target=target):
                 result = self.make(target, "HUB=prod", dry=True, subdir=subdir)
                 assert loop in result.stdout, result.stdout + result.stderr
+                assert "rename (mv) to include them: trust/.env.SITE.production → .env.SITE.prod" in result.stdout
+
+    def test_a_sweep_fails_when_an_earlier_kit_fails(self):
+        """A bare `for` loop exits with the last kit's status, so an earlier kit's failure was lost."""
+        (self.root / "trust/.env.OTHER.prod").write_text(KIT.replace("SLOT_NUMBER=9", "SLOT_NUMBER=8"))
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
+        docker = self.root / "bin/docker"
+        docker.write_text('#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; esac\n')
+        docker.chmod(0o755)
+        result = self.make("down-fl-clients", "HUB=prod", subdir="trust")
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "-p trust9 rm" in result.stdout, result.stdout  # the later kit still ran
 
     def test_sync_trust_kits_fails_when_a_kit_fails(self):
         self.write_kits(".env.SITE.prod", ".env.OTHER.prod")
@@ -272,16 +286,56 @@ class MakeKitSelection(unittest.TestCase):
         env_file = self.root / "hub.env"
         env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
         kit = f"{self.root}/trust/.env.SITE.lza-prod"
-        for target, subdir, extra, expected in (
-            ("register-trusts", "deploy/providers/AWS", ("KIT=SITE",), f'KIT_FILES="{kit}"'),
-            ("register-trusts", "deploy/providers/AWS", (), f'KIT_FILES="{kit}"'),
-            ("sync-kit", "trust/deploy/helm", ("KIT=SITE",), f"--kit-file {kit}"),
-            ("upgrade-trust-k8s", "trust/deploy/helm", ("KIT=SITE",), f"plan --kit-file {kit}"),
+        for target, subdir, expected in (
+            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
+            ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
         ):
-            with self.subTest(target=target, extra=extra):
-                result = self.make(target, "HUB=prod", f"MAIN_ENV_FILE={env_file}", *extra, dry=True, subdir=subdir)
+            with self.subTest(target=target):
+                args = ("HUB=prod", f"MAIN_ENV_FILE={env_file}", "KIT=SITE")
+                result = self.make(target, *args, dry=True, subdir=subdir)
                 assert expected in result.stdout, result.stdout + result.stderr
                 assert "trust/.env.SITE.lza-prod is an old kit name" in result.stdout, result.stdout
+        # Without KIT= it is a sweep: current names only.
+        result = self.make("register-trusts", "HUB=prod", f"MAIN_ENV_FILE={env_file}", dry=True, subdir=AWS)
+        assert 'KIT_FILES=""' in result.stdout, result.stdout + result.stderr
+        assert "trust/.env.SITE.lza-prod → .env.SITE.prod" in result.stdout, result.stdout
+
+    def test_a_kit_file_given_outright_is_not_looked_up(self):
+        """Two names for one kit stop the lookup, which a KIT_FILE= makes unnecessary."""
+        self.write_kits(".env.SITE.prod", ".env.SITE.production", "operator-kit")
+        env_file = self.root / "hub.env"
+        env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
+        kit = self.root / "trust/operator-kit"
+        self.check_selected("operator-kit", "prod", f"KIT_FILE={kit}")
+        for target, subdir, expected in (
+            ("register-trusts", AWS, f'KIT_FILES="{kit}"'),
+            ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
+            ("down-xnat", "trust/xnat", "xnat"),
+        ):
+            with self.subTest(target=target):
+                args = ("KIT=SITE", "HUB=prod", f"KIT_FILE={kit}", f"MAIN_ENV_FILE={env_file}")
+                result = self.make(target, *args, dry=True, subdir=subdir)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert expected in result.stdout, result.stdout
+
+    def test_an_occupied_slot_is_its_own_trust_under_any_name_its_kit_answers_to(self):
+        """A stack started before the FLIP#1479 rename still carries the old kit name in its label."""
+        self.write_kits(".env.SITE.prod")
+        docker = self.root / "bin/docker"
+        docker.write_text('#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";; esac\n')
+        docker.chmod(0o755)
+        for owner, allowed in (
+            ("/srv/flip/trust/.env.SITE.production", True),
+            ("/srv/flip/trust/.env.SITE.lza-prod", True),
+            ("/srv/flip/trust/.env.SITE", True),
+            ("/srv/flip/trust/.env.SITE.lza-stag", False),  # the staging hub's kit
+            ("/srv/flip/trust/.env.OTHER.production", False),
+        ):
+            with self.subTest(owner=owner):
+                self.env["OWNER"] = owner
+                result = self.make("down-fl-clients-kit", "KIT=SITE", "HUB=prod", subdir="trust")
+                assert (result.returncode == 0) == allowed, result.stdout + result.stderr
 
     def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
         self.check_selected(".env.SITE.prod")

@@ -92,7 +92,9 @@ SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
 # The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
 # name resolved by env_mode.mk's kit_file), handed to every script that reads it.
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
+endif
 $(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because

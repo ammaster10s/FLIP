@@ -58,7 +58,9 @@ export XNAT_TAG
 # ENV (the kit suffix) and IS_DEPLOYED (non-empty whenever HUB is set) come from
 # the shared table in ../../deploy/env_mode.mk.
 include ../../deploy/env_mode.mk
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,../,$(KIT))
+endif
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
@@ -323,7 +325,7 @@ build:
 # writes broken ("Source ... does not exist") so DICOM import fails on the
 # next boot.
 up:
-	@[ -n "$(call kit_codes,../)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@$(call old_kits_hint,../)[ -n "$(call kit_codes,../)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 	@for kit in $(call kit_codes,../); do \
 	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
 	done
@@ -390,7 +392,7 @@ XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
 XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
 
 down:
-	@for kit in $(call kit_codes,../); do $(MAKE) down-xnat KIT=$$kit; done
+	@$(call old_kits_hint,../)rc=0; for kit in $(call kit_codes,../); do $(MAKE) down-xnat KIT=$$kit || rc=1; done; exit $$rc
 
 down-xnat:
 	$(require_kit)

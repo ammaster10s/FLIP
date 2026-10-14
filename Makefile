@@ -22,7 +22,7 @@
 # What HUB means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
 # targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
-# name the AWS Makefile and register-trusts.sh use, and find a kit under its
+# name the AWS Makefile and register-trusts.sh use; KIT= finds a kit under its
 # pre-FLIP#1479 name too (env_mode.mk's kit_file).
 include deploy/env_mode.mk
 MAIN_ENV_FILE=$(ENV_FILE_NAME)
@@ -663,13 +663,13 @@ new-trust:
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
-	@:$(call old_kit_hint,$(call kit_file,trust/,$(KIT)))
+	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
 	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
-# Sync every locally-present kit for this env (old kit names included; the
-# .example templates never match).
+# Sync every locally-present kit for this env (current names only; the .example
+# templates never match).
 sync-trust-kits:
-	@[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
+	@$(call old_kits_hint,trust/)[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
 	@rc=0; for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code" || rc=1; done; exit $$rc
 
 # ---------------------------------------------------------------------------
@@ -694,7 +694,7 @@ generate-xnat-credentials:
 	elif [ -n "$(KIT)" ]; then \
 	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$(call kit_file,trust/,$(KIT)) $(if $(FORCE),FORCE=$(FORCE)); \
 	else \
-	  found=0; for kit in $(call kit_files,trust/); do \
+	  found=0; for kit in $(if $(ENV_FILE)$(KIT),,$(call old_kits_hint,trust/))$(sort $(wildcard trust/.env.*.$(ENV))); do \
 	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
 	  done; \
 	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \

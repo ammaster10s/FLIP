@@ -28,9 +28,9 @@
 #
 # Usage (via `make register-trusts [KIT=<CODE>] HUB=<env>`):
 #   KIT_FILES="<kit file>..." register-trusts.sh
-# The deploy Makefile resolves KIT_FILES — the one kit for KIT=<CODE>, else every live
-# trust/.env.*.<env> kit — through deploy/env_mode.mk's kit_file, so a kit still under
-# its pre-FLIP#1479 name is registered in place.
+# The deploy Makefile resolves KIT_FILES: the one kit for KIT=<CODE> (through
+# deploy/env_mode.mk's kit_file, so a kit still under its pre-FLIP#1479 name is registered
+# in place), else every trust/.env.*.<env> kit under its current name.
 
 set -eo pipefail
 # Default file mode 077 so any tempfile / redirect this script (or sourced

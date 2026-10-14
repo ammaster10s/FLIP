@@ -31,8 +31,11 @@ include ../deploy/env_mode.mk
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
 # Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>, or an old name
-# resolved by env_mode.mk's kit_file (which prints the rename once, via kit_hint).
+# resolved by env_mode.mk's kit_file (which prints the rename once, via kit_hint). A KIT_FILE
+# given outright is not looked up at all.
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,,$(KIT))
+endif
 -include $(KIT_FILE)
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
 $(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
@@ -376,8 +379,9 @@ require-xnat-aetitle:
 #
 # The owning kit is read off compose's own environment_file label, compared by file
 # name so re-running for the SAME kit (the normal restart/update path) still works,
-# including from another checkout. That label is populated whenever compose was given
-# --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
+# including from another checkout and across the FLIP#1479 kit rename: any name KIT=
+# answers to (env_mode.mk's kit_names) is this trust. That label is populated whenever
+# compose was given --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
 # verified live on Docker Compose v5.1.3, where the hub's own --env-file-less project
 # carries it empty and every trust project carries the kit path.
 #
@@ -406,14 +410,18 @@ define check_slot_not_taken
 		echo "   set FL_KIT_SLOT_NUMBER=<free> in $$kit_label to move this trust to a free slot."; \
 		exit 1; \
 	fi; \
-	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$$(basename "$$kit_file")" ]; then \
+	owner=$$(basename "$$occupied"); same=; \
+	for name in "$$(basename "$$kit_file")" $(call kit_names,$(KIT)); do [ "$$owner" = "$$name" ] && same=1; done; \
+	if [ -n "$$occupied" ] && [ -z "$$same" ]; then \
 		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
-		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
+		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$owner,"; \
 		echo "   but you asked to operate on $$kit_file. Acting on this project would hand those"; \
 		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
 		echo ""; \
-		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
-		echo "   and collides with the default stack. Pick a free slot:"; \
+		echo "   If $$owner is this trust's own kit under another name, do not move slots: that"; \
+		echo "   starts a second stack for the same trust. Re-run with KIT_FILE=<that kit> instead."; \
+		echo "   Otherwise: slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts"; \
+		echo "   at 1 and collides with the default stack. Pick a free slot:"; \
 		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
 		echo "   then set FL_KIT_SLOT_NUMBER=<free> in $$kit_label and re-run."; \
 		exit 1; \
@@ -713,13 +721,13 @@ down-trust-ec2:
 # (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —
 # each is a separate sub-make so its `-include` loads only that trust's kit.
 up: create-networks
-	@[ -n "$(call kit_codes,)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@$(call old_kits_hint,)[ -n "$(call kit_codes,)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 	@for kit in $(call kit_codes,); do \
 	  $(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }; \
 	done
 
 down:
-	@for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit; done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit || rc=1; done; exit $$rc
 
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both
@@ -729,7 +737,7 @@ down:
 # and Trust_2 stays on the network ports from its kit file.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	@for kit in $(call kit_codes,); do $(MAKE) up-fl-clients-kit KIT=$$kit; done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) up-fl-clients-kit KIT=$$kit || rc=1; done; exit $$rc
 
 up-fl-clients-kit:
 	$(require_kit_file)
@@ -740,7 +748,7 @@ up-fl-clients-kit:
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	@for kit in $(call kit_codes,); do $(MAKE) down-fl-clients-kit KIT=$$kit; done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-fl-clients-kit KIT=$$kit || rc=1; done; exit $$rc
 
 down-fl-clients-kit:
 	$(require_kit)
