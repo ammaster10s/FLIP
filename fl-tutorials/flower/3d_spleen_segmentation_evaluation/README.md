@@ -193,8 +193,9 @@ Central Hub (e.g. `MEAN_DICE`, `MEAN_IOU`). No server or `pyproject.toml` change
 ### Checkpoint Configuration
 
 The checkpoint to evaluate is set with a single `checkpoint` key under
-`[tool.flwr.app.config]` — a dummy placeholder in `pyproject.toml`, overridden
-per run in `app/config.toml`:
+`[tool.flwr.app.config]`. `pyproject.toml` names `model.pt`, which is what a tutorial run uses;
+on the platform the `app/config.toml` uploaded with the app sets it (the platform's evaluation
+template carries only a placeholder):
 
 ```toml
 [tool.flwr.app.config]
