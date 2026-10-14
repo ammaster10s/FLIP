@@ -56,7 +56,7 @@ server; no inbound ports are exposed from the K8s cluster.
 > than editing the Makefile:
 >
 > ```bash
-> make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+> make deploy-trust-k8s KIT=<KIT> HUB=<env> HELM_TIMEOUT=45m
 > ```
 >
 > Set it below the job's real duration and the upgrade reports
@@ -76,7 +76,7 @@ slot); the chart never registers anything itself. The flow is:
 ```
  hub side (once)            cluster side (this chart)
  ─────────────────          ─────────────────────────
- new-trust ─► register ─► sync-trust-kit ─► sync-kit ─► up ─► (add-k8s-trust)
+ new-trust ─► register ─► sync-trust-kit ─► sync-kit ─► up
             writes trust/.env.<CODE>.<env>   patches Secret + writes override
 ```
 
@@ -209,9 +209,7 @@ make -C trust/deploy/helm preflight KIT=<CODE> HUB=stag
 
 `HUB` takes the platform's three values — unset (development), `stag`, `prod` — and is
 itself the kit-file token (`trust/.env.<CODE>.<hub>`). The Makefile resolves the kit file
-through `deploy/env_mode.mk`'s `kit_file`, which for one release still finds a kit under its
-pre-FLIP#1479 name (`.production`, `.lza-prod`, `.lza-stag`, bare) and prints the rename, and
-passes the result to `scripts/preflight.sh` as `KIT_FILE` and to `sync_k8s_kit.py` as
+through `deploy/env_mode.mk`'s `kit_file` and passes the result to `scripts/preflight.sh` as `KIT_FILE` and to `sync_k8s_kit.py` as
 `--kit-file`, so the checklist reads the kit the site actually has.
 
 Equivalent raw Helm for the install step:
@@ -322,20 +320,6 @@ log, not its receipt log, and this deployment never writes it at all; its growth
 context and is never a success route. The importer-crash signatures still fail the run, read
 from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
-
-### 7. (FL training only) Open the FL-server NLB
-
-Polling needs nothing more. For FL *training*, the K8s node's FL client must
-reach the hub's FL server. Add the node's public/egress IP to
-`K8S_TRUST_PUBLIC_IPS` in the hub env file (an HCL list, e.g.
-`K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB:
-
-```bash
-make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> HUB=stag
-```
-
-This is a normal `terraform apply` (no `-target`), so re-running with an
-already-listed IP is a no-op (idempotent — #596).
 
 ### Inspecting and tearing down the release
 
@@ -585,7 +569,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):

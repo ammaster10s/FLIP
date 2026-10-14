@@ -66,26 +66,28 @@ etc., then re-transmit the refreshed kit file to the remote operator
 encrypted channel for on-prem).
 
 For the on-prem flow, the admin scaffolds and fills the kit on their
-workstation in two commands (prod AWS creds required):
+workstation (prod AWS creds required):
 
 1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
-2. `make register-trust KIT=<CODE> HUB=prod` — registers on the prod hub and
-   fills BOTH the Kit credentials AND the Hub-shared block in one step.
+2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
+   on the prod hub and fills the Kit credentials; then
+   `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
-tarballs the populated kit file as-is + the operator's slice of the FL
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`
+tarballs the populated kit file as-is, as `.env.<slot>.prod` (`<slot>` is its
+`FL_KIT_SLOT`, which the packager is keyed on), + the operator's slice of the FL
 participant kit S3 bucket into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
-The operator extracts, copies `.env.<CODE>.prod` into their checkout,
+The operator extracts, copies `.env.<slot>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<slot>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
 the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<slot>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
 GHCR login from `~/.docker/config.json`.
@@ -97,7 +99,7 @@ GHCR login from `~/.docker/config.json`.
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
@@ -114,9 +116,7 @@ refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` 
 in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
 server-side-apply a subset of that Secret (it prunes the keys it does not list).
 The kit-file token is `HUB` itself (`prod` / `stag`, unset = `development`). The chart Makefile
-resolves the kit file through `deploy/env_mode.mk`'s `kit_file` — which still finds a pre-FLIP#1479
-name (`.production`, `.lza-prod`, `.lza-stag`, bare) for one release and prints the rename — and
-passes it to the preflight script (`KIT_FILE`) and `sync_k8s_kit.py` (`--kit-file`).
+resolves the kit file through `deploy/env_mode.mk`'s `kit_file` and passes it to the preflight script (`KIT_FILE`) and `sync_k8s_kit.py` (`--kit-file`).
 
 ## Commands (from `trust/`)
 

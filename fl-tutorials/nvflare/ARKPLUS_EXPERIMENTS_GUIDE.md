@@ -117,8 +117,7 @@ Verify: `curl -s -o /dev/null -w '%{http_code}\n' https://stag.flip.aicentre.co.
 ## Part B — Bring up the two trusts (on the GPU desktop)
 
 Both trusts run on the desktop (they need the GPU the trust EC2 lacks). Prereqs: the trusts are
-registered on the hub (`make register-trusts HUB=stag`) and the FL-server NLB admits the desktop's
-public IP (`make allow-local-trust-nlb HUB=stag`). The DeCaf data itself is loaded into each
+registered on the hub (`make register-trusts HUB=stag`). The DeCaf data itself is loaded into each
 trust's Orthanc + OMOP **after** the trust containers are up — see
 [Load the DeCaf dataset](#load-the-decaf-dataset-into-omop--orthanc) below.
 

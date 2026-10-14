@@ -97,6 +97,8 @@ extensions = [
 redirects = {
     "components/architecture-overview": "overview.html",
     "components/component-fl-nodes": "component-fl-nets.html",
+    # The self-contained mode's page went with the mode (FLIP#1479).
+    "deploy-flip/deploy-central-hub-aws": "deploy-central-hub-aws-lza.html",
 }
 
 autoapi_type = "python"

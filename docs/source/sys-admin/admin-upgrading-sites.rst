@@ -51,7 +51,7 @@ follow.
 
 2. **Replace the Hub-shared block if you were sent a refreshed kit.** Copy only the block
    between ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` from the new
-   ``.env.<CODE>.prod`` into yours. Your Host-local profile (ports, data directories,
+   ``.env.<slot>.prod`` into yours. Your Host-local profile (ports, data directories,
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
 
@@ -66,7 +66,7 @@ follow.
       git fetch --tags origin
       git checkout vX.Y.Z          # the release named in the Site upgrade section
 
-   Your kit (``trust/.env.<CODE>.prod``), the FL kit and the data directories are
+   Your kit (``trust/.env.<slot>.prod``), the FL kit and the data directories are
    untracked, so checking out a tag never touches them. The upgrade verb refuses a release
    target from a checkout that is not at that tag (exit code 6, naming the fix) — the one
    reason to override it, ``ALLOW_CHECKOUT_DRIFT=1``, is testing a branch that is not a
@@ -74,9 +74,13 @@ follow.
 
    .. note::
 
-      Before FLIP#1479 a kit was named ``.env.<CODE>.production``, ``.env.<CODE>.lza-prod`` or
-      a bare ``.env.<CODE>``. Such a kit keeps working for one release — the verbs find it and
-      print the exact rename — but rename it to ``trust/.env.<CODE>.prod`` before the next one.
+      Before FLIP#1479 a kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or
+      a bare ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run
+      ``unset PROD`` first if your shell still exports it: ``sudo -E`` passes it through, and any
+      ``PROD`` now stops make. An old-named kit keeps working for one release — the verbs find it
+      and print the exact rename — but rename it to ``trust/.env.<slot>.prod`` before the next
+      one, and only once you will not roll back past this release: earlier releases know only
+      the old names.
 
    .. note::
 
@@ -264,8 +268,9 @@ sequence, all on the admin workstation:
        --env prod --compare ../../../.env.prod
    # 2. Refresh every local kit's Hub-shared block from the reconciled env file.
    make sync-trust-kits HUB=prod
-   # 3. Package each site's kit and send it over the encrypted channel used at onboarding.
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+   # 3. Package each site's kit and send it over the encrypted channel used at onboarding
+   #    (keyed on the kit's FL_KIT_SLOT, so the kit is passed by path).
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
 
 Then note *Refreshed kit needed: yes* in the release's Site upgrade section, and which keys
 changed, so operators know to replace the block before upgrading.

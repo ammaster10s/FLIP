@@ -698,7 +698,7 @@ Or wait for the lease to renew naturally. This only matters if the instance need
 **Symptom**: `make status HUB=stag` reports:
 
 ```
-✗ FAIL - XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag
+✗ FAIL - XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in the hub env file
 ```
 
 Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface is serving (HTTP 302), and trust-api / imaging-api are healthy (HTTP 200). The Python health check running inside the `trust1-imaging-api-1` container cannot authenticate against XNAT's REST API.

@@ -290,14 +290,11 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. That root offers **two
-deployment modes**, both permanently supported: the default **self-contained single-account** shape
-(`LZA_MANAGED_NETWORK=false`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
-(`LZA_MANAGED_NETWORK=true`) for an AWS Landing Zone Accelerator estate, where the network and edge are
-owned by the accelerator. The mode is a setting in the hub env file (`.env.prod` / `.env.stag`, selected by
-`HUB=prod|stag`), not a separate path — see
+`locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
+AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
 [Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate)
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The self-contained single-account mode is no
+longer supported and has been removed (FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
 section. The ECS FL task definitions serve **both
@@ -313,8 +310,7 @@ Cloud Map + public FL hostnames).
 > `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
 > Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
-> retires one *account*, not the self-contained deployment mode, which stays supported.
+> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6).
 
 ### Trusts
 

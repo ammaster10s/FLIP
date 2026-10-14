@@ -1551,25 +1551,5 @@ Helm 3 does a client-side three-way merge and never raises this; no version swit
 
 ## 10. Preflight Looks for the Wrong Kit File
 
-### Symptom
-
-`make -C trust/deploy/helm preflight KIT=<CODE>` fails check 4 with
-`Kit file not found: .../trust/.env.<CODE>.development` for a deployed site, or a target prints
-`… is an old kit name — rename it to …`.
-
-### Cause
-
-The kit file is named by `HUB` (`trust/.env.<CODE>.<hub>`); without `HUB` the chart reads the
-development kit. Before FLIP#1479 the deployed kits were named by `PROD` tokens instead.
-
-### Fix
-
-Pass the hub the site joins (`HUB=prod` or `HUB=stag`). The Makefile resolves the kit through
-`deploy/env_mode.mk` and hands the path to `preflight.sh` (`KIT_FILE`) and `sync_k8s_kit.py`
-(`--kit-file`). A kit under its old name is still found for one release; rename it as the hint says:
-
-| `HUB` | kit file | still found for one release |
-|---|---|---|
-| (unset) | `trust/.env.<CODE>.development` | bare `trust/.env.<CODE>` |
-| `stag` | `trust/.env.<CODE>.stag` | `.lza-stag`, bare `trust/.env.<CODE>` |
-| `prod` | `trust/.env.<CODE>.prod` | `.production`, `.lza-prod`, bare `trust/.env.<CODE>` |
+Pass the hub the site joins (`HUB=prod` or `HUB=stag`): the kit file is `trust/.env.<CODE>.<hub>`, and without
+`HUB` the chart reads the development kit; a kit under its pre-FLIP#1479 name gets a one-line rename hint.
