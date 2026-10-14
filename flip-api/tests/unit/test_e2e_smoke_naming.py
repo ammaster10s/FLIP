@@ -87,6 +87,7 @@ def test_the_dicom_to_nifti_default_follows_the_tutorial(path, nifti):
     assert describe_tutorial(Path(path)).nifti is nifti
 
 
+@pytest.mark.skipif(not (REPO_ROOT / "fl-tutorials").is_dir(), reason="fl-tutorials/ is not mounted in the container")
 @pytest.mark.parametrize("tutorial", sorted(TUTORIALS))
 def test_a_tutorial_converts_to_nifti_only_if_its_app_reads_nifti(tutorial):
     """Read from the apps themselves, so a tutorial that starts or stops reading NIfTI fails here."""
