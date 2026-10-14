@@ -151,7 +151,7 @@ spec:
         # root-owned 0755. XNAT runs as uid 1001, so it could write neither prearchive nor archive
         # and aborted every C-STORE ("Peer aborted Association") on a real cloud disk (AKS,
         # FLIP#1390); kind's world-writable volumes hid it. An fsGroup cannot fix it: subPath dirs
-        # are made after the group is applied, without group-write. Same mounts as tomcat below.
+        # are made after the group is applied, without group-write. Same subPaths as tomcat below.
         - name: prepare-data-dirs
           image: busybox:1.36
           securityContext:
@@ -171,26 +171,14 @@ spec:
             - -c
             - |
               set -eu
-              for d in /data/xnat/home/logs /data/xnat/archive /data/xnat/build /data/xnat/cache /data/xnat/prearchive; do
-                chown 1001:1001 "$d"
-                chmod 0755 "$d"
+              for d in logs archive build cache prearchive; do
+                mkdir -p "/vol/$d"
+                chown 1001:1001 "/vol/$d"
+                chmod 0755 "/vol/$d"
               done
           volumeMounts:
             - name: data
-              mountPath: /data/xnat/home/logs
-              subPath: logs
-            - name: data
-              mountPath: /data/xnat/archive
-              subPath: archive
-            - name: data
-              mountPath: /data/xnat/build
-              subPath: build
-            - name: data
-              mountPath: /data/xnat/cache
-              subPath: cache
-            - name: data
-              mountPath: /data/xnat/prearchive
-              subPath: prearchive
+              mountPath: /vol
         - name: wait-for-xnat-db
           image: busybox:1.36
           command:

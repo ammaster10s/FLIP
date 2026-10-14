@@ -15,6 +15,7 @@ Asserted on `helm template` output: the kit comes from a Secret, Postgres keeps 
 fresh disk's lost+found, and nothing reaches the cloud metadata endpoint. Skipped without helm.
 """
 
+import functools
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,10 +28,12 @@ CHART_DIR = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
 
-def _docs() -> list[dict]:
+@functools.cache
+def _docs() -> tuple[dict, ...]:
+    """The chart rendered with the AKS overlay, once per run; treat it as read-only."""
     args = ["helm", "template", "trust-release", str(CHART_DIR), "-f", str(CHART_DIR / "values-aks.yaml")]
     rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
-    return [d for d in yaml.safe_load_all(rendered) if d]
+    return tuple(d for d in yaml.safe_load_all(rendered) if d)
 
 
 def test_aks_overlay_renders_without_a_node_path():
@@ -54,7 +57,7 @@ def test_aks_overlay_never_opens_the_metadata_endpoint():
     assert not any(p.get("ipBlock", {}).get("cidr") == "169.254.169.254/32" for p in peers)
 
 
-def test_make_deploy_layers_the_platform_values_last():
+def test_make_deploy_layers_the_platform_values_last_and_in_order():
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
     out = subprocess.run(
@@ -64,15 +67,15 @@ def test_make_deploy_layers_the_platform_values_last():
             "-C",
             str(CHART_DIR),
             "deploy",
-            "PLATFORM_VALUES=values-aks.yaml",
+            "PLATFORM_VALUES=values-aks.yaml values-small-node.yaml",
             "OVERRIDES_FILE=k8s-trust-X.yaml",
         ],
         capture_output=True,
         text=True,
         timeout=60,
     ).stdout
-    assert "-f values-aks.yaml" in out
-    assert out.index("-f k8s-trust-X.yaml") < out.index("-f values-aks.yaml"), out
+    order = [out.index(f"-f {f}") for f in ("k8s-trust-X.yaml", "values-aks.yaml", "values-small-node.yaml")]
+    assert order == sorted(order), out
 
 
 def _cpu_m(q: str) -> int:
@@ -101,15 +104,3 @@ def test_small_node_overlay_fits_the_trust_on_one_four_vcpu_node():
         mem += sum(_mem_mi(str(r.get("memory", "0Mi"))) for r in requests)
     assert cpu <= 3200, f"{cpu}m CPU requested"
     assert mem <= 11 * 1024, f"{mem}Mi memory requested"
-
-
-def test_make_deploy_takes_several_platform_files_in_order():
-    if shutil.which("make") is None:
-        pytest.skip("make is not installed")
-    out = subprocess.run(
-        ["make", "-n", "-C", str(CHART_DIR), "deploy", "PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    ).stdout
-    assert out.index("-f values-aks.yaml") < out.index("-f values-small-node.yaml"), out

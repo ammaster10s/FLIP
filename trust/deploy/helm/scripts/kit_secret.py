@@ -81,8 +81,8 @@ def flower_problems(data: dict[str, bytes]) -> list[str]:
     return problems
 
 
-def render(name: str, namespace: str, data: dict[str, bytes]) -> str:
-    """The Secret as YAML (keys and base64 values need no quoting)."""
+def render(name: str, namespace: str, encoded: dict[str, str]) -> str:
+    """The Secret as YAML, from base64-encoded values (keys and base64 need no quoting)."""
     lines = [
         "apiVersion: v1",
         "kind: Secret",
@@ -94,7 +94,7 @@ def render(name: str, namespace: str, data: dict[str, bytes]) -> str:
         "    app.kubernetes.io/component: fl-kit",
         "data:",
     ]
-    lines += [f"  {key}: {base64.b64encode(value).decode()}" for key, value in sorted(data.items())]
+    lines += [f"  {key}: {value}" for key, value in sorted(encoded.items())]
     return "\n".join(lines) + "\n"
 
 
@@ -121,11 +121,12 @@ def main() -> int:
     if backend == "flower" and (problems := flower_problems(data)):
         print(f"❌ {args.kit_src} is not one slot's Flower kit:", *problems, sep="\n  ", file=sys.stderr)
         return 1
-    size = sum(len(base64.b64encode(v)) for v in data.values())
+    encoded = {key: base64.b64encode(value).decode() for key, value in data.items()}
+    size = sum(len(v) for v in encoded.values())
     if size > SECRET_LIMIT:
         print(f"❌ the kit is {size} bytes encoded; a Secret holds at most 1 MiB", file=sys.stderr)
         return 1
-    sys.stdout.write(render(args.name, args.namespace, data))
+    sys.stdout.write(render(args.name, args.namespace, encoded))
     return 0
 
 
