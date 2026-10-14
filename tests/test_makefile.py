@@ -124,7 +124,7 @@ AWS_STUB_ENV = {
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
     "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
     "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
-    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",
+    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
 }
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
