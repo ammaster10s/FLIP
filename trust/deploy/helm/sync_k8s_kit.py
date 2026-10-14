@@ -992,9 +992,6 @@ def main(
     print("─" * 64)
     print("📦 Deploy the chart with the generated override:")
     print(f"     make -C trust/deploy/helm up OVERRIDES_FILE={rel_override}")
-    print()
-    print("   For FL training, also open the FL-server NLB to this node's public IP:")
-    print(f"     make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip>{hub}")
     print("─" * 64)
 
 

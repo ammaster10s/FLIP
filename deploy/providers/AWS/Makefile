@@ -210,15 +210,6 @@ export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
-# On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
-# literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
-# is created per IP. `make allow-local-trust-nlb` applies them.
-LOCAL_TRUST_PUBLIC_IPS ?= []
-export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
-# K8s trust node egress IPs — one FL-server NLB ingress rule per IP (#596).
-# `make add-k8s-trust` applies them via a normal plan/apply (no -target).
-K8S_TRUST_PUBLIC_IPS ?= []
-export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 # Whether Terraform provisions the cloud Trust EC2. false = hub-only deployment
 # (every trust runs on-prem — e.g. the workloads need a GPU the t3 trust host
 # doesn't have). Settable in the env file or CLI; `make full-deploy-hub-only`
@@ -1181,53 +1172,6 @@ endif
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
-.PHONY: allow-local-trust-nlb
-allow-local-trust-nlb: ## Apply the FL-server NLB ingress rules for the IPs in LOCAL_TRUST_PUBLIC_IPS
-	## Run by the FLIP admin. First add each on-prem trust's public IP to LOCAL_TRUST_PUBLIC_IPS
-	## in the env file (an HCL list, e.g. LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]). Pass LOCAL_TRUST_IP=<ip>
-	## to have it checked against the configured list first. This is a normal full terraform
-	## plan/apply — the rules are honest config, so there is no -target and no drift on later applies.
-	@if [ -n "$(LOCAL_TRUST_IP)" ] && ! echo '$(LOCAL_TRUST_PUBLIC_IPS)' | grep -q '"$(LOCAL_TRUST_IP)"'; then \
-		echo ""; \
-		echo "❌  $(LOCAL_TRUST_IP) is not in LOCAL_TRUST_PUBLIC_IPS (currently $(LOCAL_TRUST_PUBLIC_IPS))."; \
-		echo "   Add it to LOCAL_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE), then re-run, e.g.:"; \
-		echo "       LOCAL_TRUST_PUBLIC_IPS=[\"$(LOCAL_TRUST_IP)\"]"; \
-		echo ""; \
-		exit 1; \
-	fi
-	@echo "🔐 Applying FL-server NLB ingress rules for LOCAL_TRUST_PUBLIC_IPS=$(LOCAL_TRUST_PUBLIC_IPS)..."
-	@$(MAKE) plan
-	@$(MAKE) apply
-	@echo "✅ FL-server NLB security group reconciled."
-
-.PHONY: add-k8s-trust
-add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL training only)
-	## A K8s trust is registered exactly like any other trust — by CODE-named kit:
-	##   make new-trust TRUST_CODE=Trust_K8s TRUST_NAME="..."
-	##   make -C deploy/providers/AWS register-trusts KIT=Trust_K8s HUB=$(HUB)
-	##   make sync-trust-kit KIT=Trust_K8s HUB=$(HUB)
-	##   make -C trust/deploy/helm sync-kit KIT=Trust_K8s HUB=$(HUB)
-	##   make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
-	## Polling needs none of the below. This target is the LAST step, needed only for
-	## FL *training*: it opens the FL-server NLB security group to the K8s node's
-	## public/egress IP. Mirrors `allow-local-trust-nlb`: add each node IP to
-	## K8S_TRUST_PUBLIC_IPS in the env file (an HCL list, e.g.
-	## K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]), then this runs a normal full plan/apply.
-	## The IPs are honest config (no -target), so the rule set is idempotent and
-	## re-running with an already-listed IP is a no-op — fixing #596.
-	@if [ -n "$(K8S_TRUST_IP)" ] && ! echo '$(K8S_TRUST_PUBLIC_IPS)' | grep -q '"$(K8S_TRUST_IP)"'; then \
-		echo ""; \
-		echo "❌  $(K8S_TRUST_IP) is not in K8S_TRUST_PUBLIC_IPS (currently $(K8S_TRUST_PUBLIC_IPS))."; \
-		echo "   Add it to K8S_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE), then re-run, e.g.:"; \
-		echo "       K8S_TRUST_PUBLIC_IPS=[\"$(K8S_TRUST_IP)\"]"; \
-		echo ""; \
-		exit 1; \
-	fi
-	@echo "🔐 Applying FL-server NLB ingress rules for K8S_TRUST_PUBLIC_IPS=$(K8S_TRUST_PUBLIC_IPS)..."
-	@$(MAKE) plan
-	@$(MAKE) apply
-	@echo "✅ FL-server NLB security group reconciled for the K8s trust node(s)."
-
 .PHONY: down
 down:
 	@echo "🛑 Stopping all containers..."
@@ -1351,113 +1295,10 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	## with full-deploy, apply will DESTROY the existing Trust EC2 (its data volumes are not
 	## preserved) — re-run with DEPLOY_TRUST_EC2=true to bring one back.
 	## After it completes, join each on-prem trust:
-	##   1. add the trust host's public IP to LOCAL_TRUST_PUBLIC_IPS in the env file, then
-	##      make allow-local-trust-nlb HUB=$(HUB)
-	##   2. make new-trust TRUST_CODE=<CODE> ... HUB=$(HUB) && make register-trusts KIT=<CODE> HUB=$(HUB)
+	##   1. make new-trust TRUST_CODE=<CODE> ... HUB=$(HUB) && make register-trusts KIT=<CODE> HUB=$(HUB)
 	##      (register-trusts in this chain already registers every kit present)
-	##   3. on the trust host: sudo -E make -C trust up-trust KIT=<CODE> HUB=<env>
+	##   2. on the trust host: sudo -E make -C trust up-trust KIT=<CODE> HUB=<env>
 	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui HUB=$(HUB)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
-
-.PHONY: full-deploy-with-local-trust
-full-deploy-with-local-trust: ## Full AWS deployment (honours HUB) plus on-prem trust provisioning (requires LOCAL_TRUST_IP=<public-ip>)
-	## Works against either HUB=prod or HUB=stag — HUB is inherited from the environment.
-	## Step order:
-	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
-	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
-	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
-	## 4. update-env: refresh .env.<env> with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
-	##    (ansible-init stages with trust_num=1 — no kit file exists yet; deploy-trust re-stages the kit
-	##    for the registered slot via stage-fl-kit once register-trusts has written it)
-	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
-	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
-	## 8. deploy-trust + provision-local-trust + status: re-stage the cloud trust's FL kit for its registered slot, bring up cloud + on-prem trust hosts and verify
-	## NOTE: After this completes you must manually:
-	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
-	##     the docker group): cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)
-	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-# The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
-# step creates the SG rule. For multiple trusts use the async flow instead: set
-# LOCAL_TRUST_PUBLIC_IPS in the env file and run `make allow-local-trust-nlb`.
-full-deploy-with-local-trust: LOCAL_TRUST_PUBLIC_IPS := ["$(LOCAL_TRUST_IP)"]
-full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust provision-local-trust status
-
-.PHONY: full-deploy-hybrid
-full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioning + hub redeploy (honours HUB)
-	## This wraps full-deploy-with-local-trust and then redeploys the Central Hub so the hub
-	## picks up any env/secret changes made while registering the on-prem trust.
-	## Works against either HUB=prod or HUB=stag — HUB is inherited from the environment.
-	## You still need to start the on-prem trust stack on the trust host.
-	## If LOCAL_TRUST_IP is not provided, it will be auto-detected using curl (operator machine is the trust host).
-	@if [ -z "$(LOCAL_TRUST_IP)" ]; then \
-		echo "🔍 Detecting public IP for LOCAL_TRUST_IP..."; \
-		LOCAL_TRUST_IP=$$(curl -s https://api.ipify.org) && \
-		echo "✅ Detected LOCAL_TRUST_IP: $$LOCAL_TRUST_IP" || (echo "❌  Failed to detect IP. Provide LOCAL_TRUST_IP manually."; echo "   Usage: make full-deploy-hybrid LOCAL_TRUST_IP=<public-ip>"; exit 1); \
-	else \
-		LOCAL_TRUST_IP="$(LOCAL_TRUST_IP)"; \
-	fi && \
-	$(MAKE) full-deploy-with-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP KIT="$(KIT)" && \
-	$(MAKE) deploy-centralhub HUB=$(HUB) && \
-	echo "" && \
-	echo "✅ Hybrid deployment complete (HUB=$(HUB))." && \
-	echo "➡️  Final manual step: start the on-prem trust stack on the trust host" && \
-	echo "   (sudo: the provisioned login user is deliberately not in the docker group):" && \
-	echo "   cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
-
-.PHONY: preflight-k8s-deploy
-preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)
-	@uv run --no-config scripts/preflight_k8s_deploy.py \
-		--hub "$(HUB)" \
-		$(if $(K8S_TRUST_IP),--k8s-trust-ip "$(K8S_TRUST_IP)")
-
-.PHONY: full-deploy-with-k8s
-full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart deployment
-	## Step order:
-	## 1. Detect or validate K8S_TRUST_IP (deployer machine's public egress IP)
-	## 2. preflight-k8s-deploy: fail-fast if Trust_K8s not in FL_KIT_SLOT_NAMES, kubectl/helm missing
-	## 3–9. full-deploy steps (provision AWS infra, central hub, EC2 trust + EC2 status gate)
-	## 10. Scaffold trust/.env.Trust_K8s.<env> if absent (make new-trust, idempotent)
-	## 11. Register Trust_K8s on the hub (register-trusts, idempotent)
-	## 12. Sync hub-shared block into Trust_K8s kit (sync-trust-kit)
-	## 13. Patch Trust_K8s secrets into the K8s cluster Secret (kubernetes sync-kit)
-	## 14. Open FL-server NLB to K8S_TRUST_IP (add-k8s-trust, Terraform -target)
-	## 15. Deploy K8s trust Helm chart (make -C kubernetes up)
-	## 16. Status: K8s trust (make -C kubernetes status) — EC2 trust checked in step 3–9
-	## Prerequisite: add "Trust_K8s" to FL_KIT_SLOT_NAMES in .env.<env> before running
-	@_K8S_IP="$(K8S_TRUST_IP)"; \
-	if [ -z "$$_K8S_IP" ]; then \
-		echo "🔍 Detecting K8S_TRUST_IP..."; \
-		_K8S_IP=$$(curl -s --max-time 5 https://api.ipify.org) || { \
-			echo "❌  Cannot auto-detect public IP."; \
-			echo "   Provide it explicitly: make full-deploy-with-k8s K8S_TRUST_IP=<ip> HUB=$(HUB)"; \
-			exit 1; \
-		}; \
-		echo "✅ K8S_TRUST_IP: $$_K8S_IP"; \
-	fi && \
-	$(MAKE) preflight-k8s-deploy HUB=$(HUB) K8S_TRUST_IP=$$_K8S_IP && \
-	$(MAKE) full-deploy HUB=$(HUB) KIT=$(KIT) && \
-	echo "" && \
-	echo "☸️  Setting up Trust_K8s..." && \
-	{ [ -f $(call kit_file,$(REPO_ROOT)/trust/,Trust_K8s) ] || \
-		$(MAKE) -C ../../.. new-trust \
-			TRUST_CODE=Trust_K8s \
-			TRUST_NAME="Kubernetes Trust" \
-			TRUST_REGION=London \
-			HUB=$(HUB); } && \
-	$(MAKE) register-trusts KIT=Trust_K8s HUB=$(HUB) && \
-	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s HUB=$(HUB) && \
-	$(MAKE) -C $(HELM_CHART_DIR) sync-kit KIT=Trust_K8s HUB=$(HUB) && \
-	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP HUB=$(HUB) && \
-	$(MAKE) -C $(HELM_CHART_DIR) up \
-		OVERRIDES_FILE=$(HELM_CHART_DIR)/k8s-trust-Trust_K8s.yaml \
-		HUB=$(HUB) && \
-	echo "" && \
-	echo "=== K8s Trust Status ===" && \
-	$(MAKE) -C $(HELM_CHART_DIR) status HUB=$(HUB) && \
-	echo "" && \
-	echo "✅ full-deploy-with-k8s complete (HUB=$(HUB))." && \
-	echo "   EC2 trust status was verified in the full-deploy step above." && \
-	echo "   K8S_TRUST_IP: $$_K8S_IP (FL-server NLB rule applied)"

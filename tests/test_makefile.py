@@ -320,7 +320,6 @@ selected = Path(sys.argv[1])
 sys.argv = ['checklist', 'SITE', '--kit-file', str(selected)]
 out = io.StringIO()
 with contextlib.redirect_stdout(out), \\
-     mock.patch.object(mod, 'fetch_public_ip', return_value=None), \\
      mock.patch.object(mod, 'run_checks', return_value=[mod.Check('x', mod.Status.PASS, 'mocked')]):
     try:
         mod.main()

@@ -15,7 +15,7 @@
 """On-prem trust readiness checklist.
 
 Diagnoses what's still missing in the operator's setup before `make
-up-onprem-trust KIT=<slot>` will succeed: public IP, docker swarm state,
+up-onprem-trust KIT=<slot>` will succeed: docker swarm state,
 kit file presence, Hub-shared block, Kit credentials, FL_KIT_DIR + its
 on-disk contents, OMOP / Orthanc data dirs.
 
@@ -48,7 +48,6 @@ import shlex
 import subprocess
 import sys
 import tempfile
-import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
@@ -117,7 +116,6 @@ DIM = "\033[2m" if _TTY else ""
 GREEN = "\033[32m" if _TTY else ""
 RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
-CYAN = "\033[36m" if _TTY else ""
 
 
 class Status(Enum):
@@ -194,15 +192,6 @@ def is_filled(value: str | None) -> bool:
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
-
-
-def fetch_public_ip(timeout: float = 5.0) -> str | None:
-    """Best-effort fetch of this host's public IPv4 via ipify. Returns None on failure."""
-    try:
-        with urllib.request.urlopen("https://api.ipify.org", timeout=timeout) as response:  # noqa: S310
-            return response.read().decode("ascii").strip() or None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return None
 
 
 def docker_swarm_state() -> str:
@@ -943,14 +932,6 @@ def main() -> None:
     print()
     heading(f"On-prem trust onboarding checklist — kit {kit_file_label(kit_file, repo_root)}")
 
-    print()
-    ip = fetch_public_ip()
-    ip_display = ip or f"{DIM}<could not detect — set it manually>{RESET}"
-    print(f"  {BOLD}Your public IP:{RESET}  {CYAN}{ip_display}{RESET}")
-    print("  Send this to the FLIP admin so they can open the prod FL-server NLB")
-    print(f"  (the admin runs this from {BOLD}deploy/providers/AWS{RESET}, with prod AWS creds):")
-    print("      cd deploy/providers/AWS")
-    print(f"      make allow-local-trust-nlb LOCAL_TRUST_IP={ip or '<your-ip>'} HUB={os.environ.get('HUB') or 'prod'}")
     print()
     print(f"  {BOLD}Checks:{RESET}")
     print()
