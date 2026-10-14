@@ -708,8 +708,8 @@ _upgrade-trust-apply:
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
 	$(ensure_snapshot_dir)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) PROD=$(PROD)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
