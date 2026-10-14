@@ -273,6 +273,18 @@ def check_orthanc(cluster: Cluster) -> tuple[Check, Check]:
     return seeded, auth
 
 
+def run_smoke(namespace: str, release: str, context: str | None) -> tuple[int, str, str]:
+    """smoke-cstore.sh's exit code and output; a smoke that cannot start or overruns is a failure, not a crash."""
+    env = {**os.environ, "NAMESPACE": namespace, "RELEASE_NAME": release, "KUBE_CONTEXT": context or ""}
+    try:
+        result = subprocess.run(
+            ["bash", str(SCRIPTS_DIR / "smoke-cstore.sh")], env=env, capture_output=True, text=True, timeout=600
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, "", str(e)
+    return result.returncode, result.stdout, result.stderr
+
+
 def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
     """A real C-STORE from Orthanc into XNAT: smoke-cstore.sh's verdict and its last word.
 
@@ -305,6 +317,11 @@ def check_fl_client(cluster: Cluster, settle_seconds: int, sleep: Callable[[floa
 # ── the report ──────────────────────────────────────────────────────────────────────
 
 
+def _cell(text: str) -> str:
+    """Text safe inside one markdown table cell: pipes escaped, line breaks folded to spaces."""
+    return " ".join(text.split()).replace("|", "\\|")
+
+
 def write_report(checks: list[Check], out: Path, backend: str, started: str, finished: str, stamp: str) -> bool:
     """Write the JSON and markdown report in the node self-test's shape; return whether all passed."""
     ok = bool(checks) and all(c.ok for c in checks)
@@ -319,7 +336,7 @@ def write_report(checks: list[Check], out: Path, backend: str, started: str, fin
     out.mkdir(parents=True, exist_ok=True)
     base = out / f"selftest-k8s-{backend}-{stamp}"
     base.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-    rows = "\n".join(f"| {'✅' if c.ok else '❌'} | {c.name} | {c.detail} |" for c in checks)
+    rows = "\n".join(f"| {'✅' if c.ok else '❌'} | {_cell(c.name)} | {_cell(c.detail)} |" for c in checks)
     status = "PASSED" if ok else "FAILED"
     md = (
         f"# Kubernetes trust self-test: {backend}\n\n{status} · {started} → {finished}\n\n"
@@ -360,18 +377,6 @@ def main(argv: list[str] | None = None) -> int:
         checks.append(check)
         print(f"  ✅ {check.name}" if check.ok else f"  ❌ {check.name}: {check.detail}")
 
-    def run_smoke() -> tuple[int, str, str]:
-        env = {
-            **os.environ,
-            "NAMESPACE": args.namespace,
-            "RELEASE_NAME": args.release,
-            "KUBE_CONTEXT": args.context or "",
-        }
-        result = subprocess.run(
-            ["bash", str(SCRIPTS_DIR / "smoke-cstore.sh")], env=env, capture_output=True, text=True, timeout=600
-        )
-        return result.returncode, result.stdout, result.stderr
-
     record(check_release_ready(cluster))
     if fl_enabled:
         record(check_fl_kit(cluster, backend))
@@ -380,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     record(check_omop_seeded(cluster))
     for check in check_orthanc(cluster):
         record(check)
-    record(check_cstore(run_smoke))
+    record(check_cstore(lambda: run_smoke(args.namespace, args.release, args.context)))
     if fl_enabled:
         record(check_fl_client(cluster, args.fl_settle_seconds))
 

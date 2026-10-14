@@ -204,7 +204,9 @@ make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> NO_VOCAB_LOAD=1
 Postgres data below the fresh disk's `lost+found`); `PLATFORM_VALUES` layers it after the per-trust override.
 `kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
 ...) in `<release>-flip-trust-fl-kit` (`flClient.kit.secretName` overrides it) and refuses a kit
-missing its backend's files, a nested directory, or more than a Secret's 1 MiB. At pod start the
+missing its backend's files, a nested directory, or more than a Secret's 1 MiB — and a Flower kit
+holding anything beyond `certificates/ca.crt` and one `keys/supernode_credentials_<slot>`, so a whole
+provisioning tree (`ca.key`, `server.key`, every slot's key) never lands in one trust's Secret. At pod start the
 `stage-fl-kit` init container copies the files into the pod's own kit volume, because a Secret
 volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`; it hands them to
 uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the

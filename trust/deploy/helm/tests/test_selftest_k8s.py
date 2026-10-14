@@ -248,6 +248,19 @@ def test_a_smoke_that_died_silently_on_stdout_reports_its_stderr():
     assert "No such file" in check.detail
 
 
+@pytest.mark.parametrize("error", [selftest.subprocess.TimeoutExpired("bash", 600), FileNotFoundError("bash")])
+def test_a_smoke_that_cannot_run_is_a_failed_check_not_a_crash(monkeypatch, error):
+    def boom(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(selftest.subprocess, "run", boom)
+
+    check = selftest.check_cstore(lambda: selftest.run_smoke("flip-trust", "trust-release", None))
+
+    assert not check.ok
+    assert check.detail == str(error)
+
+
 # ── FL client ───────────────────────────────────────────────────────────────────────
 
 
@@ -278,7 +291,7 @@ def test_the_client_is_sampled_a_settle_period_apart():
 
 
 def test_the_report_matches_the_node_self_tests_shape(tmp_path):
-    checks = [selftest.Check("a", True, "fine"), selftest.Check("b", False, "broken | piped")]
+    checks = [selftest.Check("a", True, "fine"), selftest.Check("b", False, "broken | piped\nsecond line")]
 
     ok = selftest.write_report(
         checks, tmp_path, "nvflare", "2026-10-10T10:00:00Z", "2026-10-10T10:05:00Z", "20261010T100000Z"
@@ -288,10 +301,10 @@ def test_the_report_matches_the_node_self_tests_shape(tmp_path):
     report = json.loads((tmp_path / "selftest-k8s-nvflare-20261010T100000Z.json").read_text())
     assert report["ok"] is False
     assert report["backend"] == "nvflare"
-    assert report["checks"][1] == {"name": "b", "ok": False, "detail": "broken | piped"}
+    assert report["checks"][1] == {"name": "b", "ok": False, "detail": "broken | piped\nsecond line"}
     md = (tmp_path / "latest-k8s-nvflare.md").read_text()
     assert "FAILED" in md
-    assert "| ❌ | b |" in md
+    assert "| ❌ | b | broken \\| piped second line |" in md, "one row, three cells"
 
 
 def test_a_report_with_no_checks_is_not_a_pass(tmp_path):
