@@ -401,9 +401,8 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
-# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
-# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
-# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across

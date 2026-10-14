@@ -84,6 +84,6 @@ def test_an_env_file_boundary_name_still_wins(tmp_path: Path, hub: str) -> None:
 
 @pytest.mark.parametrize("hub", ["stag", "prod"])
 def test_terraform_sees_the_estate_hub_names(tmp_path: Path, hub: str) -> None:
-    """Terraform always plans the LZA network, with the environment class HUB names."""
-    items = ["$${TF_VAR_lza_managed_network}", "$${TF_VAR_environment}"]
-    assert _probe(tmp_path, hub, items) == ["true", hub]
+    """The environment class is the one HUB names; the network-mode input is gone with the self-contained mode."""
+    items = ["$${TF_VAR_environment}", "$${TF_VAR_lza_managed_network-UNSET}"]
+    assert _probe(tmp_path, hub, items) == [hub, "UNSET"]

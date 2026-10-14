@@ -87,16 +87,12 @@ BASE_ENV=(
     FL_BACKEND=nvflare
     FL_KIT_SLOT_NAMES='["Trust_1", "Trust_2"]'
     FLARE_KIT_DATE=20260429
-    # Required, not optional: their Makefile `?=` defaults create a trust host
-    # and delete the trust NLB ingress rules respectively.
+    # Required, not optional: its Makefile `?=` default creates a trust host.
     DEPLOY_TRUST_EC2=false
-    LOCAL_TRUST_PUBLIC_IPS='["203.0.113.10"]'
-    K8S_TRUST_PUBLIC_IPS=[]
     ACCESS_LOGS_BUCKET_NAME=flip-access-logs-lza
     EFS_PROVISION_IMAGE=123456789012.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
     LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
     MANAGE_DNS=false
-    LZA_ELB_ACCESS_LOGS_BUCKET=central-elb-access-logs
     NETWORKING_INGRESS_CIDRS='["10.12.0.0/24"]'
 )
 
@@ -405,27 +401,23 @@ else
     ok "writes no file on failure"
 fi
 
-# 5b. THE DESTRUCTIVE DEFAULTS. `?=` in the Makefile means an absent key does not
+# 5b. THE DESTRUCTIVE DEFAULT. `?=` in the Makefile means an absent key does not
 #     reach variables.tf at all — it reaches Terraform as the Makefile's own
-#     default, and for these three that default destroys something: a trust host
-#     appears on stag, or every on-prem/K8s NLB ingress rule is deleted. None of
-#     them is on check-fl-plan-impact.sh's watch list, so an unattended apply
-#     would do it silently. Required, so the value has to be written down.
-for key in DEPLOY_TRUST_EC2 LOCAL_TRUST_PUBLIC_IPS K8S_TRUST_PUBLIC_IPS; do
-    run_case "${key} is required, not defaulted" "${key}"
-    expect_rc 1 "exits 1"
-    expect_stderr "${key}" "names it"
-done
+#     default, and for DEPLOY_TRUST_EC2 that default creates a trust host. It is
+#     not on check-fl-plan-impact.sh's watch list, so an unattended apply would do
+#     it silently. Required, so the value has to be written down.
+run_case "DEPLOY_TRUST_EC2 is required, not defaulted" DEPLOY_TRUST_EC2
+expect_rc 1 "exits 1"
+expect_stderr "DEPLOY_TRUST_EC2" "names it"
 
-# ...and `[]` / `false` are legitimate values that must compose, not be mistaken
-# for absence. This is the whole point of requiring them: an explicit empty list
-# is a decision, an absent key is an accident.
-run_case "an explicit empty list composes" LOCAL_TRUST_PUBLIC_IPS='[]'
+# ...and `false` is a legitimate value that must compose, not be mistaken for
+# absence: an explicit false is a decision, an absent key is an accident.
+run_case "an explicit false composes"
 expect_rc 0 "exits 0"
-if grep -qFx 'LOCAL_TRUST_PUBLIC_IPS=[]' "${OUT_FILE}"; then
-    ok "writes the explicit empty list through"
+if grep -qFx 'DEPLOY_TRUST_EC2=false' "${OUT_FILE}"; then
+    ok "writes the explicit false through"
 else
-    no "writes the explicit empty list through" "file: $(grep '^LOCAL_TRUST' "${OUT_FILE}")"
+    no "writes the explicit false through" "file: $(grep '^DEPLOY_TRUST' "${OUT_FILE}")"
 fi
 
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI
@@ -519,7 +511,7 @@ expect_rc 1 "exits 1"
 expect_stderr "HUB is not set" "says so"
 expect_stderr "TF_HUB" "and names the GitHub variable"
 
-# 14. THE LZA KEYS (FLIP#749). Every estate needs them, and the four that have no
+# 14. THE LZA KEYS (FLIP#749). Every estate needs them, and the three that have no
 #     `export TF_VAR_…` line in the Makefile are written as raw exports.
 echo ""
 echo "-- every estate requires the LZA keys"
@@ -551,7 +543,7 @@ fi
 # The destructive default, in the same spirit as DEPLOY_TRUST_EC2 above: an absent
 # NETWORKING_INGRESS_CIDRS is not "no change", it is every rule the estate's edge
 # reaches the internal NLB through.
-for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS LZA_ELB_ACCESS_LOGS_BUCKET NETWORKING_INGRESS_CIDRS; do
+for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS NETWORKING_INGRESS_CIDRS; do
     run_case "${key} is required" "${key}"
     expect_rc 1 "exits 1"
     expect_stderr "${key}" "names it"

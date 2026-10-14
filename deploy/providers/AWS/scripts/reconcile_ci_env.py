@@ -115,35 +115,6 @@ class State:
                     return instances[0].get("attributes") or {}
         return {}
 
-    def instance_keys(self, rtype: str, name: str) -> list[str]:
-        """index_key of every instance — how a for_each map's keys are recovered."""
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
-                return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
-        return []
-
-    def data_attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a `data` source — the mirror of `attrs`.
-
-        Needed where the deployed value only exists as a lookup: the Ark+ demo
-        bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
-        the only record of the name that was passed in.
-
-        Args:
-            rtype (str): Terraform data source type, e.g. `aws_s3_bucket`.
-            name (str): Data source name, e.g. `demo_assets`.
-
-        Returns:
-            dict[str, Any]: The first instance's attributes, or `{}` when the data
-                source is absent from state or has no instances.
-        """
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:
-                instances = r.get("instances") or []
-                if instances:
-                    return instances[0].get("attributes") or {}
-        return {}
-
     def module_attrs(self, module_prefix: str, rtype: str, name: str) -> dict[str, Any]:
         """Attributes of a managed resource inside a specific module instance.
 
@@ -359,8 +330,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         region,
     )
 
-    trust_ips = st.instance_keys("aws_security_group_rule", "local_trust_fl_server_nlb")
-    k8s_ips = st.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb")
     has_trust_ec2 = st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
 
     v: dict[str, str] = {
@@ -368,17 +337,11 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
-        # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
-        # not Terraform-managed (objects are staged by hand), so the `data`
-        # lookup is the only record of the name that was passed in. On an LZA
-        # estate Terraform creates it, and the name lives on the managed
-        # resource inside module.flip_demo_assets_bucket. Exactly one of the two
-        # exists in any given state, so the fallback cannot pick the wrong one —
-        # and reading only the data source would have recovered "" on LZA, which
-        # keys_expected_empty() treats as a failed recovery on prod.
-        "DEMO_ASSETS_BUCKET_NAME": (
-            st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", "")
-            or st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get("bucket", "")
+        # Terraform creates the demo bucket inside module.flip_demo_assets_bucket (FLIP#1199);
+        # the module has to be matched by name, since every flip_s3_bucket caller contributes
+        # an aws_s3_bucket.this.
+        "DEMO_ASSETS_BUCKET_NAME": st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get(
+            "bucket", ""
         ),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
@@ -409,8 +372,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB": fl_api_env.get("JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB", ""),
         "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
-        "LOCAL_TRUST_PUBLIC_IPS": json.dumps(sorted(trust_ips)).replace('", "', '", "') if trust_ips else "[]",
-        "K8S_TRUST_PUBLIC_IPS": json.dumps(sorted(k8s_ips)) if k8s_ips else "[]",
     }
     # Which values did NOT come from state. Built by grouping rather than as
     # literal `"KEY": "..."` pairs: secret-scanning treats a quoted string beside
@@ -435,14 +396,12 @@ def keys_expected_empty(env: str) -> set[str]:
 
     ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
     destructive rather than merely wrong. Empty is correct on **stag**, which
-    hosts no public Ark+ demo. On **prod** it gates four live resources plus the
-    ``/ark_demo/*`` CloudFront behaviour on a legacy estate, and the bucket
-    itself on an LZA one (``module.flip_demo_assets_bucket``, FLIP#1199) — where
-    an empty value plans a destroy that ``prevent_destroy`` turns into a failed
-    apply. Either way the gate is ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an
-    empty recovered value on prod means
+    hosts no public Ark+ demo. On **prod** it gates the bucket itself
+    (``module.flip_demo_assets_bucket``, FLIP#1199), where an empty value plans a
+    destroy that ``prevent_destroy`` turns into a failed apply. The gate is
+    ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an empty recovered value on prod means
     the lookup failed, not that there is no demo — and seeding the GitHub
-    environment from it would destroy the demo on the next apply. Treated as
+    environment from it would fail the next apply. Treated as
     not-recovered on prod, and omitted from ``--out`` rather than written blank,
     so ``setup-github-environments.sh`` reports it as required-but-absent instead
     of filing it under "optional, which is fine".

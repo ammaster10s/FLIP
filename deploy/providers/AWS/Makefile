@@ -52,7 +52,6 @@ endif
 include ../../fl_backend.mk
 
 LOCK ?= true
-PRESERVE_VPC ?= true
 
 # Export HUB so child processes (e.g. check_status.py) can determine the environment
 export HUB
@@ -86,8 +85,6 @@ EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
 # prod-only RDS hardening (deletion protection, final snapshot).
 export TF_VAR_environment=$(ENV_CLASS)
 
-# LZA is the only supported setup; a follow-up issue deletes the self-contained Terraform paths this switches off.
-export TF_VAR_lza_managed_network=true
 # Name tag of the platform-managed VPC. Set LZA_VPC_NAME in the env file to override the variables.tf default (AWSAccelerator-eu-west-2-prod) —
 # optional on HUB=prod if the platform template keeps that name, mandatory on
 # HUB=stag (the env guards below).
@@ -107,10 +104,8 @@ export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
 KIT_FILE_LABEL := $(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))
 $(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
-export TF_VAR_max_azs=2
+# Only the trust security group's DNS rules read it (module.trust_security_group).
 export TF_VAR_vpc_cidr=10.0.0.0/16
-export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
-export TF_VAR_private_subnets=["10.0.101.0/24", "10.0.102.0/24"]
 export TF_VAR_flip_keypair=~/.ssh/host-aws
 export TF_VAR_ec2_public_key_path=$(HOME)/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
@@ -219,18 +214,10 @@ export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 # DNS availability (FLIP#749): an LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so its env file sets MANAGE_DNS=false
-# for the first bring-up (default CloudFront domain, no custom certs/records) and
-# flips it to true once the zone exists there. Unset ⇒ true.
+# (no custom certs/records) and flips it to true once the zone exists there.
+# Unset ⇒ true.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
-# Handing the public web name to another estate's CloudFront (FLIP#749 change
-# 2b). Separate from MANAGE_DNS on purpose: this account keeps its zone,
-# records and certificate, it just stops claiming the name so the receiving
-# edge's wildcard can win. Being its own switch is what lets the drop happen in
-# a chosen window instead of whenever a release reaches prod. Unset ⇒ false,
-# i.e. this account keeps serving the name — behaviour unchanged.
-RELEASE_WEB_ALIAS ?= false
-export TF_VAR_release_web_alias=$(RELEASE_WEB_ALIAS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
@@ -920,55 +907,16 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@echo "✅ deploy-ui complete."
 
 .PHONY: deploy-ark-demo
-deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix) + invalidate CloudFront
-	@# Refuse to publish the demo into an environment that has no demo behaviour.
-	@# DEMO_ASSETS_BUCKET_NAME gates BOTH the /ark_demo/* cache behaviour and its
-	@# enforcing ark_demo_spa CSP (cloudfront.tf), but the spa_rewrite function's
-	@# /ark_demo/ branch is ungated — so on an environment where it is unset (the
-	@# documented stag posture) this target used to happily sync a fully working,
-	@# unauthenticated demo onto the same origin as real Cognito tokens, served by
-	@# the DEFAULT behaviour, whose CSP is report-only. That is precisely the
-	@# silent-detach the README warns about, and nothing detected it (FLIP#794
-	@# review). Fail fast instead: an operator who wants the demo must provision
-	@# its behaviour first.
+deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix)
+	@# Refuse to publish the demo into an environment that hosts none (stag leaves
+	@# DEMO_ASSETS_BUCKET_NAME unset): served under the default behaviour, it would run
+	@# unauthenticated on the same origin as real Cognito tokens (FLIP#794 review). The
+	@# /ark_demo/* behaviour and its CSP live on the edge distribution (aicentre-lza-iac).
 	@if [ -z "$$DEMO_ASSETS_BUCKET_NAME" ]; then \
-		echo "❌ DEMO_ASSETS_BUCKET_NAME is not set for this environment."; \
-		echo "   It gates the /ark_demo/* CloudFront behaviour and the demo's enforcing CSP."; \
-		echo "   Publishing without it would serve the demo unauthenticated on the same"; \
-		echo "   origin as real Cognito tokens, under the default behaviour's report-only"; \
-		echo "   CSP. Set it (and apply) before deploying the demo."; \
+		echo "❌ DEMO_ASSETS_BUCKET_NAME is not set for this environment, which hosts no public demo."; \
+		echo "   Set it (and apply), and give the edge distribution its /ark_demo/* behaviour, first."; \
 		exit 1; \
 	fi
-	@# The variable being set is necessary but not sufficient — it must actually
-	@# be applied. Confirm the behaviour exists on the live distribution.
-	@# Capture the count into a variable rather than testing `if ! … | grep -qv`:
-	@# _AWS_ENV expands to `unset …; AWS_PROFILE=…`, so the embedded `;` bound the
-	@# `!` to the `unset` and left the `if` condition as the *un-negated* grep —
-	@# inverting the guard, which then refused to publish on a correctly
-	@# provisioned distribution and waved the demo through on an unprovisioned
-	@# one (precisely the silent-detach this check exists to prevent).
-	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	[ -n "$$DIST_ID" ] || { \
-		echo "❌ Terraform output CloudfrontDistributionId is empty."; \
-		echo "   The state has no distribution to check — run a terraform apply first."; \
-		exit 1; \
-	}; \
-	if ! DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
-		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>&1); then \
-		echo "❌ Could not read the CloudFront distribution config for $$DIST_ID."; \
-		echo "   aws said: $$DEMO_BEHAVIOURS"; \
-		echo "   That is a lookup failure — an expired SSO session, the wrong profile, or no"; \
-		echo "   network — NOT a missing behaviour. Fix the credential or connectivity and"; \
-		echo "   re-run; a terraform apply is not the remedy here."; \
-		exit 1; \
-	fi; \
-	case "$$DEMO_BEHAVIOURS" in \
-		''|0|None) \
-			echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
-			echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
-			exit 1;; \
-	esac
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
@@ -996,10 +944,6 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
-	@echo "🧹 Invalidating CloudFront (/ark_demo/*)..."
-	@$(_AWS_ENV) aws cloudfront create-invalidation \
-		--distribution-id $$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId) \
-		--paths "/ark_demo/*" >/dev/null
 	@echo "✅ deploy-ark-demo complete."
 
 # Identity of the trust kit being deployed/provisioned — a trust CODE that
@@ -1192,31 +1136,25 @@ check:
 
 
 .PHONY: destroy
-destroy: ## Destroy ephemeral infrastructure (EC2, RDS, optional VPC) - preserves Cognito, Secrets, S3
+destroy: ## Destroy ephemeral infrastructure (EC2, RDS) - preserves Cognito, Secrets, S3
 	@echo ""
 	@echo "⚠️  SELECTIVE DESTRUCTION - PRESERVING:"
 	@echo "   ✓ Cognito user pool and identities"
 	@echo "   ✓ AWS Secrets Manager (FLIP_API secret)"
 	@echo "   ✓ S3 buckets (FLIP + AI Centre data)"
 	@echo "   ✓ ACM certificates and Route53 records"
-ifneq ($(filter prod,$(HUB))$(filter true,$(PRESERVE_VPC)),)
-	@echo "   ✓ VPC (preserved)"
-endif
+	@echo "   ✓ The platform's VPC (never this stack's)"
 	@echo ""
 	@echo "🗑️  DESTROYING:"
 	@echo "   • EC2 instances (flip, trust)"
 	@echo "   • RDS database (PostgreSQL)"
 	@echo "   • Security groups"
-ifeq ($(filter prod,$(HUB))$(filter true,$(PRESERVE_VPC)),)
-	@echo "   • VPC"
-endif
-	@echo "   • ALB/NLB load balancers"
 	@echo "   • IAM roles and policies"
 	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
-	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; PRESERVE_VPC=$(PRESERVE_VPC) bash scripts/destroy-selective.sh
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/destroy-selective.sh
 
 
 .PHONY: help

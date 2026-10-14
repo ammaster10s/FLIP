@@ -202,21 +202,12 @@ REQUIRED_KEYS=(
     FL_BACKEND
     FL_KIT_SLOT_NAMES
 
-    # The three keys whose Makefile default is DESTRUCTIVE rather than inert.
-    #
-    #   DEPLOY_TRUST_EC2       ?= true  — absent means "create a t3.xlarge cloud
-    #                                     trust host", which staging does not run.
-    #   LOCAL_TRUST_PUBLIC_IPS ?= []    — absent means "no on-prem trust may reach
-    #   K8S_TRUST_PUBLIC_IPS   ?= []      the FL-server NLB", i.e. delete every
-    #                                     ingress rule those trusts connect through.
-    #
-    # None of the three is on check-fl-plan-impact.sh's watch list, so an
-    # unattended apply would make all of it silently. They are required here with
-    # an explicit literal — `false` / `[]` written down is a decision; an absent
-    # key is an accident that reads identically to Terraform.
+    # The key whose Makefile default is DESTRUCTIVE rather than inert:
+    # DEPLOY_TRUST_EC2 ?= true means "create a t3.xlarge cloud trust host", which
+    # neither estate runs. It is not on check-fl-plan-impact.sh's watch list, so an
+    # unattended apply would make it silently; required with an explicit literal —
+    # `false` written down is a decision, an absent key an accident.
     DEPLOY_TRUST_EC2
-    K8S_TRUST_PUBLIC_IPS
-    LOCAL_TRUST_PUBLIC_IPS
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed
@@ -237,10 +228,9 @@ OPTIONAL_KEYS=(
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
     # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
-    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour on
-    # a self-contained estate — and, since FLIP#1199, the demo-assets BUCKET itself
-    # on an LZA one (module.flip_demo_assets_bucket). Emptying it there plans a destroy
-    # of a bucket carrying prevent_destroy, so the apply fails loudly instead.
+    # (cloudfront.tf) gates the demo-assets BUCKET itself (module.flip_demo_assets_bucket,
+    # FLIP#1199). Emptying it there plans a destroy of a bucket carrying
+    # prevent_destroy, so the apply fails loudly instead.
     # Optional here (this script has no prod/stag axis) so stag composes, recovered
     # from state by reconcile_ci_env.py so prod's GitHub environment cannot be
     # seeded without it.
@@ -252,17 +242,6 @@ OPTIONAL_KEYS=(
     # anchor. Requiring a non-empty value here would reject the correct prod
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
-
-    # Not an LZA key, and optional. It was for a self-contained
-    # account on the day the public web name moves to an LZA edge (FLIP#749
-    # changes 2b and 3). Absent is the everyday value: the Makefile defaults it to
-    # false, i.e. this account keeps serving the name. It is set to "true" on the
-    # GitHub environment for the cutover, which makes the drop an audited one-line
-    # change with the apply as its record rather than a laptop apply the next CI
-    # run reverts. It must be set while the environment still points at the
-    # self-contained account: once it is repointed at LZA there is no CI path to
-    # the account holding the alias. README, "Handing the public name over".
-    RELEASE_WEB_ALIAS
 )
 
 # ---------------------------------------------------------------------------
@@ -279,8 +258,6 @@ OPTIONAL_KEYS=(
 #   NETWORKING_INGRESS_CIDRS    — the ingress-VPC CIDRs the estate's edge reaches
 #                                 the internal FL NLB from; empty deletes every
 #                                 rule they feed, so it is not defaultable
-#   LZA_ELB_ACCESS_LOGS_BUCKET  — the LogArchive account's central access-logs
-#                                 bucket (an accelerator guardrail)
 #
 # The two web-edge values are the exception in the other direction: the edge is
 # built *from* this stack's outputs, so on a first apply the domain and ARN are
@@ -291,7 +268,6 @@ LZA_REQUIRED_KEYS=(
     EFS_PROVISION_IMAGE
     LZA_VPC_NAME
     MANAGE_DNS
-    LZA_ELB_ACCESS_LOGS_BUCKET
     NETWORKING_INGRESS_CIDRS
 )
 LZA_OPTIONAL_KEYS=(
@@ -310,7 +286,6 @@ OPTIONAL_KEYS+=("${LZA_OPTIONAL_KEYS[@]}")
 # manifest cannot drift.
 LZA_RAW_TF_VARS=(
     "NETWORKING_INGRESS_CIDRS:networking_ingress_cidrs"
-    "LZA_ELB_ACCESS_LOGS_BUCKET:lza_elb_access_logs_bucket"
     "LZA_WEB_EDGE_DOMAIN:lza_web_edge_domain"
     "LZA_WEB_EDGE_DISTRIBUTION_ARN:lza_web_edge_distribution_arn"
 )
@@ -324,10 +299,6 @@ is_raw_tf_var() {
     done
     return 1
 }
-
-# Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
-# `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI
-# has no destroy path, by design.
 
 # The kit date for the *selected* backend is required (the Makefile hard-errors
 # without it — "FLARE_KIT_DATE must be set … for FL_BACKEND=…"). The other

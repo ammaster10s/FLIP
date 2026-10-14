@@ -29,7 +29,7 @@
 # reclassifies real required keys as optional, and the operator is told a key the
 # workflow will dereference is "fine to omit". So the fixture omits one key from
 # the middle of REQUIRED_KEYS (AWS_REGION) and one from its end
-# (LOCAL_TRUST_PUBLIC_IPS), and asserts both.
+# (DEPLOY_TRUST_EC2), and asserts both.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
@@ -223,12 +223,12 @@ echo "==== setup-github-environments.sh ===="
 # 1. THE REGRESSION. Both ends of REQUIRED_KEYS must be classified as required: a
 #    membership glob that only matches the final element reports every other
 #    required key as an optional absence, which is the opposite of this script's
-#    job. AWS_REGION is first in the list, LOCAL_TRUST_PUBLIC_IPS last.
+#    job. AWS_REGION is first in the list, DEPLOY_TRUST_EC2 last.
 run_case "a partial env file is read in dry-run" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
-expect_mentions "- LOCAL_TRUST_PUBLIC_IPS" "and so is the one at the end"
+expect_mentions "- DEPLOY_TRUST_EC2" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
 expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this hub"
 
@@ -289,24 +289,23 @@ ENV_RAW="${TEST_ROOT}/raw-tf-vars.env"
 cp "${ENV_FILE}" "${ENV_RAW}"
 cat >>"${ENV_RAW}" <<'ENVFILE'
 export TF_VAR_networking_ingress_cidrs=["10.99.0.0/16"]
-export TF_VAR_lza_elb_access_logs_bucket=raw-bucket-marker
-LZA_ELB_ACCESS_LOGS_BUCKET=plain-bucket-marker
+export TF_VAR_lza_web_edge_domain=raw-domain-marker
+LZA_WEB_EDGE_DOMAIN=plain-domain-marker
 ENVFILE
 run_case "lza raw TF_VAR_ lines are read under their GitHub keys" -- \
     --hub stag --env-file "${ENV_RAW}" --repo acme/flip
 expect_rc 0 "succeeds"
 expect_silent_about "- NETWORKING_INGRESS_CIDRS" "the raw spelling satisfies the required key"
-expect_silent_about "- LZA_ELB_ACCESS_LOGS_BUCKET" "for both raw keys"
 expect_mentions "- EFS_PROVISION_IMAGE" "a key with neither spelling is still required"
 if grep -A1 '^gh variable set NETWORKING_INGRESS_CIDRS ' "${CALLS}" | grep -qF 'value=["10.99.0.0/16"]'; then
     ok "the raw value is what is written"
 else
     no "the raw value is what is written" "$(grep -A1 'NETWORKING_INGRESS_CIDRS' "${CALLS}")"
 fi
-if grep -A1 '^gh variable set LZA_ELB_ACCESS_LOGS_BUCKET ' "${CALLS}" | grep -qF 'value=plain-bucket-marker'; then
+if grep -A1 '^gh variable set LZA_WEB_EDGE_DOMAIN ' "${CALLS}" | grep -qF 'value=plain-domain-marker'; then
     ok "a plain KEY= line beats the raw spelling"
 else
-    no "a plain KEY= line beats the raw spelling" "$(grep -A1 'LZA_ELB_ACCESS_LOGS_BUCKET' "${CALLS}")"
+    no "a plain KEY= line beats the raw spelling" "$(grep -A1 'LZA_WEB_EDGE_DOMAIN' "${CALLS}")"
 fi
 
 # 6c. Keys the file leaves unset keep whatever the environment held before, and the

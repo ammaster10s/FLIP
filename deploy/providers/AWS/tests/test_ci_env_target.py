@@ -242,13 +242,10 @@ COMPOSE_ENV = {
     "FLARE_KIT_DATE": "20260101",
     "FL_KIT_SLOT_NAMES": '["Trust_1"]',
     "DEPLOY_TRUST_EC2": "false",
-    "K8S_TRUST_PUBLIC_IPS": "[]",
-    "LOCAL_TRUST_PUBLIC_IPS": "[]",
     "ACCESS_LOGS_BUCKET_NAME": "probe-access-logs",
     "EFS_PROVISION_IMAGE": "probe/image:1",
     "LZA_VPC_NAME": "AWSAccelerator-eu-west-2-stag",
     "MANAGE_DNS": "false",
-    "LZA_ELB_ACCESS_LOGS_BUCKET": "probe-elb-access-logs",
     "NETWORKING_INGRESS_CIDRS": '["10.12.0.0/24"]',
 }
 
