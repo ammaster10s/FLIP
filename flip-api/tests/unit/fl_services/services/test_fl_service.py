@@ -1298,16 +1298,33 @@ def test_check_server_status_returns_none_when_no_response(mock_http_get):
     assert fl_service.check_server_status("endpoint") is None
 
 
+def _fl_api_unreachable() -> httpx.HTTPError:
+    return httpx.RequestError("connection refused")
+
+
+def _fl_api_answers_500() -> httpx.HTTPError:
+    # NVFLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
+    request = httpx.Request("GET", "http://fl-api/check_server_status")
+    return httpx.HTTPStatusError("500 Internal Server Error", request=request, response=httpx.Response(500))
+
+
+FL_API_FAILURES = pytest.mark.parametrize(
+    "error_factory", [_fl_api_unreachable, _fl_api_answers_500], ids=["fl-api-unreachable", "fl-api-answers-500"]
+)
+
+
+@FL_API_FAILURES
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_check_server_status_returns_none_when_request_fails(mock_http_get):
-    mock_http_get.side_effect = httpx.RequestError("connection refused")
+def test_check_server_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
 
     assert fl_service.check_server_status("endpoint") is None
 
 
+@FL_API_FAILURES
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_check_client_status_returns_none_when_request_fails(mock_http_get):
-    mock_http_get.side_effect = httpx.RequestError("connection refused")
+def test_check_client_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
 
     assert fl_service.check_client_status("endpoint") is None
 
