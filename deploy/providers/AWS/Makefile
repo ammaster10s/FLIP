@@ -121,11 +121,11 @@ ifneq ($(IS_LZA),)
 export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
 
-# The trust kit file the trust-deploy targets read — trust/.env.<KIT>.$(ENV), or the
-# name it had before FLIP#1479 (env_mode.mk's kit_file).
+# The trust kit file the trust-deploy targets read — trust/.env.<KIT>.$(ENV), or an old
+# name resolved by env_mode.mk's kit_file.
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
 KIT_FILE_LABEL := $(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))
-$(if $(KIT),$(call old_kit_hint,$(KIT_FILE_LABEL)))
+$(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -1325,14 +1325,14 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	## stores only the SHA-256 hash), so re-running is safe. Delivery is command-driven
 	## (deploy-trust pushes to the EC2 host; package-onprem-trust-kit tarballs for on-prem).
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
-	##   (no KIT)   → register every live trust/.env.*.<env> kit
-	@:$(if $(KIT),,$(foreach f,$(call kit_files,$(REPO_ROOT)/trust/),$(call old_kit_hint,$(f))))
-	@KIT=$(KIT) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(call kit_files,$(REPO_ROOT)/trust/))" bash scripts/register-trusts.sh
+	##   (no KIT)   → register every live trust/.env.*.<env> kit; none is an error unless
+	##                 DEPLOY_TRUST_EC2=false (a hub-only deploy may register its trusts later)
+	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(foreach f,$(call kit_files,$(REPO_ROOT)/trust/),$(call old_kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(f)))$(f)))" bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
+	## Does NOT edit the kit file. The admin populates trust/.env.<KIT>.<env> first:
+	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into it.
 	##   2. `make sync-trust-kit KIT=<slot> HUB=prod` (from repo root) — fills Hub-shared.
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of

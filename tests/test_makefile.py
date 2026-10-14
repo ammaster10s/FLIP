@@ -113,6 +113,20 @@ OLD_KIT_NAMES = (
     ("prod", ".env.SITE.lza-prod"),
     ("stag", ".env.SITE.lza-stag"),
 )
+#: The smallest hub env file the AWS Makefile's parse-time guards accept (inert values).
+AWS_STUB_ENV = {
+    "AWS_PROFILE": "probe",
+    "PROD_AWS_PROFILE": "probe",
+    "LZA_MANAGED_NETWORK": "true",
+    "FLARE_KIT_DATE": "00000000",
+    "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
+    "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
+    "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
+    "AICENTRE_BUCKET_NAME": "probe-aicentre",
+    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",
+}
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -132,7 +146,9 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "deploy/providers/AWS/Makefile",
             "trust/Makefile",
+            "trust/deploy/helm/Makefile",
             "trust/xnat/Makefile",
             "trust/xnat/.env",
         ):
@@ -146,6 +162,7 @@ class MakeKitSelection(unittest.TestCase):
             f"#!{sys.executable}\nimport json, os, sys\n"
             "with open(os.environ['ARGS_FILE'], 'w') as out: json.dump(sys.argv[1:], out)\n"
             "with open(os.environ['HUB_FILE'], 'w') as out: out.write(os.environ.get('HUB', 'unset'))\n"
+            "sys.exit(bool(os.environ.get('UV_FAIL_ON')) and any(os.environ['UV_FAIL_ON'] in a for a in sys.argv))\n"
         )
         uv.chmod(0o755)
         self.args_file = self.root / "args.json"
@@ -159,21 +176,19 @@ class MakeKitSelection(unittest.TestCase):
             PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), HUB_FILE=str(self.hub_file)
         )
 
+    def make(self, target, *extra, dry=False, subdir="."):
+        command = ["make", "--no-print-directory", *(["-n"] if dry else []), "-C", str(self.root / subdir), target]
+        return subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
+
     def run_make(self, target, hub=None, *extra, dry=False, subdir="."):
-        command = [
-            "make",
-            "--no-print-directory",
-            *(["-n"] if dry else []),
-            "-C",
-            str(self.root / subdir),
-            target,
-            "KIT=SITE",
-        ]
-        if hub is not None:
-            command.append(f"HUB={hub}")
-        result = subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
+        hub_arg = [] if hub is None else [f"HUB={hub}"]
+        result = self.make(target, "KIT=SITE", *hub_arg, *extra, dry=dry, subdir=subdir)
         assert result.returncode == 0, result.stdout + result.stderr
         return result.stdout
+
+    def write_kits(self, *names):
+        for name in names:
+            (self.root / "trust" / name).write_text(KIT)
 
     def check_selected(self, expected, hub=None, *extra, subdir="."):
         output = self.run_make("onboard-onprem-trust", hub, *extra, subdir=subdir)
@@ -183,33 +198,96 @@ class MakeKitSelection(unittest.TestCase):
         assert self.hub_file.read_text() == (hub or ("" if subdir == "trust" else "prod"))
         return output
 
-    def test_suffixed_kit_wins_over_legacy_in_every_onprem_environment(self):
-        (self.root / "trust/.env.SITE").write_text(KIT)
+    def test_a_kit_under_two_names_is_refused(self):
+        """Only one of them holds the live kit; choosing either silently could deploy the stale one."""
+        for hub, names in (
+            (None, (".env.SITE", ".env.SITE.prod")),
+            ("prod", (".env.SITE.production", ".env.SITE.lza-prod")),
+            ("stag", (".env.SITE.lza-stag", ".env.SITE.stag")),
+        ):
+            with self.subTest(hub=hub, names=names):
+                self.write_kits(*names)
+                result = self.make("onboard-onprem-trust", "KIT=SITE", *([f"HUB={hub}"] if hub else []))
+                assert result.returncode != 0, result.stdout
+                assert all(name in result.stderr for name in names), result.stderr
+                assert f"keep the live one as .env.SITE.{hub or 'prod'}" in result.stderr, result.stderr
+                for name in names:
+                    (self.root / "trust" / name).unlink()
+
+    def test_a_bare_kit_is_found_under_prod_only(self):
+        """The bare .env.<CODE> was only ever a prod kit, so stag never falls back to it."""
+        self.write_kits(".env.SITE")
         for hub, suffix in ENVIRONMENTS:
             with self.subTest(hub=hub):
-                filename = f".env.SITE.{suffix}"
-                (self.root / "trust" / filename).write_text(KIT)
-                self.check_selected(filename, hub)
-
-    def test_legacy_kit_is_the_fallback_in_every_onprem_environment(self):
-        (self.root / "trust/.env.SITE").write_text(KIT)
-        for hub, _ in ENVIRONMENTS:
-            with self.subTest(hub=hub):
-                self.check_selected(".env.SITE", hub)
+                self.check_selected(".env.SITE" if suffix == "prod" else f".env.SITE.{suffix}", hub)
 
     def test_old_kit_names_are_still_found_with_a_rename_hint(self):
         """A live site's next upgrade must not break on a kit named before FLIP#1479."""
+        probe = ".DEFAULT_GOAL := __probe\ninclude Makefile\n__probe:\n\t@printf '%s' '$(KIT_FILE)'\n"
         for hub, filename in OLD_KIT_NAMES:
             with self.subTest(filename=filename):
-                (self.root / "trust" / filename).write_text(KIT)
+                self.write_kits(filename)
                 output = self.check_selected(filename, hub)
-                assert f"trust/{filename} is an old kit name — rename it to trust/.env.SITE.{hub}" in output, output
+                hint = f"trust/{filename} is an old kit name — rename it to trust/.env.SITE.{hub}"
+                assert output.count(hint) == 1, output  # once, though several makes resolve it
+                xnat = subprocess.run(
+                    ["make", "-s", "-f", "-", "__probe", "KIT=SITE", f"HUB={hub}", "TRUST_NUM=9"],
+                    input=probe,
+                    cwd=self.root / "trust/xnat",
+                    env=self.env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert xnat.stdout == f"../{filename}", xnat.stdout + xnat.stderr
                 (self.root / "trust" / filename).unlink()
+
+    def test_new_trust_refuses_beside_an_old_named_kit(self):
+        self.write_kits(".env.SITE.production")
+        result = self.make("new-trust", "TRUST_CODE=SITE", "TRUST_NAME=Site", "HUB=prod")
+        assert result.returncode != 0, result.stdout
+        assert "trust/.env.SITE.production already exists under an old kit name" in result.stdout, result.stdout
+        assert not self.args_file.exists(), "new_trust.py must not run"
+        result = self.make("new-trust", "TRUST_CODE=OTHER", "TRUST_NAME=Other", "HUB=prod")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "scripts/new_trust.py" in self.args_file.read_text()
+
+    def test_loop_targets_dispatch_an_old_named_kit(self):
+        self.write_kits(".env.SITE.production")
+        for target, subdir, loop in (
+            ("down-fl-clients", "trust", "for kit in SITE;"),
+            ("sync-trust-kits", ".", "for code in SITE;"),
+        ):
+            with self.subTest(target=target):
+                result = self.make(target, "HUB=prod", dry=True, subdir=subdir)
+                assert loop in result.stdout, result.stdout + result.stderr
+
+    def test_sync_trust_kits_fails_when_a_kit_fails(self):
+        self.write_kits(".env.SITE.prod", ".env.OTHER.prod")
+        self.env["UV_FAIL_ON"] = "OTHER."  # the first kit fails, the last succeeds
+        result = self.make("sync-trust-kits", "HUB=prod")
+        assert result.returncode != 0, result.stdout + result.stderr
+
+    def test_the_aws_and_helm_targets_find_an_old_named_kit(self):
+        self.write_kits(".env.SITE.lza-prod")
+        env_file = self.root / "hub.env"
+        env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
+        kit = f"{self.root}/trust/.env.SITE.lza-prod"
+        for target, subdir, extra, expected in (
+            ("register-trusts", "deploy/providers/AWS", ("KIT=SITE",), f'KIT_FILES="{kit}"'),
+            ("register-trusts", "deploy/providers/AWS", (), f'KIT_FILES="{kit}"'),
+            ("sync-kit", "trust/deploy/helm", ("KIT=SITE",), f"--kit-file {kit}"),
+            ("upgrade-trust-k8s", "trust/deploy/helm", ("KIT=SITE",), f"plan --kit-file {kit}"),
+        ):
+            with self.subTest(target=target, extra=extra):
+                result = self.make(target, "HUB=prod", f"MAIN_ENV_FILE={env_file}", *extra, dry=True, subdir=subdir)
+                assert expected in result.stdout, result.stdout + result.stderr
+                assert "trust/.env.SITE.lza-prod is an old kit name" in result.stdout, result.stdout
 
     def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
         self.check_selected(".env.SITE.prod")
 
-    def test_a_development_kit_cannot_override_the_onprem_production_default(self):
+    def test_a_development_kit_cannot_override_the_onprem_prod_default(self):
         (self.root / "trust/.env.SITE.development").write_text(KIT)
         (self.root / "trust/.env.SITE.prod").write_text(KIT)
         self.check_selected(".env.SITE.prod")
@@ -378,6 +456,9 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             with self.subTest(filename=filename):
                 kit_file = self.root / "trust" / filename
                 kit_file.write_text(KIT)
+                down = self.run_make("down-onprem-trust", dry=True)
+                assert "down-trust KIT=SITE HUB=prod" in down, down
+                assert f"--env-file {filename} " in down, down
                 for target in ("up-onprem-trust", "upgrade-onprem-trust"):
                     output = self.run_make(target, dry=True)
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)

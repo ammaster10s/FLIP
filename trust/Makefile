@@ -16,13 +16,11 @@
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
-# runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag /
-# .prod, the files the AWS-side register-trusts writes). Both come from the shared
-# table in ../deploy/env_mode.mk, so this Makefile cannot be the copy that misses a
-# value and falls through to the DEVELOPMENT compose.
+# runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
+# the files the AWS-side register-trusts writes), both from ../deploy/env_mode.mk.
 include ../deploy/env_mode.mk
 
-# The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
+# The trust stack runs against the per-trust kit file (trust/.env.<KIT>.<env>) as the
 # single source of truth — no hub `.env.*` include. A remote trust operator
 # only ever has their kit file, and we want a hub-admin dev box to fail loud
 # on a stale kit rather than silently fall back to hub env values. The kit
@@ -32,14 +30,12 @@ include ../deploy/env_mode.mk
 # etc.) — see HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py.
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
-# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. A kit still
-# under its pre-FLIP#1479 name (.production, .lza-prod, .lza-stag, or a bare
-# .env.<KIT>) is found too, with a one-line rename hint, so a live site's next
-# upgrade does not break (env_mode.mk's kit_file).
+# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>, or an old name
+# resolved by env_mode.mk's kit_file (which prints the rename once, via kit_hint).
 KIT_FILE := $(call kit_file,,$(KIT))
 -include $(KIT_FILE)
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
-$(if $(KIT),$(call old_kit_hint,$(KIT_FILE_LABEL)))
+$(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
 # are inherited from the hub's .env.development (the single source) to avoid a
@@ -189,11 +185,11 @@ UP_PULL_FLAGS=
 endif
 
 # ── Per-trust deployment ──────────────────────────────────────────────────
-# A trust stack is selected by KIT — the kit-file name under trust/.env.<KIT>
-# (the FL kit slot name, e.g. Trust_1). trust/.env.<KIT> carries that trust's
-# host-local profile (ports, bind dirs), trust-local credentials, hub-shared
-# block, and kit credentials. `make register-trusts` writes the hub-managed
-# blocks, trust/.env.<KIT>.example is the template the operator copies first.
+# A trust stack is selected by KIT — the trust CODE in its kit file,
+# trust/.env.<KIT>.<env>, which carries that trust's host-local profile (ports,
+# bind dirs), trust-local credentials, hub-shared block, and kit credentials.
+# `make register-trusts` writes the hub-managed blocks; trust/.env.example is the
+# template the operator copies first.
 # KIT has no default so non-KIT targets (build, test) don't spuriously
 # -include a kit file — pass KIT=<name> explicitly. The kit file itself is
 # `-include`d at the top of this Makefile so FL_BACKEND (hub-shared) lands
@@ -441,7 +437,7 @@ prepare-artifacts:
 	$(MAKE) -C xnat xnat-plugins-download
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
-# trust/.env.<KIT> for that trust's ports / dirs / credentials. The
+# trust/.env.<KIT>.<env> for that trust's ports / dirs / credentials. The
 # The trust's data comes from the seed pipeline (FLIP#1101/#1187): the containers start
 # on empty, pre-created volumes, and `ensure-seeded` then loads the listed PROJECTS from
 # the canonical dataset at the pinned data version — once, the volumes persisting on the
@@ -717,19 +713,13 @@ down-trust-ec2:
 # (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —
 # each is a separate sub-make so its `-include` loads only that trust's kit.
 up: create-networks
-	@found=0; for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	@[ -n "$(call kit_codes,)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@for kit in $(call kit_codes,); do \
 	  $(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }; \
-	done; \
-	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	done
 
 down:
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-trust KIT=$$kit; \
-	done
+	@for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit; done
 
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both
@@ -739,11 +729,7 @@ down:
 # and Trust_2 stays on the network ports from its kit file.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) up-fl-clients-kit KIT=$$kit; \
-	done
+	@for kit in $(call kit_codes,); do $(MAKE) up-fl-clients-kit KIT=$$kit; done
 
 up-fl-clients-kit:
 	$(require_kit_file)
@@ -754,11 +740,7 @@ up-fl-clients-kit:
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-fl-clients-kit KIT=$$kit; \
-	done
+	@for kit in $(call kit_codes,); do $(MAKE) down-fl-clients-kit KIT=$$kit; done
 
 down-fl-clients-kit:
 	$(require_kit)

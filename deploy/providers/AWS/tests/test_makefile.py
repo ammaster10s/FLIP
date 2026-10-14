@@ -272,3 +272,23 @@ def test_the_static_switch_cannot_be_set_from_outside(
     result = _make_dry_run(*args, tmp_path=tmp_path, extra_env=extra_env)
     assert result.returncode != 0
     assert "FLARE_KIT_DATE must be set" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(("deploy_trust_ec2", "returncode"), [("true", 1), ("false", 0)])
+def test_register_trusts_finding_no_kit_fails_unless_the_deploy_is_hub_only(
+    deploy_trust_ec2: str, returncode: int, tmp_path: Path
+) -> None:
+    """Inside full-deploy the next step deploys a trust, so registering nothing must not pass."""
+    flag = f"DEPLOY_TRUST_EC2={deploy_trust_ec2}"
+    result = _make_dry_run("register-trusts", flag, tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert f"{flag} " in result.stdout, result.stdout + result.stderr
+    env = {"PATH": os.environ["PATH"], "AWS_PROFILE": "probe", "AWS_REGION": "eu-west-2", "HUB": "stag"}
+    script = subprocess.run(
+        ["bash", "scripts/register-trusts.sh"],
+        cwd=AWS_PROVIDER_DIR,
+        env={**env, "KIT_FILES": "", "DEPLOY_TRUST_EC2": deploy_trust_ec2},
+        capture_output=True,
+        text=True,
+    )
+    assert script.returncode == returncode, script.stdout + script.stderr
+    assert "No trust/.env.<CODE>.stag kits found" in script.stdout + script.stderr

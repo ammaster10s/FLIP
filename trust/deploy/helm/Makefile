@@ -90,10 +90,10 @@ REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
 include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
-# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or its
-# pre-FLIP#1479 name — env_mode.mk's kit_file), handed to every script that reads it.
+# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
+# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
-$(if $(KIT),$(call old_kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
+$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because
 # there is only one job and two ways of waiting for it: `deploy` waits on it as a

@@ -47,9 +47,8 @@ export XNAT_TAG
 
 # ── Per-trust XNAT stack ──────────────────────────────────────────────────
 # KIT selects the trust — now the trust CODE; the kit file is
-# trust/.env.<CODE>.<env> (ENV derived from HUB, mirroring trust/Makefile), or
-# the kit's pre-FLIP#1479 name (env_mode.mk's kit_file; trust/Makefile prints
-# the rename hint). That kit file carries this
+# trust/.env.<CODE>.<env> (ENV derived from HUB, mirroring trust/Makefile), or an
+# old name resolved by env_mode.mk's kit_file. That kit file carries this
 # trust's XNAT_PORT / PACS_UI_PORT (unsuffixed) and its hub-assigned
 # FL_KIT_SLOT_NUMBER — the same host-local profile trust/Makefile reads. KIT
 # has no default so non-KIT targets (build, test) don't spuriously -include a
@@ -124,7 +123,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 #               concurrent Trust_1 / Trust_2 stacks on the same host)
 # Override per-host (e.g. on a box where /opt is small and the XNAT archive
 # lives on a larger /data volume) by setting XNAT_DATA_DIR in
-# trust/.env.<KIT> or exporting it before invoking make. Resolved to an
+# trust/.env.<KIT>.<env> or exporting it before invoking make. Resolved to an
 # absolute path so docker-compose-stack.{development,prod}.yml can
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
@@ -324,12 +323,10 @@ build:
 # writes broken ("Source ... does not exist") so DICOM import fails on the
 # next boot.
 up:
-	@found=0; for f in ../.env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	@[ -n "$(call kit_codes,../)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@for kit in $(call kit_codes,../); do \
 	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
-	done; \
-	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	done
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
@@ -393,11 +390,7 @@ XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
 XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
 
 down:
-	@for f in ../.env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-xnat KIT=$$kit; \
-	done
+	@for kit in $(call kit_codes,../); do $(MAKE) down-xnat KIT=$$kit; done
 
 down-xnat:
 	$(require_kit)

@@ -295,11 +295,11 @@ down-onprem-trust:
 # On-prem onboarding splits like this:
 #   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
 #     the trust on the prod hub (Add-Trust modal mints the 5 Kit credentials,
-#     admin pastes into trust/.env.<KIT>), running `make sync-trust-kit-N`
-#     to populate the Hub-shared block in trust/.env.<KIT>, running
+#     admin pastes into trust/.env.<KIT>.prod), running `make sync-trust-kit`
+#     to populate the Hub-shared block in it, running
 #     `make package-onprem-trust-kit` to tarball the populated env file
 #     plus the operator's slice of the FL participant kit S3 bucket.
-#   - Operator owns: extracting the tarball, copying the .env.<KIT> in,
+#   - Operator owns: extracting the tarball, copying the .env.<KIT>.prod in,
 #     setting FL_KIT_DIR + Host-local profile, running `make up-onprem-trust`.
 # The operator never touches the prod UI directly — the admin uses it on
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
@@ -610,7 +610,7 @@ _wait-for-hub:
 # kit. The hub keeps no trust list — the kit files ARE the list.
 register-trust: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
-	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
+	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
 	    [ -f "$$ex" ] || { echo "❌ Neither $$kit nor $$ex exists — run 'make new-trust TRUST_CODE=$(KIT) TRUST_NAME=...' first."; exit 1; }; \
 	    cp "$$ex" "$$kit"; chmod 600 "$$kit"; echo "📋 Seeded $$kit from $$(basename "$$ex")"; \
@@ -645,7 +645,7 @@ register-trusts:
 new-trust:
 	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
-	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || [ ! -f "$$old" ] || \
+	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || \
 	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
 	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
@@ -671,7 +671,7 @@ sync-trust-kit:
 # .example templates never match).
 sync-trust-kits:
 	@[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
-	@for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code"; done
+	@rc=0; for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code" || rc=1; done; exit $$rc
 
 # ---------------------------------------------------------------------------
 # Kubernetes Helm chart targets
