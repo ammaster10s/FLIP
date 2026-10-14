@@ -97,6 +97,25 @@ print('torch', v, 'cuda', cuda); \
 cuda.startswith('12.') or sys.exit(f'torch is built for CUDA {cuda}; need 12.x (cu13 needs driver >=580)'); \
 '+cu' in v or sys.exit(f'torch {v} is not a CUDA wheel')"
 
+# List "background" first in /info's merged labels, whatever order the models load in.
+#
+# The XNAT OHIF viewer (frontend 3.7.2) maps each model's mask values through the server's label
+# list and assumes "background" is at index 0: it prepends it only when it is absent. MONAI Label
+# merges labels model by model, so MONAI_LABEL_MODELS=segmentation_spleen,deepedit yields
+# ['spleen', 'background', ...]; the viewer then maps spleen to 0 and drops it from every result,
+# with no error (segmentation_spleen paints nothing at all). Verified against the viewer bundle
+# and a live run. A stable sort moves "background" to the front and leaves the rest in order;
+# the build fails if the line it rewrites is gone, so a MONAI Label bump re-checks it.
+RUN python - <<'PY'
+import pathlib
+import monailabel.interfaces.app as app
+path = pathlib.Path(app.__file__)
+source = path.read_text()
+old = 'meta["labels"] = merged'
+assert source.count(old) == 1, f"{path}: merged-labels line not found; re-check the background-first patch"
+path.write_text(source.replace(old, 'meta["labels"] = sorted(merged, key=lambda label: label != "background")'))
+PY
+
 # Copy the radiology app out of the installed package at build time (this is a local copy from
 # the wheel's sample-apps, not a download) so a cold start does not depend on it. Pretrained
 # model weights are still fetched at server start; the compose overlay persists them.
