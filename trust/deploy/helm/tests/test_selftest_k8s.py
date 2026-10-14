@@ -537,6 +537,18 @@ def test_a_project_left_by_an_interrupted_run_is_cleared_first():
     assert methods.count("DELETE") == 2
 
 
+def test_a_left_project_xnat_will_not_delete_fails_before_anything_is_imported():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/projects?format=json")] = _listing({"ID": "FLIPSELFTEST", "name": "FLIP self-test"})
+    xnat.routes[("DELETE", "/data/projects/FLIPSELFTEST?removeFiles=true")] = (500, "x")
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "could not clear" in check.detail
+    assert not [c for c in xnat.calls if c[0] in ("POST", "IMPORT")]
+
+
 def test_a_project_of_the_same_id_the_check_did_not_create_is_left_alone():
     xnat = FakeXnat()
     xnat.routes[("GET", "/data/projects?format=json")] = _listing({"ID": "FLIPSELFTEST", "name": "Real study"})

@@ -309,8 +309,8 @@ def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
 CURL_AUTH = (
     r"""curl_auth() { printf 'header = "Authorization: Basic %s"\n' "$(printf '%s' "$1" | base64 | tr -d '\n')"; }"""
 )
-XNAT_CURL = 'curl_auth "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" | curl -sS -K - --max-time 300 -w "\\n%{http_code}"'
-ORTHANC_CURL = 'curl_auth "$ocreds" | curl -fsS -K - --max-time 300'
+XNAT_CURL = 'curl_auth "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" | curl -sS -K - --max-time 100 -w "\\n%{http_code}"'
+ORTHANC_CURL = 'curl_auth "$ocreds" | curl -fsS -K - --max-time 100'
 
 
 class XnatPod:
@@ -436,7 +436,9 @@ def check_conversion(
                 f"XNAT already holds a {SELFTEST_PROJECT} project this self-test did not create "
                 f"(named {existing.get('name')!r}); remove or rename it, then rerun",
             )
-        xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
+        status, body = xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
+        if status != 200:
+            return Check(name, False, f"could not clear the {SELFTEST_PROJECT} an earlier run left (HTTP {status})")
     status, body = xnat.request("POST", "/data/projects", _project_xml(SELFTEST_PROJECT), "application/xml")
     if status != 200:
         return Check(name, False, f"could not create the {SELFTEST_PROJECT} project (HTTP {status}: {body[:120]})")

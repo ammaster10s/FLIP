@@ -407,14 +407,10 @@ cohort), each requesting a whole CPU. The node sits near 100% of its CPU request
 schedules: a restarted trust pod stays Pending, and on AKS `az aks command invoke` fails because
 its own pod cannot start. Seen on AZ1, a one-node 4-vCPU AKS trust, on 10 Oct 2026.
 
-**Root Cause:** the Container Service turns the command's `limit-cpu: 1` into a pod CPU *limit* and
-sets no CPU request (container-service 3.8.1 has no `reserve-cpu`), so Kubernetes defaults the
-request to the limit, and it starts every Job at once. The chart now registers dcm2niix without
-resource settings and caps concurrent conversions with a ResourceQuota (README,
-[Container Service jobs](README.md#container-service-jobs-dcm2niix)). That only applies to Jobs
-created after the `helm upgrade` that re-registered dcm2niix. A Job keeps the pod spec it was
-created with, so a backlog from before the upgrade still requests a CPU per pod and is outside the
-quota.
+**Root Cause:** each Job requested a whole CPU, and they all started at once (README,
+[Container Service jobs](README.md#container-service-jobs-dcm2niix)). The cap applies only to Jobs
+created after the `helm upgrade` that re-registered dcm2niix: a Job keeps the pod spec it was
+created with, so a backlog from before the upgrade still requests a CPU per pod.
 
 **Symptom, with the cap (expected, not a fault):** Jobs with no pod yet, whose events read
 `FailedCreate ... exceeded quota: <release>-flip-trust-xnat-container-jobs`. They start as running

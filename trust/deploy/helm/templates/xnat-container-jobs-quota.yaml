@@ -9,20 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# How many XNAT Container Service jobs (dcm2niix) run at once (FLIP#1448).
-#
-# The Container Service starts one Job per archived scan, so a cohort pull of ~300 studies
-# creates ~300 Jobs within minutes, and the plugin has no concurrency setting of its own on the
-# Kubernetes backend. The xnat-init Job registers dcm2niix without resource settings, so each of
-# its pods is BestEffort; this quota admits at most `maxConcurrentJobs` BestEffort pods in the
-# namespace. A Job over the cap gets no pod yet (`FailedCreate ... exceeded quota` in its
-# events), and the Job controller retries it at most a minute apart until a slot frees, so the
-# backlog drains in order of retry rather than piling up Pending pods.
-#
-# The scope counts every BestEffort pod in the namespace. No pod of this chart is BestEffort
-# (tests/templates/test_container_jobs_quota.py renders them all), so in the chart's own
-# namespace that is the Container Service's jobs. A pod someone else starts here without any
-# resources (`kubectl run`) is counted too.
+# Caps how many dcm2niix Jobs run at once: they are the namespace's only BestEffort pods
+# (FLIP#1448; README "Container Service jobs").
 {{- $max := (.Values.xnat.containerService | default dict).maxConcurrentJobs }}
 {{- if and .Values.xnat.enabled $max }}
 apiVersion: v1

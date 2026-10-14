@@ -367,7 +367,7 @@ trust shape shares (the VM's is `scripts/selftest_node.sh`) against the deployed
 | orthanc seeded | Orthanc holds instances |
 | orthanc requires auth | Orthanc answers 401 without credentials |
 | xnat c-store | `smoke-cstore` exits 0; its inconclusive exit 2 fails the check |
-| dcm2niix conversion | the smallest Orthanc series, imported into a throwaway `FLIPSELFTEST` project, is converted by a dcm2niix Job: its container ends `Complete` and the scan holds a `.nii`/`.nii.gz` file within 10 minutes (`--conversion-timeout`), after XNAT archives the session (it waits about five idle minutes first) |
+| dcm2niix conversion | the smallest Orthanc series, imported into a throwaway `FLIPSELFTEST` project, is converted by a dcm2niix Job: its container ends `Complete` and the scan holds a `.nii`/`.nii.gz` file within 10 minutes (`--conversion-timeout`) |
 | fl client running | the FL client is running, with no restart, at two samples 45 s apart |
 
 It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
