@@ -156,6 +156,11 @@ make provision-local-trust
        `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
        `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
        XNAT-directory warning below.
+     - the **approved-cohort membership stores** (FLIP#857) `/opt/flip/cohort-snapshots/trust-1`
+       and `trust-2`, owned by **UID/GID 1000** (data-access-api's in-image user) under a
+       root-owned `/opt/flip/cohort-snapshots`. If data-access-api cannot write there, every
+       project approval fails to freeze its cohort and the trust refuses that project's
+       row-level data. `make up-trust` prepares any other slot's store itself.
    - Pre-creates the **FL participant kit tree** for the tarball you extract by hand (`flip_fl_kit` with
      `fl_kit_source: precreate`) under `/opt/flip/fl-kit` — the
      default `FL_KIT_DIR`, matching what the prod trust compose mounts:
