@@ -25,15 +25,15 @@ and time comes from the caller's :class:`StudyTags`, never the clock; the file m
 runs on the same input write the same bytes.
 
 Geometry follows the NIfTI affine. nibabel hands back a RAS affine and an ``(i, j, k)`` array; DICOM
-wants LPS positions and a ``(row, column)`` pixel plane. ``i`` and ``j`` are first flipped as needed
-so the pixels are stored the way DICOM displays them — along a row toward the patient's left (or
-posterior), down a column toward posterior (or the feet) — because a 2-D viewer shows pixels as stored:
-a RAS-ordered source, which is all of MSD, would otherwise render rotated 180° (FLIP#1495). Every voxel
-keeps its world position. Rows then run along ``j`` and columns along ``i``, so slice ``k`` is written
-as ``volume[:, :, k].T``, ``ImageOrientationPatient`` is the LPS direction of the ``i`` axis then of
-the ``j`` axis, ``ImagePositionPatient`` is the LPS position of voxel ``(0, 0, k)``, and
-``PixelSpacing`` is ``[row spacing (along j), column spacing (along i)]``. ``dcm2niix`` — which XNAT
-runs on every pulled series — rebuilds the same affine from those tags.
+wants LPS positions and a ``(row, column)`` pixel plane. A 2-D viewer shows pixels as stored, so ``i``
+and ``j`` are first flipped where needed to point toward the patient's left, posterior or feet,
+whichever each mostly runs along (``_DISPLAY_SIGN``); a RAS-ordered source, as MSD's spleen and brain
+volumes are, would otherwise render rotated 180° (FLIP#1495). Every voxel keeps its world position. The
+row index is then ``j`` and the column index ``i``, so slice ``k`` is written as ``volume[:, :, k].T``,
+``ImageOrientationPatient`` is the LPS direction of the ``i`` axis then of the ``j`` axis,
+``ImagePositionPatient`` is the LPS position of voxel ``(0, 0, k)``, and ``PixelSpacing`` is
+``[row spacing (along j), column spacing (along i)]``. ``dcm2niix`` — which XNAT runs on every pulled
+series — rebuilds the same affine from those tags.
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ class _Geometry:
 
 
 def _to_display_order(volume: np.ndarray, affine: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Flip ``i`` and/or ``j`` so each in-plane axis points toward its display sign; ``k`` is untouched."""
+    """Flip ``i`` and/or ``j`` toward ``_DISPLAY_SIGN`` (never ``k``); the origin moves so no voxel does."""
     affine = affine.copy()
     for axis in (0, 1):
         lps = affine[:3, axis] * _RAS_TO_LPS

@@ -96,7 +96,7 @@ def _affine() -> np.ndarray:
 
 
 def _msd_affine() -> np.ndarray:
-    """Axial and stored in RAS order (``i`` toward the patient's right, ``j`` anterior), as MSD volumes are."""
+    """Axial in RAS order (``i`` to the patient's right, ``j`` anterior), like MSD's spleen and brain volumes."""
     affine = np.diag([0.9, 0.9, 1.6, 1.0])
     affine[:3, 3] = [-230.0, -230.0, 0.0]
     return affine
@@ -132,7 +132,9 @@ class TestGeometry:
     def test_every_pixel_holds_the_voxel_at_its_world_position(self, tmp_path, affine):
         """The writer may reorder pixels for display (FLIP#1495); where each value sits in the patient may not move."""
         volume = _volume()
+        before = affine.copy()
         files = write_series(volume, affine, tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)
+        np.testing.assert_array_equal(affine, before, err_msg="the converters reuse one affine across series")
         encoded = np.clip(np.rint(volume), 0, 65535).astype(np.uint16)
         to_voxel = np.linalg.inv(affine)
 
@@ -158,8 +160,9 @@ class TestGeometry:
             (_msd_affine(), [1, 0, 0, 0, 1, 0]),
             (np.diag([-0.9, -0.9, 1.6, 1.0]), [1, 0, 0, 0, 1, 0]),
             (_CORONAL, [1, 0, 0, 0, 0, -1]),
+            (_CORONAL @ np.diag([-1.0, -1.0, 1.0, 1.0]), [1, 0, 0, 0, 0, -1]),
         ],
-        ids=["axial-stored-ras", "axial-already-in-display-order", "coronal"],
+        ids=["axial-stored-ras", "axial-already-in-display-order", "coronal", "coronal-already-in-display-order"],
     )
     def test_images_are_stored_in_display_orientation(self, tmp_path, affine, expected):
         """Rows toward the patient's left, columns toward posterior (or the feet): what a 2-D viewer expects."""
