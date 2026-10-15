@@ -9,33 +9,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Record the MONAI Label demo: a spleen CT segmented in the XNAT OHIF viewer, then exported for FL.
+"""Record the MONAI Label demo: a spleen built from nothing with SAM clicks, then exported for FL.
 
 Drives a live trust (XNAT with the OHIF Viewer plugin, a registered MONAI Label server, export_mask
-configured) the way a clinician would, and fails unless export_mask leaves the NIfTI beside the saved
-DICOM-SEG, so a finished recording is also an end-to-end check. Run it with `make demo-video` in this
-directory (see README.md).
+configured) the way a clinician would: a new empty segment, sam_2d prompted with a positive click on
+the spleen and negative (Ctrl) clicks where it leaks, on the spleen's largest slice. The clicks are
+chosen off camera by choose_clicks.py (the fewest reaching Dice > 0.95). The recording fails unless
+export_mask leaves the NIfTI beside the saved DICOM-SEG, so a finished recording is also an
+end-to-end check. Run it with `make demo-video` in this directory (see README.md).
 
 Frames come from Playwright's screencast and are encoded here (h264 CRF 18): its built-in recorder is
 VP8 at 1 Mbit/s, and a still page produces no frames at all, so each frame is held until the next.
 """
 
-import gzip
 import json
 import os
 import re
-import struct
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
+import SimpleITK as sitk
+from choose_clicks import Click, choose
 from playwright.sync_api import Locator, Page, sync_playwright
 
 XNAT = os.environ.get("XNAT_URL", "http://127.0.0.1:8105").rstrip("/")
 USER = os.environ.get("XNAT_USER", "admin")
 PASSWORD = os.environ["XNAT_PASSWORD"]
 EXPERIMENT = os.environ["XNAT_EXPERIMENT"]
-MODEL = os.environ.get("MONAI_LABEL_MODEL", "segmentation_spleen")
+SAM_MODEL = os.environ.get("SAM_MODEL", "sam_2d")
+TARGET_DICE = float(os.environ.get("TARGET_DICE", "0.95"))
 MONAI_LABEL = os.environ.get("MONAI_LABEL_URL", "http://127.0.0.1:8030").rstrip("/")
 SCALE = int(os.environ.get("DEMO_VIDEO_SCALE", "2"))
 OUT = Path(os.environ.get("OUT_DIR", "/out"))
@@ -71,6 +75,21 @@ OVERLAY_JS = """
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', ready) : ready();
 })();
 """
+
+
+# Patient-space point (mm) -> page coordinates on the displayed slice, through cornerstone's own plane
+# geometry, so it holds whatever the scan's orientation. Also returns how far the point is from that
+# plane, which the recorder checks before every click.
+LPS_TO_PAGE = """([x, y, z]) => {
+  const cs = window.cornerstone, el = cs.getEnabledElements()[0].element;
+  const plane = cs.metaData.get('imagePlaneModule', cs.getImage(el).imageId);
+  const p = plane.imagePositionPatient, r = plane.rowCosines, c = plane.columnCosines;
+  const d = [x - p[0], y - p[1], z - p[2]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const normal = [r[1] * c[2] - r[2] * c[1], r[2] * c[0] - r[0] * c[2], r[0] * c[1] - r[1] * c[0]];
+  const canvas = cs.pixelToCanvas(el, {x: dot(d, r) / plane.columnPixelSpacing, y: dot(d, c) / plane.rowPixelSpacing});
+  const box = el.getBoundingClientRect();
+  return {x: box.left + canvas.x, y: box.top + canvas.y, offPlane: Math.abs(dot(d, normal))};
+}"""
 
 
 class Frames:
@@ -128,6 +147,20 @@ class Demo:
         self.click(target)
         target.press_sequentially(text, delay=55)
 
+    def prompt(self, click: Click, lps: tuple[float, float, float]) -> None:
+        """Click a SAM prompt onto the CT (Ctrl+click for a negative one) and wait for the model's answer."""
+        at = self.page.evaluate(LPS_TO_PAGE, list(lps))
+        assert at["offPlane"] < 1.0, f"prompt is {at['offPlane']:.1f} mm off the displayed slice"
+        self.page.mouse.move(at["x"], at["y"], steps=18)
+        self.page.wait_for_timeout(400)
+        with self.page.expect_response(lambda r: "/infer/" in r.url and r.request.method == "POST"):
+            if not click.positive:
+                self.page.keyboard.down("Control")
+            self.page.mouse.click(at["x"], at["y"])
+            if not click.positive:
+                self.page.keyboard.up("Control")
+        self.page.wait_for_timeout(1500)  # the mask paints after the response
+
 
 def xnat_api(pw):
     return pw.request.new_context(
@@ -146,30 +179,51 @@ def seg_files(api, experiment: str) -> dict[str, list[str]]:
     }  # fmt: skip
 
 
-def mask_slices(api, experiment: str) -> tuple[int, list[int]]:
-    """The model's mask for this session, from MONAI Label (off camera): (slices, spleen voxels per slice).
+def plan(api, experiment: str) -> dict:
+    """Off camera: the slice to annotate, the clicks to make there, and each click in patient space.
 
-    The viewer offers no way to jump to a segment, so the recorder asks the server for the same
-    mask the panel will paint and scrolls through exactly the slices it covers. The NIfTI header is
-    read with the stdlib (the recorder image has no numpy): dim[1..3] at byte 40, datatype at 70,
-    vox_offset at 108; the result is requested as uint8.
+    Asks MONAI Label for segmentation_spleen's mask (where the spleen is), picks its largest slice,
+    and searches sam_2d prompts on it against the session's ground-truth label when it has one
+    (dcm2niix's NIFTI resource carries label_*.nii.gz on the spleen tutorial's data).
     """
     fields = api.get(f"/data/experiments/{experiment}?format=json").json()["items"][0]["data_fields"]
     scans = api.get(f"/data/experiments/{experiment}/scans?format=json").json()["ResultSet"]["Result"]
     (scan,) = [s["ID"] for s in scans]
     image = f"{fields['project']}/{fields['subject_ID']}/{experiment}/{scan}"
-    params = {"result_extension": ".nii.gz", "result_dtype": "uint8", "result_compress": True}
-    response = api.post(
-        f"{MONAI_LABEL}/infer/{MODEL}", params={"image": image, "output": "image"},
-        multipart={"params": json.dumps({**params, "foreground": [], "background": []})}, timeout=300_000,
-    )  # fmt: skip
-    assert response.ok, f"MONAI Label infer {response.status}: {response.text()[:200]}"
-    raw = gzip.decompress(response.body())
-    assert struct.unpack_from("<i", raw, 0)[0] == 348, "not a little-endian NIfTI-1 mask"
-    nx, ny, nz = struct.unpack_from("<8h", raw, 40)[1:4]
-    assert struct.unpack_from("<h", raw, 70)[0] == 2, "mask is not uint8"
-    offset, plane = int(struct.unpack_from("<f", raw, 108)[0]), nx * ny
-    return nz, [plane - raw[offset + z * plane : offset + (z + 1) * plane].count(0) for z in range(nz)]
+    workdir = Path(tempfile.mkdtemp())
+
+    def infer(model: str, positive=(), negative=(), z: int | None = None) -> sitk.Image:
+        params = {"result_extension": ".nii.gz", "result_dtype": "uint8", "result_compress": True,
+                  "foreground": [[*p, z] for p in positive], "background": [[*p, z] for p in negative]}  # fmt: skip
+        response = api.post(f"{MONAI_LABEL}/infer/{model}", params={"image": image, "output": "image"},
+                            multipart={"params": json.dumps(params)}, timeout=300_000)  # fmt: skip
+        assert response.ok, f"MONAI Label {model} {response.status}: {response.text()[:200]}"
+        path = workdir / f"{model}.nii.gz"
+        path.write_bytes(response.body())
+        return sitk.ReadImage(str(path))
+
+    oracle_image = infer("segmentation_spleen")
+    oracle = sitk.GetArrayFromImage(oracle_image) > 0  # (z, row, column)
+    assert oracle.any(), f"segmentation_spleen found no spleen on {experiment}"
+    z = int(oracle.sum(axis=(1, 2)).argmax())
+
+    files = api.get(f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files?format=json").json()
+    labels = [f["Name"] for f in files["ResultSet"]["Result"] if f["Name"].startswith("label_")]
+    if labels:
+        path = workdir / labels[0]
+        path.write_bytes(
+            api.get(f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files/{labels[0]}").body()
+        )
+        truth = sitk.Resample(sitk.ReadImage(str(path)), oracle_image, sitk.Transform(), sitk.sitkNearestNeighbor, 0)
+        reference, against = sitk.GetArrayFromImage(truth)[z] > 0, "the expert's label"
+    else:
+        reference, against = oracle[z], "segmentation_spleen"
+
+    clicks = choose(lambda pos, neg: sitk.GetArrayFromImage(infer(SAM_MODEL, pos, neg, z))[z] > 0,
+                    oracle[z], reference, target=TARGET_DICE)  # fmt: skip
+    lps = [oracle_image.TransformIndexToPhysicalPoint((c.point[0], c.point[1], z)) for c in clicks]
+    print(f"plan: slice {z}, {len(clicks)} clicks, Dice {[round(c.dice_after, 3) for c in clicks]} vs {against}")
+    return {"nz": oracle.shape[0], "z": z, "clicks": clicks, "lps": lps, "against": against}
 
 
 def wait_for_converted_mask(api, experiment: str, before: set[str]) -> tuple[str, str]:
@@ -187,12 +241,7 @@ def wait_for_converted_mask(api, experiment: str, before: set[str]) -> tuple[str
 def record(pw) -> Path:
     api = xnat_api(pw)
     before = set(seg_files(api, EXPERIMENT))
-    nz, per_slice = mask_slices(api, EXPERIMENT)
-    covered = [z for z, voxels in enumerate(per_slice) if voxels]
-    assert covered, f"{MODEL} found nothing on {EXPERIMENT}"
-    # The viewer stacks the slices opposite to the NIfTI's z axis: slider = slices - 1 - z.
-    to_slider = lambda z: nz - 1 - z  # noqa: E731
-    widest = max(covered, key=per_slice.__getitem__)
+    steps_plan = plan(api, EXPERIMENT)
     browser = pw.chromium.launch(args=[f"--force-device-scale-factor={SCALE}", "--use-angle=swiftshader",
                                        "--enable-unsafe-swiftshader"])  # fmt: skip
     context = browser.new_context(viewport={"width": W, "height": H}, device_scale_factor=SCALE)
@@ -201,7 +250,7 @@ def record(pw) -> Path:
     page.set_default_timeout(120_000)
     demo = Demo(page)
     try:
-        assessor, nifti, stopped, frames = steps(page, demo, api, before, covered, widest, to_slider)
+        assessor, nifti, stopped, frames = steps(page, demo, api, before, steps_plan)
     except Exception:
         page.screenshot(path=str(OUT / "failure.png"))  # what the recorder was looking at
         raise
@@ -215,7 +264,7 @@ def record(pw) -> Path:
     return video
 
 
-def steps(page: Page, demo: Demo, api, before: set[str], covered: list[int], widest: int, to_slider):
+def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
     """The recorded part: from the login page to the converted mask."""
 
     # Off camera: the login page and its fonts, so the video opens on a settled frame.
@@ -255,26 +304,49 @@ def steps(page: Page, demo: Demo, api, before: set[str], covered: list[int], wid
     page.locator("canvas").last.wait_for(state="visible")
     page.wait_for_timeout(5000)
 
-    demo.caption("The MONAI Label panel connects to the trust's own server: nothing leaves the hospital", 800)
+    demo.caption("Start from nothing: a new, empty segment named spleen", 800)
     demo.click(page.get_by_text("Masks", exact=True))
+    demo.click(page.get_by_role("button", name="Mask ROI"))
+    demo.click(page.get_by_text("Unnamed Segment", exact=True))
+    label = page.locator("input[value='Unnamed Segment']")
+    demo.click(label)
+    label.select_text()  # typing replaces it; the [value=...] match is gone once the text changes
+    page.keyboard.type("spleen", delay=70)
+    demo.click(page.get_by_role("button", name="Save"))
+    page.get_by_text("spleen", exact=True).first.wait_for()
+    page.wait_for_timeout(800)
+
+    demo.caption("MONAI Label → DeepGrow → sam_2d: Segment Anything, prompted by clicks", 800)
     demo.click(page.locator("[data-cy=mask]"))
     demo.click(page.get_by_text("MONAILabel", exact=True))
-    page.wait_for_timeout(1800)
-    page.locator("#monaiToolList").select_option(label="Segmentation")
-    page.locator("select:near(:text('Segmentation models'))").first.select_option(label=MODEL)
-    demo.caption(f"Run {MODEL} — the model segments the whole volume on the trust's GPU", 1500)
-    demo.click(page.get_by_role("button", name="Run"))
-    page.get_by_text(re.compile(r"^spleen$")).first.wait_for()
+    page.locator("#monaiToolList").wait_for()
+    page.wait_for_timeout(1200)
+    page.locator("#monaiToolList").select_option(label="DeepGrow")
+    page.locator("select:near(:text('DeepGrow models'))").first.select_option(label=SAM_MODEL)
+    # The panel hands the left button to the NVIDIA AIAA probe when it first connects, so a click
+    # would go nowhere; picking the MONAILabel tool again gives it back to MONAI Label's probe.
+    demo.click(page.locator("[data-cy=monailabel]"))
+    page.wait_for_timeout(1000)
+
+    demo.caption("Go to the spleen's largest slice", 600)
+    # The viewer stacks the slices opposite to the mask's z axis: slider = slices - 1 - z.
+    page.locator("input.imageSlider").fill(str(plan["nz"] - 1 - plan["z"]))
     page.wait_for_timeout(1500)
 
-    demo.caption("Every slice the model found the spleen on, ready to review and correct", 500)
-    slider = page.locator("input.imageSlider")
-    step = max(1, len(covered) // 28)  # ~28 frames through the organ, whatever its extent
-    for z in covered[::-step]:
-        slider.fill(str(to_slider(z)))
-        page.wait_for_timeout(160)
-    slider.fill(str(to_slider(widest)))
-    page.wait_for_timeout(2500)
+    clicks, lps = plan["clicks"], plan["lps"]
+    for n, (click, point) in enumerate(zip(clicks, lps), start=1):
+        if n == 1:
+            text = "Click 1, positive, on the spleen"
+        else:
+            kind = "positive" if click.positive else "negative (Ctrl+click)"
+            why = "where it missed" if click.positive else "where it leaked"
+            why = why if click.fixes_error else "to tidy the edges"
+            text = f"Click {n}, {kind}, {why}"
+        demo.caption(text, 900)
+        demo.prompt(click, point)
+        outcome = "spills over the body" if click.dice_after < 0.5 else "follows the spleen"
+        demo.caption(f"{text}: the mask {outcome} — Dice {click.dice_after:.2f} vs {plan['against']}", 2600)
+    demo.caption(f"{len(clicks)} clicks, Dice {clicks[-1].dice_after:.2f}: the spleen, segmented from nothing", 2500)
 
     demo.caption("Save it to XNAT: the mask becomes a DICOM-SEG ROI collection on the session", 800)
     demo.click(page.get_by_role("button", name="Export", exact=True).first)

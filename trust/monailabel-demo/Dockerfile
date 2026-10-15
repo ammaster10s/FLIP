@@ -10,10 +10,12 @@
 # limitations under the License.
 #
 # Recorder for the MONAI Label demo video (record_demo.py). The mcr image ships the browsers but
-# not the Python package, so it is pinned here to the same release; ffmpeg encodes the frames.
+# not the Python package, so it is pinned here to the same release; ffmpeg encodes the frames; numpy,
+# scipy and SimpleITK choose the SAM clicks (choose_clicks.py).
 FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir --break-system-packages playwright==1.63.0
+    && pip install --no-cache-dir --break-system-packages playwright==1.63.0 \
+       numpy==2.5.4 scipy==1.18.1 simpleitk==2.5.6
 WORKDIR /demo
-COPY record_demo.py .
+COPY choose_clicks.py record_demo.py ./
 ENTRYPOINT ["python3", "/demo/record_demo.py"]

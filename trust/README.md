@@ -408,8 +408,13 @@ ticked, a perfectly working server is simply absent from the viewer; that is the
 check when it "isn't showing up", followed by `GET /xapi/ohifaiaa/servers` returning the URL and
 that URL opening in the browser.
 
-Two known stock-viewer defects (both client-side — the server returns valid masks throughout,
+Known stock-viewer defects (all client-side — the server returns valid masks throughout,
 verifiable in the monailabel container's logs):
+
+- **Clicks do nothing in DeepGrow/DeepEdit** after the panel first connects: it activates the
+  NVIDIA AIAA click tool instead of MONAI Label's, so left-clicks on the image never reach the
+  server. **Pick *Mask ▾ → MONAILabel* again** once the panel shows the server; clicks then prompt
+  the model (Ctrl+click for a negative point).
 
 - *"Empty mask was returned by the model run"* from every interactive model (`sam_2d`,
   `deepgrow_*`) while `deepedit_seg` still works: the tab's segment state has gone stale —
