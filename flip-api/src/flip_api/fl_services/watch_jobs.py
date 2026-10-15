@@ -19,10 +19,13 @@ is running with its net's FL API and fails the ones the backend has ended or los
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cache
 from uuid import UUID
 
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus
@@ -216,3 +219,22 @@ class JobWatchdog:
         # Jobs that looked alive this tick, or are no longer watched, start from zero next time.
         self._looked_dead = looked_dead
         return failed
+
+
+@cache
+def _watchdog() -> JobWatchdog:
+    """The process's one watchdog: its strike counts must survive between ticks."""
+    settings = get_settings()
+    return JobWatchdog(
+        strikes=settings.FL_JOB_WATCHDOG_STRIKES,
+        prepare_timeout=timedelta(minutes=settings.FL_JOB_PREPARE_TIMEOUT_MINUTES),
+    )
+
+
+def watch_fl_jobs_scheduled_task() -> None:
+    """Scheduled task: check every running FL job once. Never raises, so one bad tick cannot stop the next."""
+    try:
+        with Session(get_engine()) as session:
+            _watchdog().tick(session, datetime.utcnow())
+    except Exception:
+        logger.exception("FL job watchdog tick failed")

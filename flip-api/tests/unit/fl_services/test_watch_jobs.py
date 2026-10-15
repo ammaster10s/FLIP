@@ -18,6 +18,7 @@ import pytest
 
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus
+from flip_api.fl_services import watch_jobs
 from flip_api.fl_services.watch_jobs import JobWatchdog, WatchedJob, why_job_is_dead
 
 NOW = datetime(2026, 10, 14, 12, 0, 0)
@@ -161,3 +162,29 @@ def test_a_job_that_ends_on_its_own_is_forgotten(watched):
     watchdog.tick(MagicMock(), NOW)
 
     watched["fail"].assert_not_called()
+
+
+def test_the_scheduled_task_ticks_with_the_configured_watchdog():
+    watch_jobs._watchdog.cache_clear()
+    with (
+        patch.object(watch_jobs, "get_settings") as settings,
+        patch.object(watch_jobs, "get_engine"),
+        patch.object(watch_jobs, "Session"),
+        patch.object(watch_jobs.JobWatchdog, "tick") as tick,
+    ):
+        settings.return_value.FL_JOB_WATCHDOG_STRIKES = 5
+        settings.return_value.FL_JOB_PREPARE_TIMEOUT_MINUTES = 45
+        watch_jobs.watch_fl_jobs_scheduled_task()
+
+    tick.assert_called_once()
+    assert watch_jobs._watchdog().strikes == 5
+    assert watch_jobs._watchdog().prepare_timeout == timedelta(minutes=45)
+    watch_jobs._watchdog.cache_clear()
+
+
+def test_the_scheduled_task_never_raises():
+    with (
+        patch.object(watch_jobs, "get_engine"),
+        patch.object(watch_jobs, "Session", side_effect=RuntimeError("database down")),
+    ):
+        watch_jobs.watch_fl_jobs_scheduled_task()
