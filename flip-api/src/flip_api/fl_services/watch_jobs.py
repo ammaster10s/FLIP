@@ -21,8 +21,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from sqlmodel import Session, col, select
+
+from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.interfaces.fl import IJobMetaData
-from flip_api.domain.schemas.status import FLJobStatus
+from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus
 
 _ALIVE = {FLJobStatus.PENDING, FLJobStatus.RUNNING}
 
@@ -44,6 +47,43 @@ class WatchedJob:
     started: datetime | None
     net_name: str
     net_endpoint: str
+
+
+# A model in one of these was picked up and has not reported a terminal status.
+RUNNING_MODEL_STATUSES = (ModelStatus.INITIATED, ModelStatus.PREPARED, ModelStatus.RUNNING)
+
+
+def find_watched_jobs(session: Session) -> list[WatchedJob]:
+    """List the jobs the hub believes are running: picked up, holding a BUSY net, model not ended.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        list[WatchedJob]: One entry per running job.
+    """
+    statement = (
+        select(FLJob, FLNets)
+        .join(FLScheduler, col(FLScheduler.job_id) == FLJob.id)
+        .join(FLNets, col(FLNets.id) == FLScheduler.net_id)
+        .join(Model, col(Model.id) == FLJob.model_id)
+        .where(
+            FLJob.status == JobStatus.IN_PROGRESS,
+            FLScheduler.status == NetStatus.BUSY,
+            col(Model.status).in_(RUNNING_MODEL_STATUSES),
+        )
+    )
+    return [
+        WatchedJob(
+            job_id=job.id,
+            model_id=job.model_id,
+            fl_backend_job_id=job.fl_backend_job_id,
+            started=job.started,
+            net_name=net.name,
+            net_endpoint=net.endpoint,
+        )
+        for job, net in session.exec(statement).all()
+    ]
 
 
 def why_job_is_dead(
