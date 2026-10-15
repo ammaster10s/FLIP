@@ -706,7 +706,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
+    # A still-scaffolded `<...>` bucket counts as unset: emitted, it would name a bucket that
+    # does not exist, and the vocab-load hook failing fails the whole release (FLIP#881).
     kit_bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
+    if _is_placeholder(kit_bucket):
+        kit_bucket = ""
     # Where the operator placed this trust's kit ON THE NODE. FL_KIT_DIR is the same
     # value the Compose path uses, so one kit field serves both deployment shapes.
     # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
