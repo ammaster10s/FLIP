@@ -33,7 +33,7 @@ Features*, tick **MONAILabel Tools** and **Save**. The setting lives in your bro
 browser or a cleared cache needs it again.
 
 .. figure:: ../../assets/generated/gifs/monailabel/monailabel-enable.gif
-   :width: 600
+   :width: 100%
    :align: center
 
    Switching on MONAI Label in the XNAT OHIF viewer.
@@ -55,7 +55,7 @@ follows your clicks:
    to add a positive one. Each click re-runs the model.
 
 .. figure:: ../../assets/generated/gifs/monailabel/monailabel-sam-clicks.gif
-   :width: 600
+   :width: 100%
    :align: center
 
    An empty spleen segment, a positive click on the spleen, then a negative Ctrl+click to tidy the
@@ -75,7 +75,7 @@ to NIfTI, resampled onto the scan's own grid, and adds the ``.nii.gz`` beside th
 same ROI collection. *Manage Files* on the ROI collection shows both.
 
 .. figure:: ../../assets/generated/gifs/monailabel/monailabel-export.gif
-   :width: 600
+   :width: 100%
    :align: center
 
    Exporting the mask: the ROI collection's SEG resource holds the DICOM-SEG and its NIfTI.
