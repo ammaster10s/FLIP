@@ -222,7 +222,8 @@ def plan(api, experiment: str) -> dict:
     clicks = choose(lambda pos, neg: sitk.GetArrayFromImage(infer(SAM_MODEL, pos, neg, z))[z] > 0,
                     oracle[z], reference, target=TARGET_DICE)  # fmt: skip
     lps = [oracle_image.TransformIndexToPhysicalPoint((c.point[0], c.point[1], z)) for c in clicks]
-    print(f"plan: slice {z}, {len(clicks)} clicks, Dice {[round(c.dice_after, 3) for c in clicks]} vs {against}")
+    steps = ", ".join(f"{'+' if c.positive else '-'}{c.point} -> {c.dice_after:.3f}" for c in clicks)
+    print(f"plan: slice {z}, {len(clicks)} clicks vs {against}: {steps}")
     return {"nz": oracle.shape[0], "z": z, "clicks": clicks, "lps": lps, "against": against}
 
 
@@ -345,8 +346,8 @@ def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
         demo.caption(text, 900)
         demo.prompt(click, point)
         outcome = "spills over the body" if click.dice_after < 0.5 else "follows the spleen"
-        demo.caption(f"{text}: the mask {outcome} — Dice {click.dice_after:.2f} vs {plan['against']}", 2600)
-    demo.caption(f"{len(clicks)} clicks, Dice {clicks[-1].dice_after:.2f}: the spleen, segmented from nothing", 2500)
+        demo.caption(f"{text}: the mask {outcome} — Dice {click.dice_after:.3f} vs {plan['against']}", 2600)
+    demo.caption(f"{len(clicks)} clicks, Dice {clicks[-1].dice_after:.3f}: the spleen, segmented from nothing", 2500)
 
     demo.caption("Save it to XNAT: the mask becomes a DICOM-SEG ROI collection on the session", 800)
     demo.click(page.get_by_role("button", name="Export", exact=True).first)

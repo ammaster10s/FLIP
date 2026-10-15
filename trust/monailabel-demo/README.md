@@ -15,7 +15,9 @@ The clicks are chosen before recording (`choose_clicks.py`), against the same se
 calls: the first is always positive and deepest inside the spleen (located with
 `segmentation_spleen`); extra positive and negative clicks are searched, fewest first, until the
 slice's Dice against the session's ground-truth label (or `segmentation_spleen` when there is none)
-passes `TARGET_DICE` (default 0.95). The captions report that Dice after each click. `sam_3d` is
+passes `TARGET_DICE` (default 0.95). The captions report that Dice after each click. Orientation matters
+to SAM: on the spleen data written upright (FLIP#1495) one positive click already reaches about 0.95, while
+the earlier 180°-rotated copy of the same scan spilled over the body until two negative clicks reined it in. `sam_3d` is
 not offered: on the spleen data it spread over the body and ignored negative clicks.
 
 The recording fails unless step 5 happens, so a finished video is also an end-to-end check of
@@ -36,7 +38,7 @@ MONAI Label, the viewer, the export and the converter on that trust.
 ## Usage
 
 ```sh
-make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=XNAT_E02219
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=XNAT_E02855
 # -> trust/monailabel-demo/out/monailabel-demo.mp4 (2560x1600; DEMO_VIDEO_SCALE=3 for 4K)
 ```
 
