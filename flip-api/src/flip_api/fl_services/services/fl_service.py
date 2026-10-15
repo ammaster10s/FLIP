@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -490,13 +491,23 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
+        IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
+            answers with an error status.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
     # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
     # be slower than httpx's 5s default.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -513,14 +524,24 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
+            reached or answers with an error status.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
     # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
     # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
     # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")

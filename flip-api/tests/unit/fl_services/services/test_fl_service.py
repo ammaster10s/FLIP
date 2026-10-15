@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
@@ -1295,6 +1296,56 @@ def test_check_server_status_returns_none_when_no_response(mock_http_get):
     mock_http_get.return_value = None
 
     assert fl_service.check_server_status("endpoint") is None
+
+
+def _fl_api_unreachable() -> httpx.HTTPError:
+    return httpx.RequestError("connection refused")
+
+
+def _fl_api_answers_500() -> httpx.HTTPError:
+    # NVFLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
+    request = httpx.Request("GET", "http://fl-api/check_server_status")
+    return httpx.HTTPStatusError("500 Internal Server Error", request=request, response=httpx.Response(500))
+
+
+FL_API_FAILURES = pytest.mark.parametrize(
+    "error_factory", [_fl_api_unreachable, _fl_api_answers_500], ids=["fl-api-unreachable", "fl-api-answers-500"]
+)
+
+
+@FL_API_FAILURES
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_server_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
+
+    assert fl_service.check_server_status("endpoint") is None
+
+
+@FL_API_FAILURES
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
+
+    assert fl_service.check_client_status("endpoint") is None
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "expected_error_logs"),
+    [(_fl_api_unreachable, 0), (_fl_api_answers_500, 1)],
+    ids=["fl-api-unreachable", "fl-api-answers-500"],
+)
+@pytest.mark.parametrize(
+    "check", [fl_service.check_server_status, fl_service.check_client_status], ids=["server", "client"]
+)
+@patch("flip_api.fl_services.services.fl_service.logger")
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_status_logs_a_failed_request_once(mock_http_get, mock_logger, check, error_factory, expected_error_logs):
+    # http_get logs a RequestError itself before re-raising it, so logging it here too would print the same
+    # line twice on every status poll; an error response is not logged by http_get, so it is logged here.
+    mock_http_get.side_effect = error_factory()
+
+    assert check("endpoint") is None
+    assert mock_logger.error.call_count == expected_error_logs
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
