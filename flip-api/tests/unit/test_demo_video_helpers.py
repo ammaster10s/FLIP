@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the demo-video recorder's credential fallback, app-file listing and tutorial copy."""
+"""Unit tests for the demo-video recorder's credential fallback, app-file listing, tutorial copy and frame timing."""
 
 from pathlib import Path
 
@@ -22,6 +22,8 @@ import requests
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
 from tests import demo_video
+from tests.demo_recorder import FrameSink
+from tests.demo_segments import strip_licence_header
 from tests.demo_video import (
     APPS,
     REPO_ROOT,
@@ -168,3 +170,29 @@ def test_resuming_an_imaging_project_under_the_ehr_profile_is_refused(monkeypatc
     _stub_project_has_imaging(monkeypatch, True)
     with pytest.raises(SmokeFailure, match=r"has_imaging=true.*tabular-only study.*pass --app spleen / xray"):
         check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "ehr", APPS["ehr"])
+
+
+def test_licence_header_is_stripped_from_the_on_camera_query() -> None:
+    sql = "-- Copyright (c) 2026\n-- Licensed under Apache\n\nSELECT 1\n-- trailing note\nFROM x"
+
+    assert strip_licence_header(sql) == "SELECT 1\n-- trailing note\nFROM x"
+
+
+def test_each_frame_is_held_until_the_next_and_the_last_until_the_stop(tmp_path: Path) -> None:
+    sink = FrameSink(tmp_path)
+    # Chromium's frame clock runs far from ours: only the differences between its timestamps count.
+    for ts, arrival in [(500_000.0, 1_000.0), (500_040.0, 1_045.0), (502_040.0, 3_050.0)]:
+        sink.frames.append({"file": f"{len(sink.frames):06d}.jpg", "ts": ts, "arrival": arrival})
+
+    lines = sink.write_concat(stop_ms=9_050.0).read_text().splitlines()
+
+    assert lines == [
+        "file '000000.jpg'",
+        "duration 0.0400",
+        "file '000001.jpg'",
+        "duration 2.0000",
+        "file '000002.jpg'",
+        "duration 6.0000",
+        # The concat demuxer only honours the last duration when the last file is repeated.
+        "file '000002.jpg'",
+    ]
