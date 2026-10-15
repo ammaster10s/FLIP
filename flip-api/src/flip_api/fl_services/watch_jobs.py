@@ -29,6 +29,7 @@ from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus
+from flip_api.fl_services.services.fl_scheduler_service import release_scheduler_for_model
 from flip_api.fl_services.services.fl_service import list_backend_jobs
 from flip_api.model_services.services.model_service import add_log, update_model_status
 from flip_api.utils.logger import logger
@@ -163,8 +164,20 @@ def _fail_job(job: WatchedJob, reason: str, session: Session) -> bool:
     )
     # Status first: its commit releases the lock only once the model is ERROR, so a second replica skips it.
     update_model_status(job.model_id, ModelStatus.ERROR, session)
+    # update_model_status frees the net of the model's newest job. A model started twice has a newer QUEUED job
+    # beside this one, so free this job's net explicitly too (a no-op when it is already free).
+    release_scheduler_for_model(job.model_id, session)
     add_log(job.model_id, reason, session, success=False)
     return True
+
+
+def _list_or_unknown(net_endpoint: str) -> list[IJobMetaData] | None:
+    """List one net's jobs, or None for any error, so one broken net cannot stop the others being watched."""
+    try:
+        return list_backend_jobs(net_endpoint)
+    except Exception:
+        logger.exception(f"Could not list the jobs on {net_endpoint}")
+        return None
 
 
 class JobWatchdog:
@@ -193,7 +206,7 @@ class JobWatchdog:
         """
         jobs = find_watched_jobs(session)
         endpoints = {job.net_endpoint for job in jobs if job.fl_backend_job_id is not None}
-        backend_jobs = {endpoint: list_backend_jobs(endpoint) for endpoint in endpoints}
+        backend_jobs = {endpoint: _list_or_unknown(endpoint) for endpoint in endpoints}
 
         failed: list[UUID] = []
         looked_dead: dict[UUID, int] = {}
@@ -213,8 +226,15 @@ class JobWatchdog:
                     }
                 )
                 continue
-            if _fail_job(job, reason, session):
-                failed.append(job.model_id)
+            try:
+                if _fail_job(job, reason, session):
+                    failed.append(job.model_id)
+            except Exception:
+                # One model that cannot be failed must not keep the others wedged. Keeping its count retries it on
+                # the next tick.
+                logger.exception({"message": "Could not fail a dead FL job's model", "model": job.model_id})
+                session.rollback()
+                looked_dead[job.job_id] = count
 
         # Jobs that looked alive this tick, or are no longer watched, start from zero next time.
         self._looked_dead = looked_dead

@@ -10,10 +10,12 @@
 # limitations under the License.
 #
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from flip_api.domain.interfaces.fl import IJobMetaData
@@ -188,3 +190,47 @@ def test_the_scheduled_task_never_raises():
         patch.object(watch_jobs, "Session", side_effect=RuntimeError("database down")),
     ):
         watch_jobs.watch_fl_jobs_scheduled_task()
+
+
+def _on_net_2(job: WatchedJob) -> WatchedJob:
+    return replace(job, net_name="net-2", net_endpoint="http://fl-api-net-2:8000")
+
+
+def test_one_net_that_cannot_be_listed_does_not_stop_the_others(watched):
+    # A non-HTTP error for one net (here a malformed endpoint) must not disable the watchdog for every net.
+    other = _on_net_2(_job(fl_backend_job_id="run-2"))
+    watched["find"].return_value = [watched["job"], other]
+
+    def list_jobs(endpoint: str) -> list[IJobMetaData]:
+        if endpoint == "http://fl-api-net-1:8000":
+            raise httpx.InvalidURL("bad endpoint")
+        return _listed(FLJobStatus.FAILED, job_id="run-2")
+
+    watched["list_jobs"].side_effect = list_jobs
+
+    failed = JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
+
+    assert failed == [other.model_id]
+
+
+def test_one_job_that_cannot_be_failed_does_not_stop_the_others(watched):
+    other = _job(fl_backend_job_id="run-2")
+    watched["find"].return_value = [watched["job"], other]
+    watched["list_jobs"].return_value = _listed(FLJobStatus.FAILED) + _listed(FLJobStatus.FAILED, job_id="run-2")
+    watched["fail"].side_effect = [RuntimeError("database hiccup"), True]
+    session = MagicMock()
+
+    failed = JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(session, NOW)
+
+    assert failed == [other.model_id]
+    session.rollback.assert_called_once()
+
+
+def test_a_job_that_could_not_be_failed_is_retried_on_the_next_tick(watched):
+    watched["list_jobs"].return_value = _listed(FLJobStatus.FAILED)
+    watched["fail"].side_effect = [RuntimeError("database hiccup"), True]
+    watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
+
+    results = [watchdog.tick(MagicMock(), NOW) for _ in range(4)]
+
+    assert results == [[], [], [], [watched["job"].model_id]]

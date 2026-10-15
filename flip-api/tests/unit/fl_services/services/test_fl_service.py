@@ -256,6 +256,7 @@ def test_start_training_with_config(
 ):
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
 
     fl_service.start_training(
         model_id=model_id,
@@ -322,6 +323,40 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
     fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_submit_when_the_watchdog_completed_the_job(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # The prepare outlived FL_JOB_PREPARE_TIMEOUT_MINUTES: the job watchdog (#727) set the model to ERROR, which
+    # marked the job COMPLETED and freed the net for the next job. A job that is no longer IN_PROGRESS must not
+    # reach the fl-server, or the failed model would train alongside the next one.
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.COMPLETED]
 
     with pytest.raises(JobAbortedError):
         fl_service.start_training(

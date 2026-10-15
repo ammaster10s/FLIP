@@ -170,3 +170,24 @@ def test_a_status_that_arrives_first_is_never_overwritten(session, running_job, 
     assert model is not None
     assert model.status == arrived
     assert session.exec(select(FLLogs).where(FLLogs.model_id == running_job["model"].id)).all() == []
+
+
+def test_the_watched_jobs_net_is_freed_even_when_the_model_has_a_newer_job(session, running_job):
+    # A second initiate (a double POST) leaves a newer QUEUED job beside the running one. update_model_status(ERROR)
+    # completes the newest job, so the watchdog must free the watched job's net itself, or the net stays BUSY with
+    # its model already ERROR and nothing left to notice it.
+    newer = FLJob(
+        model_id=running_job["model"].id,
+        status=JobStatus.QUEUED,
+        created=datetime.utcnow() + timedelta(seconds=1),
+    )
+    session.add(newer)
+    session.commit()
+
+    with _backend_says(FLJobStatus.FAILED):
+        JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(session, datetime.utcnow())
+
+    session.expire_all()
+    scheduler = session.get(FLScheduler, running_job["scheduler"].id)
+    assert scheduler is not None
+    assert scheduler.status == NetStatus.AVAILABLE
