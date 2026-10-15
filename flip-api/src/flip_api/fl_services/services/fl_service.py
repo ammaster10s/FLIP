@@ -1234,6 +1234,32 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
+def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
+    """List every job one net's FL API knows about, whatever its status.
+
+    Unlike ``extract_current_job_data`` (the abort path, which fails loudly), this answers ``None`` when the FL API
+    cannot be reached or replies with something that is not a job list. The job watchdog reads ``None`` as "unknown"
+    and acts on nothing, so a briefly unavailable FL API never fails a model.
+
+    Args:
+        net_endpoint (str): The net's FL API base URL.
+
+    Returns:
+        list[IJobMetaData] | None: The jobs, or ``None`` if the FL API could not say.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    try:
+        # Same timeout as the other FL status calls: the Flower FL API lists runs through the flwr CLI.
+        response = http_get(url, timeout=30)
+        if not isinstance(response, list):
+            raise ValueError(f"expected a list of jobs, got {type(response).__name__}")
+        # pydantic's ValidationError is a ValueError, so an unknown status lands in the except below.
+        return [IJobMetaData.model_validate(job) for job in response]
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"Could not list the jobs on {url}: {e}")
+        return None
+
+
 def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
     Extract the currently-running FL job matching ``fl_backend_job_id``.

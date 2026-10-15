@@ -28,7 +28,7 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.status import ClientStatus, JobStatus
+from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
@@ -1141,6 +1141,59 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
         extract_current_job_data(net_endpoint, fl_backend_job_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_parses_every_job(mock_http_get):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = [
+        {"job_id": "a", "status": "RUNNING"},
+        {"job_id": "b", "status": "FAILED"},
+    ]
+
+    jobs = list_backend_jobs("http://fl-api")
+
+    assert jobs is not None
+    assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=httpx.Request("GET", "http://fl-api/list_jobs"),
+            response=httpx.Response(500),
+        ),
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_when_the_fl_api_cannot_answer(mock_http_get, failure):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.side_effect = failure
+
+    assert list_backend_jobs("http://fl-api") is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Internal Server Error",
+        {"detail": "not a list"},
+        [{"job_id": "a", "status": "EXPLODED"}],
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_for_a_malformed_reply(mock_http_get, body):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = body
+
+    assert list_backend_jobs("http://fl-api") is None
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
