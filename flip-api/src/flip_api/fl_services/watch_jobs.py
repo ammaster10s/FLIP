@@ -26,6 +26,9 @@ from sqlmodel import Session, col, select
 from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus
+from flip_api.fl_services.services.fl_service import list_backend_jobs
+from flip_api.model_services.services.model_service import add_log, update_model_status
+from flip_api.utils.logger import logger
 
 _ALIVE = {FLJobStatus.PENDING, FLJobStatus.RUNNING}
 
@@ -124,3 +127,92 @@ def why_job_is_dead(
         if status in statuses:
             return reason.format(net=job.net_name)
     return None
+
+
+def _fail_job(job: WatchedJob, reason: str, session: Session) -> bool:
+    """Set a dead job's model to ERROR and log why, unless the model ended meanwhile.
+
+    The model row is locked and re-read first. A terminal status that arrived after the job list was read (the
+    model's own result, a user's stop) therefore stands, and two flip-api replicas cannot both fail the model and
+    log twice. ``update_model_status(ERROR)`` marks the job COMPLETED and frees the net.
+
+    Args:
+        job (WatchedJob): The dead job.
+        reason (str): The log line to show on the model.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if the model was failed, False if it had already ended.
+    """
+    model = session.exec(select(Model).where(Model.id == job.model_id).with_for_update()).first()
+    if model is None or model.status not in RUNNING_MODEL_STATUSES:
+        session.rollback()
+        return False
+
+    logger.error(
+        {
+            "message": "FL job ended without reporting a result; setting its model to ERROR",
+            "model": job.model_id,
+            "job": job.job_id,
+            "net": job.net_name,
+            "reason": reason,
+        }
+    )
+    # Status first: its commit releases the lock only once the model is ERROR, so a second replica skips it.
+    update_model_status(job.model_id, ModelStatus.ERROR, session)
+    add_log(job.model_id, reason, session, success=False)
+    return True
+
+
+class JobWatchdog:
+    """Fail the model of any running job its backend has ended or lost, once it has looked dead ``strikes`` ticks in
+    a row.
+
+    Args:
+        strikes (int): Consecutive ticks a job must look dead before its model is failed.
+        prepare_timeout (timedelta): How long after pickup a job may still have no backend id.
+    """
+
+    def __init__(self, strikes: int, prepare_timeout: timedelta) -> None:
+        self.strikes = strikes
+        self.prepare_timeout = prepare_timeout
+        self._looked_dead: dict[UUID, int] = {}
+
+    def tick(self, session: Session, now: datetime) -> list[UUID]:
+        """Check every running job once.
+
+        Args:
+            session (Session): The database session.
+            now (datetime): The current UTC time, naive like ``FLJob.started``.
+
+        Returns:
+            list[UUID]: The ids of the models this tick set to ERROR.
+        """
+        jobs = find_watched_jobs(session)
+        endpoints = {job.net_endpoint for job in jobs if job.fl_backend_job_id is not None}
+        backend_jobs = {endpoint: list_backend_jobs(endpoint) for endpoint in endpoints}
+
+        failed: list[UUID] = []
+        looked_dead: dict[UUID, int] = {}
+        for job in jobs:
+            reason = why_job_is_dead(job, backend_jobs.get(job.net_endpoint), now, self.prepare_timeout)
+            if reason is None:
+                continue
+            count = self._looked_dead.get(job.job_id, 0) + 1
+            if count < self.strikes:
+                looked_dead[job.job_id] = count
+                logger.warning(
+                    {
+                        "message": f"FL job looks dead ({count} of {self.strikes} checks)",
+                        "model": job.model_id,
+                        "net": job.net_name,
+                        "reason": reason,
+                    }
+                )
+                continue
+            if _fail_job(job, reason, session):
+                failed.append(job.model_id)
+
+        # Jobs that looked alive this tick, or are no longer watched, start from zero next time.
+        self._looked_dead = looked_dead
+        return failed

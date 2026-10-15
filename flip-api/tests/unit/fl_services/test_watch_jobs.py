@@ -11,13 +11,14 @@
 #
 
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus
-from flip_api.fl_services.watch_jobs import WatchedJob, why_job_is_dead
+from flip_api.fl_services.watch_jobs import JobWatchdog, WatchedJob, why_job_is_dead
 
 NOW = datetime(2026, 10, 14, 12, 0, 0)
 PREPARE_TIMEOUT = timedelta(minutes=30)
@@ -84,3 +85,79 @@ def test_a_job_never_submitted_after_the_timeout_is_dead():
     reason = why_job_is_dead(job, None, NOW, PREPARE_TIMEOUT)
 
     assert reason == "Training never reached the FL server on net-1: it was still being prepared after 30 minutes."
+
+
+@pytest.fixture
+def watched():
+    job = _job()
+    with (
+        patch("flip_api.fl_services.watch_jobs.find_watched_jobs", return_value=[job]) as find,
+        patch("flip_api.fl_services.watch_jobs.list_backend_jobs") as list_jobs,
+        patch("flip_api.fl_services.watch_jobs._fail_job", return_value=True) as fail,
+    ):
+        yield {"job": job, "find": find, "list_jobs": list_jobs, "fail": fail}
+
+
+def test_a_dead_job_is_failed_on_the_third_tick(watched):
+    watched["list_jobs"].return_value = _listed(FLJobStatus.FAILED)
+    watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
+
+    assert watchdog.tick(MagicMock(), NOW) == []
+    assert watchdog.tick(MagicMock(), NOW) == []
+    assert watchdog.tick(MagicMock(), NOW) == [watched["job"].model_id]
+    watched["fail"].assert_called_once()
+    assert watched["fail"].call_args.args[1] == (
+        "The FL server on net-1 reports this job failed before it reported a result."
+    )
+
+
+def test_a_live_tick_resets_the_count(watched):
+    watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
+    for status in (FLJobStatus.FAILED, FLJobStatus.FAILED, FLJobStatus.RUNNING, FLJobStatus.FAILED, FLJobStatus.FAILED):
+        watched["list_jobs"].return_value = _listed(status)
+        watchdog.tick(MagicMock(), NOW)
+
+    watched["fail"].assert_not_called()
+
+
+def test_an_unreachable_fl_api_never_fails_a_job(watched):
+    # Review Focus 1: an FL API down for many ticks (a redeploy, an outage) fails nothing.
+    watched["list_jobs"].return_value = None
+    watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
+
+    for _ in range(10):
+        assert watchdog.tick(MagicMock(), NOW) == []
+    watched["fail"].assert_not_called()
+
+
+def test_each_net_is_listed_once_per_tick(watched):
+    second = _job(fl_backend_job_id="run-2")
+    watched["find"].return_value = [watched["job"], second]
+    watched["list_jobs"].return_value = _listed(FLJobStatus.RUNNING) + _listed(FLJobStatus.RUNNING, job_id="run-2")
+
+    JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
+
+    watched["list_jobs"].assert_called_once_with("http://fl-api-net-1:8000")
+
+
+def test_a_net_with_only_unsubmitted_jobs_is_not_listed(watched):
+    watched["find"].return_value = [_job(fl_backend_job_id=None)]
+
+    JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT).tick(MagicMock(), NOW)
+
+    watched["list_jobs"].assert_not_called()
+
+
+def test_a_job_that_ends_on_its_own_is_forgotten(watched):
+    watched["list_jobs"].return_value = _listed(FLJobStatus.FAILED)
+    watchdog = JobWatchdog(strikes=3, prepare_timeout=PREPARE_TIMEOUT)
+    watchdog.tick(MagicMock(), NOW)
+    watchdog.tick(MagicMock(), NOW)
+
+    # Its own terminal callback arrived: the hub no longer watches it.
+    watched["find"].return_value = []
+    watchdog.tick(MagicMock(), NOW)
+    watched["find"].return_value = [watched["job"]]
+    watchdog.tick(MagicMock(), NOW)
+
+    watched["fail"].assert_not_called()

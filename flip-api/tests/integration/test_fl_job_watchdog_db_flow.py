@@ -17,14 +17,19 @@ pass them silently.
 """
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from sqlmodel import select
 
-from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler
-from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus, ProjectStatus
+from flip_api.db.models.main_models import FLJob, FLLogs, FLNets, FLScheduler, Model
+from flip_api.domain.interfaces.fl import IJobMetaData
+from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus, ProjectStatus
 from flip_api.domain.schemas.types import FLBackend
-from flip_api.fl_services.watch_jobs import find_watched_jobs
+from flip_api.fl_services.watch_jobs import JobWatchdog, WatchedJob, _fail_job, find_watched_jobs
+
+PREPARE_TIMEOUT = timedelta(minutes=30)
 
 
 @pytest.fixture
@@ -97,3 +102,71 @@ def test_find_watched_jobs_skips_a_released_net(session, running_job):
     session.commit()
 
     assert find_watched_jobs(session) == []
+
+
+def _backend_says(status: FLJobStatus):
+    return patch(
+        "flip_api.fl_services.watch_jobs.list_backend_jobs",
+        return_value=[IJobMetaData(job_id="run-1", status=status)],
+    )
+
+
+def test_a_failed_backend_job_errors_the_model_and_frees_the_net(session, running_job):
+    with _backend_says(FLJobStatus.FAILED):
+        failed = JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(session, datetime.utcnow())
+
+    session.expire_all()
+    model = session.get(Model, running_job["model"].id)
+    job = session.get(FLJob, running_job["job"].id)
+    scheduler = session.get(FLScheduler, running_job["scheduler"].id)
+    assert failed == [running_job["model"].id]
+    assert model is not None
+    assert model.status == ModelStatus.ERROR
+    assert job is not None
+    assert job.status == JobStatus.COMPLETED
+    assert scheduler is not None
+    assert scheduler.status == NetStatus.AVAILABLE
+    logs = session.exec(select(FLLogs).where(FLLogs.model_id == running_job["model"].id)).all()
+    assert [(log.log, log.success) for log in logs] == [
+        (f"The FL server on {running_job['net'].name} reports this job failed before it reported a result.", False)
+    ]
+
+
+def test_a_job_never_submitted_errors_the_model_after_the_timeout(session, running_job):
+    running_job["job"].fl_backend_job_id = None
+    running_job["job"].started = datetime.utcnow() - timedelta(hours=2)
+    session.commit()
+
+    with patch("flip_api.fl_services.watch_jobs.list_backend_jobs") as list_jobs:
+        failed = JobWatchdog(strikes=1, prepare_timeout=PREPARE_TIMEOUT).tick(session, datetime.utcnow())
+
+    session.expire_all()
+    scheduler = session.get(FLScheduler, running_job["scheduler"].id)
+    list_jobs.assert_not_called()
+    assert failed == [running_job["model"].id]
+    assert scheduler is not None
+    assert scheduler.status == NetStatus.AVAILABLE
+
+
+@pytest.mark.parametrize("arrived", [ModelStatus.RESULTS_UPLOADED, ModelStatus.STOPPED])
+def test_a_status_that_arrives_first_is_never_overwritten(session, running_job, arrived):
+    # Review Focus 2 and 5: the model's own result, or a user's stop, lands after the watchdog read the job list
+    # and before it writes. _fail_job re-reads the model under a row lock and leaves it alone.
+    job = WatchedJob(
+        job_id=running_job["job"].id,
+        model_id=running_job["model"].id,
+        fl_backend_job_id="run-1",
+        started=running_job["job"].started,
+        net_name=running_job["net"].name,
+        net_endpoint=running_job["net"].endpoint,
+    )
+    running_job["model"].status = arrived
+    session.commit()
+
+    assert _fail_job(job, "reason", session) is False
+
+    session.expire_all()
+    model = session.get(Model, running_job["model"].id)
+    assert model is not None
+    assert model.status == arrived
+    assert session.exec(select(FLLogs).where(FLLogs.model_id == running_job["model"].id)).all() == []
