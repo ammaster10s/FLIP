@@ -8,14 +8,6 @@ Data Enrichment
 
 *Data enrichment* is the stage where a model developer adds whatever their app needs on top of the imaging data FLIP has pulled into each Trust's XNAT. Trust :term:`PACS` supply images only, so anything the app expects alongside them — segmentation masks, ROI annotations, contours — has to be added at this stage.
 
-Labels that have to be drawn on the image (detection boxes, segmentation masks) can be made with AI
-assistance in the XNAT viewer itself; see :ref:`monai-label-labelling`.
-
-.. toctree::
-   :maxdepth: 1
-
-   data-enrichment/monai-label
-
 Enrichment happens **once per project**, inside XNAT. It is independent of which federated learning backend the project uses — both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read the same enriched data.
 
 .. _enrichment-do-i-need-it:
@@ -45,6 +37,7 @@ Supervised models need a label for every image, but **enrichment is not how most
 The chest X-ray classification tutorial is the worked example of the first route: its ``query.sql`` joins ``image_feature`` to ``observation`` to project ``Effusion``, ``Edema`` and ``Lungs in normal arrangement`` as columns, and the app reads those per row. It performs **no enrichment at all**.
 
 The spleen segmentation tutorials are the worked example of the second: a segmentation mask is a 3D volume, so there is nowhere in OMOP for it to live and it has to be uploaded alongside the image.
+If the masks have not been drawn yet, see :ref:`enrichment-draw-labels`.
 
 .. note::
 
@@ -230,6 +223,21 @@ OMOP data partition and **not** the FL kit slot of the same ``Trust_N`` name, wh
 at registration — the two numberings are unrelated.
 
 See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
+
+.. _enrichment-draw-labels:
+
+*************************************
+Drawing labels with MONAI Label
+*************************************
+
+When the masks do not exist yet, they can be drawn at the Trust in the XNAT viewer, with MONAI Label
+proposing them. They are saved as ROI collections rather than in the scan's ``NIFTI`` resource, so the
+app reads them differently; the page below covers drawing, saving and reading them.
+
+.. toctree::
+   :maxdepth: 1
+
+   data-enrichment/monai-label
 
 .. _confirm-enrichment:
 
