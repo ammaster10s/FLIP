@@ -645,7 +645,7 @@ the UI (same as `make deploy-ui`):
    (LZA ECR pull-through cache, FLIP#749).
 3. Per service: registers a new task-definition revision with only the app container's image tag
    swapped (containers are selected **by name**, never by index — the same convention as the
-   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md), robust to
+   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md), robust to
    sidecar/ordering changes) and repoints the service at the new revision. If the repoint fails,
    the just-registered revision is deregistered again so the `max()` tracking in
    `ecs_services.tf` cannot adopt a never-deployed revision, and any services already repointed
