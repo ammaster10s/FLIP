@@ -120,6 +120,16 @@ def test_render_override_omits_vocab_load_without_bucket():
     assert "s3Bucket" not in out
 
 
+def test_render_override_treats_a_placeholder_bucket_as_unset():
+    """An uncommented scaffolding placeholder must not reach the chart: the hook would try to
+    read a bucket literally named ``<...>``, fail, and take the whole release down with it
+    (FLIP#881)."""
+    kit = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "<your-environment-aicentre-bucket>"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "vocabLoad" not in out
+    assert "s3Bucket" not in out
+
+
 def test_render_override_holds_pinned_images_back_from_the_release():
     """The kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs reach the chart as `image.pin`,
     beside the global.image.tag the kit's DOCKER_TAG sets; a kit without them emits none."""
