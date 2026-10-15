@@ -37,6 +37,9 @@ participants:
     org: AICentre
     connect_to:
       host: fl.stag.flip.aicentre.co.uk
+      # The LZA edge NLB serves prod and staging from one address: :8002 is
+      # production, :8003 forwards to this server's fed_learn_port (FLIP#1365).
+      port: 8003
     # Specifying listening_host will enable the creation of one pair of
     # certificate/private key for this client, allowing the client to function
     # as a server for 3rd-party integration.

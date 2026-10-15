@@ -1159,7 +1159,10 @@ same configuration with it. Staging downtime between the two applies is expected
 the *same* edge NLB — one address, two listeners — so the port in the trust kit is the only thing separating the
 environments: `:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was
 unambiguous when it pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit
-joins the production FL net, and it does so silently, by succeeding.
+reaches the production listener and fails the TLS handshake, because each estate's FL net has its own root CA. It
+fails loudly rather than joining production, but it cannot train until its kit is reissued. The `:8003` comes from
+`connect_to.port` in `fl-services/nvflare/provision/net-1_project_stag.yml`; the server still listens on
+`fed_learn_port` (8002).
 
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
 rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
