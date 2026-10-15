@@ -42,6 +42,18 @@ make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=XNAT_E02855
 # -> trust/monailabel-demo/out/monailabel-demo.mp4 (2560x1600; DEMO_VIDEO_SCALE=3 for 4K)
 ```
 
+Then cut the documentation GIFs (one per chapter: `enable`, `sam-clicks`, `export`, as listed in
+`docs/scripts/live-recorded-gifs.txt`) with the docs pipeline's own ffmpeg settings:
+
+```sh
+make -C trust/monailabel-demo demo-gifs   # -> out/gifs/monailabel/monailabel-<chapter>.gif
+```
+
+To publish them, copy `out/gifs/monailabel/` into `docs/source/assets/generated/gifs/`, fetch the other
+GIFs at the current pin (`uv run docs/scripts/fetch_docs_gifs.py`; every version carries the full set),
+then `uv run docs/scripts/publish_docs_gifs.py --source-commit <sha>` (an HF write token) and set
+`docs/.gifs_version` to the new tag.
+
 It signs in as the kit's `XNAT_ADMIN_USER`. On failure `out/failure.png` shows what the recorder
 was looking at.
 

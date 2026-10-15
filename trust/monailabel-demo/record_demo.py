@@ -125,6 +125,11 @@ class Frames:
 class Demo:
     def __init__(self, page: Page) -> None:
         self.page = page
+        self.marks: list[tuple[str, float]] = []  # (chapter, wall-clock ms) - cut into the docs GIFs
+
+    def chapter(self, name: str) -> None:
+        """Start a chapter: make_gifs.py cuts one GIF per chapter, from here to the next one (or the end)."""
+        self.marks.append((name, time.time() * 1000))
 
     def caption(self, text: str, hold_ms: int = 0) -> None:
         self.page.evaluate("t => window.__demoCaption && window.__demoCaption(t)", text)
@@ -261,7 +266,14 @@ def record(pw) -> Path:
 
     video = OUT / "monailabel-demo.mp4"
     frames.encode(stopped, video)
-    (OUT / "result.json").write_text(json.dumps({"experiment": EXPERIMENT, "assessor": assessor, "nifti": nifti}))
+    # Chapter times in seconds of the encoded video, which starts at the first screencast frame.
+    start = frames.frames[0][1]
+    chapters = [
+        {"name": name, "start": round((t0 - start) / 1000, 2), "end": round((t1 - start) / 1000, 2)}
+        for (name, t0), (_, t1) in zip(demo.marks, demo.marks[1:])
+    ]
+    result = {"experiment": EXPERIMENT, "assessor": assessor, "nifti": nifti, "chapters": chapters}
+    (OUT / "result.json").write_text(json.dumps(result, indent=2))
     return video
 
 
@@ -291,6 +303,7 @@ def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
     page.locator("canvas").last.wait_for(state="visible")
     page.wait_for_timeout(5000)
 
+    demo.chapter("enable")
     demo.caption("Once per browser: switch on MONAI Label under Options → Preferences → Experimental", 1500)
     demo.click(page.locator("[data-cy=options-menu]"))
     demo.click(page.get_by_role("button", name="Preferences"))
@@ -305,6 +318,7 @@ def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
     page.locator("canvas").last.wait_for(state="visible")
     page.wait_for_timeout(5000)
 
+    demo.chapter("sam-clicks")
     demo.caption("Start from nothing: a new, empty segment named spleen", 800)
     demo.click(page.get_by_text("Masks", exact=True))
     demo.click(page.get_by_role("button", name="Mask ROI"))
@@ -349,6 +363,7 @@ def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
         demo.caption(f"{text}: the mask {outcome} — Dice {click.dice_after:.3f} vs {plan['against']}", 2600)
     demo.caption(f"{len(clicks)} clicks, Dice {clicks[-1].dice_after:.3f}: the spleen, segmented from nothing", 2500)
 
+    demo.chapter("export")
     demo.caption("Save it to XNAT: the mask becomes a DICOM-SEG ROI collection on the session", 800)
     demo.click(page.get_by_role("button", name="Export", exact=True).first)
     page.locator("input[value='spleen']").wait_for()
@@ -373,6 +388,7 @@ def steps(page: Page, demo: Demo, api, before: set[str], plan: dict):
 
     stopped = time.time() * 1000
     page.screencast.stop()
+    demo.marks.append(("end", stopped))
     return assessor, nifti, stopped, frames
 
 

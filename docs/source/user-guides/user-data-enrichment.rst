@@ -8,6 +8,14 @@ Data Enrichment
 
 *Data enrichment* is the stage where a model developer adds whatever their app needs on top of the imaging data FLIP has pulled into each Trust's XNAT. Trust :term:`PACS` supply images only, so anything the app expects alongside them — segmentation masks, ROI annotations, contours — has to be added at this stage.
 
+Labels that have to be drawn on the image (detection boxes, segmentation masks) can be made with AI
+assistance in the XNAT viewer itself; see :ref:`monai-label-labelling`.
+
+.. toctree::
+   :maxdepth: 1
+
+   data-enrichment/monai-label
+
 Enrichment happens **once per project**, inside XNAT. It is independent of which federated learning backend the project uses — both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read the same enriched data.
 
 .. _enrichment-do-i-need-it:
@@ -73,6 +81,8 @@ For the standard NIfTI workflow that means:
 The apps rely on that filename pairing directly. The spleen tutorials, for example, find each label by taking the image path and substituting ``/input_`` with ``/label_``. Deriving the label name *from the image already in XNAT* — rather than assuming it — is what keeps the pair matched whatever the conversion produced.
 
 .. warning:: Do not upload an enrichment file under the image's own name. It will overwrite the imaging data for that scan.
+
+.. note:: Masks saved from the XNAT viewer (for example with MONAI Label) are the exception: they live in ROI collections, not in the scan's ``NIFTI`` resource, and an app reads them with ``ResourceType.SEGMENTATION``. See :ref:`monai-label-labelling`.
 
 .. _enrichment-manual:
 

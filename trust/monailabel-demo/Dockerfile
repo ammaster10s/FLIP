@@ -17,5 +17,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
     && pip install --no-cache-dir --break-system-packages playwright==1.63.0 \
        numpy==2.5.4 scipy==1.18.1 simpleitk==2.5.6
 WORKDIR /demo
-COPY choose_clicks.py record_demo.py ./
+COPY choose_clicks.py make_gifs.py record_demo.py ./
 ENTRYPOINT ["python3", "/demo/record_demo.py"]

@@ -13,7 +13,7 @@
 # the browser runs in a container on the host network, so it reaches XNAT and MONAI Label exactly
 # as a clinician's browser on that host would.
 
-.PHONY: demo-video
+.PHONY: demo-video demo-gifs
 
 include ../../deploy/env_mode.mk
 
@@ -35,3 +35,8 @@ demo-video: ## Record the demo on XNAT_EXPERIMENT=<session ID> (one CT scan) of 
 	  -e XNAT_URL=http://127.0.0.1:$(XNAT_WEB_PORT) -e XNAT_USER=$(XNAT_ADMIN_USER) -e XNAT_PASSWORD \
 	  -e XNAT_EXPERIMENT=$(XNAT_EXPERIMENT) -e MONAI_LABEL_URL=http://127.0.0.1:$(or $(MONAI_LABEL_PORT),8030) \
 	  -e DEMO_VIDEO_SCALE=$(or $(DEMO_VIDEO_SCALE),2) -v $(OUT_DIR):/out $(IMAGE)
+
+demo-gifs: ## Cut the docs GIFs (one per chapter) out of the last recording into $(OUT_DIR)/gifs/
+	@[ -f "$(OUT_DIR)/result.json" ] || { echo "❌ no recording in $(OUT_DIR): run demo-video first"; exit 1; }
+	docker build -q -t $(IMAGE) .
+	docker run --rm --user $$(id -u):$$(id -g) -v $(OUT_DIR):/out --entrypoint python3 $(IMAGE) /demo/make_gifs.py
