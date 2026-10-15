@@ -697,7 +697,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## tag (builds are path-filtered — a merge that didn't touch a service publishes no new
 	## tag for it) aborts with nothing deployed. Non-ghcr.io registries skip the manifest
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
-	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.9
+	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
