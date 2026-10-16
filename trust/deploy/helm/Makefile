@@ -365,6 +365,10 @@ clean: ## Clean up rendered output
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
+	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
+	@# wait return at once, without running the configuration again.
+	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \

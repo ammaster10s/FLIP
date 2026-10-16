@@ -256,8 +256,8 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 1. Fetch the Cognito user pool ID from Terraform (or read it from the AWS Console):
 
    ```bash
-   # From the stack the admin belongs to — prod/stag root or dev root
-   cd deploy/providers/AWS         # or deploy/providers/AWS/dev
+   # From the stag/prod root (development signs in through Keycloak, not Cognito)
+   cd deploy/providers/AWS
    tofu output -raw cognito_user_pool_id
    ```
 

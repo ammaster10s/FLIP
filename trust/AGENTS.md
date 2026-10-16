@@ -47,7 +47,7 @@ that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kit
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_FL_TAG`,
-`NLB_SUBDOMAIN`, `FL_SERVER_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
+`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
 whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (fl-server uploads aggregated
 results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
@@ -149,6 +149,7 @@ make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=�
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
 make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on NVFLARE fl-governance-init and the fl-clients), then checks the service logs the document's digest; touches no data
+make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch, in imaging-api's container; report only without LAUNCH (deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
 
 ## Environment
@@ -176,8 +177,12 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
-  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs` (a re-run
+  restores that flag, and `queryable`, on a registration that lacks them). imaging-api has
+  no PACS id setting: its C-FINDs send no `pacsId`, so DQR queries that default PACS itself, and each
+  import — DQR's import does not default — reads the default PACS's id from
+  `GET /xapi/pacs?queryable=true`, failing (rather than guessing an id) when none or more than one is
+  flagged.
 - `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
   negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
   support it rejects the association outright. Validated as literally `true` or `false` before it
@@ -185,7 +190,10 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread. The kit owns
+  the schedule: `configure-xnat.sh` converges DQR's onto it on every run, so a change made in XNAT's
+  UI is reverted (FLIP#1455), and a window that crosses midnight is refused (FLIP#1465). Detail in
+  [`trust/xnat/README.md`](xnat/README.md#pacs-configuration).
 
 ## Trust-internal Service Authentication
 

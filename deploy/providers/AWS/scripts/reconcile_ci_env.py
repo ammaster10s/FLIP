@@ -391,7 +391,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
         "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
-        "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB": fl_api_env.get("JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB", ""),
         "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
         # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
         "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),

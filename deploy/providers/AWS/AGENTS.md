@@ -36,7 +36,6 @@
 | ------- | ------------- | --------- |
 | `lza-stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
 | `lza-prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
-| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 The `aws-stag` / `aws-prod` GitHub environments the CI workflows read carry `TF_HUB=stag` /
 `TF_HUB=prod` (`README`, "Repointing CI at the LZA accounts"). The Makefile's guard expects
@@ -270,7 +269,7 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - `aws ecs describe-tasks` returns `containers` as an array, and the **GuardDuty Runtime Monitoring sidecar** (`aws-guardduty-agent-*`) usually sorts first. Querying `containers[0].imageDigest` reads the *agent's* digest, not the FL container's.
 - The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
-- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md).
+- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md).
 - The same applies to exit codes. The two one-shot tasks `terraform apply` runs (`provision_efs_certs`, `flower_register_supernode_keys`) read `containers[?name=='<container>'].exitCode`, where the name comes from the task definition. They treat a missing code as a failure (FLIP#1447). `tests/test_ecs_task_exit_code.py` fails on any `containers[0]` in a `.tf` file.
 
 ## State Management
