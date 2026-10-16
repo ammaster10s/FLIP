@@ -155,6 +155,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
         FileNotFoundError: if the application path is not found, an error is raised.
+        ValueError: if the bundle has no ``app`` folder, or its meta.json holds something FLIP refuses.
     Returns:
         dict[str, Any]: a success message naming where the application was uploaded, the GPU count written into
         meta.json (``resources``) and where it came from (``resources_source``: submission, meta.json or default;
@@ -167,7 +168,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         └─ <model_id>/                      # job_dir
             ├─ meta.json                    # REQUIRED if >1 app folder (app + app_siteX etc)
             │                               # The job's own (template or researcher), checked, then rewritten
-            │                               # with the run's sites when there is an "app" folder (FLIP#70).
+            │                               # with the run's sites and GPU count (FLIP#70).
             │                               # If you upload multiple app folders, you must include this at root.
             │
             ├─ app/                         # default application folder (always created)
@@ -270,6 +271,14 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     logger.info("Successfully downloaded application, updating application config...")
 
+    # FLIP deploys "app" to the server and every selected trust (configure_meta). A job cannot name the trusts'
+    # sites, so app_* variants alone leave nothing to deploy, and the job's GPU request would go unwritten.
+    if "app" not in app_folder_names:
+        raise ValueError(
+            f"The application has no app/ folder (found {sorted(app_folder_names)}). FLIP deploys app/ to the "
+            "server and every selected trust."
+        )
+
     # Require meta.json if more than one app folder is present
     logger.debug(f"App folder names identified: {app_folder_names}")
     if len(app_folder_names) > 1:
@@ -353,13 +362,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             # The hub's model id, for FLIP's components on the FL server (FLIP#70).
             configure_flip_model_id(app_folder_path, model_id)
 
-            if app_folder_name == "app":
-                # The job's meta.json, with the run's sites and GPU count.
-                configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
-
         except Exception as e:
             logger.error(f"Error occurred while configuring application folder {app_folder_name}: {e}")
             raise e
+
+    # The job's meta.json, with the run's sites and GPU count: job-level, so written once.
+    configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
 
     response = {
         "message": f"Application uploaded successfully to: {job_dir}",

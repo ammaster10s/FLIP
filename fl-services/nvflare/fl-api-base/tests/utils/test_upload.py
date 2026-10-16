@@ -456,15 +456,15 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
 # ── the job's meta.json and the model id (FLIP#70) ──────────────────────────────────
 
 
-def _assemble(tmp_path, monkeypatch, meta=None, resources=None, default_gpus=0):
+def _assemble(tmp_path, monkeypatch, meta=None, resources=None, default_gpus=0, app="app"):
     """Run upload_application end to end on real files: a minimal app, plus the job's meta.json if given."""
     import fl_api.utils.upload as upload_module
 
     base = f"https://test.local/bundles/{TEST_MODEL_ID}"
     files = {
-        "app/config/config_fed_server.json": {"workflows": [], "components": []},
-        "app/config/config_fed_client.json": {"executors": []},
-        "app/custom/config.json": {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 2, "FLIP_MODEL_ID": "stale"},
+        f"{app}/config/config_fed_server.json": {"workflows": [], "components": []},
+        f"{app}/config/config_fed_client.json": {"executors": []},
+        f"{app}/custom/config.json": {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 2, "FLIP_MODEL_ID": "stale"},
     }
     if meta is not None:
         files["meta.json"] = meta
@@ -553,6 +553,12 @@ def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
 def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="launcher_spec"):
         _assemble(tmp_path, monkeypatch, meta={"launcher_spec": {"default": {"k8s": {"image": "x"}}}})
+
+
+def test_a_job_of_per_site_variants_alone_is_refused(tmp_path, monkeypatch):
+    """FLIP deploys app/ to every selected trust; without it the job's GPU request would never be written."""
+    with pytest.raises(ValueError, match="no app/ folder"):
+        _assemble(tmp_path, monkeypatch, resources=JobResources(num_gpus=1), app="app-trust1")
 
 
 def test_a_run_override_still_uploads_when_the_default_is_misconfigured(tmp_path, monkeypatch):
