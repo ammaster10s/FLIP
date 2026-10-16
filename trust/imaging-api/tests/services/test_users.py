@@ -34,6 +34,7 @@ from imaging_api.services.users import (
 )
 from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT
 
 
 @pytest.fixture
@@ -335,7 +336,7 @@ def test_create_user_success(mock_post, mock_get, mock_list, headers):
     profile = create_user(user_req, headers)
 
     assert profile == User(**_SAMPLE_USER_DICT)
-    mock_get.assert_called_once_with(f"{_XNAT}/xapi/users/profile/alice", headers=headers)
+    mock_get.assert_called_once_with(f"{_XNAT}/xapi/users/profile/alice", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     mock_list.assert_not_called()
 
 
@@ -600,7 +601,7 @@ def _xnat_get(profile_status: int, listing: list[dict] | None = None, listing_st
     """
     paths: list[str] = []
 
-    def get(url, headers=None):
+    def get(url, headers=None, timeout=None):
         path = urlsplit(url).path
         paths.append(path)
         if path == _LISTING_PATH:

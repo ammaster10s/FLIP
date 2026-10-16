@@ -205,15 +205,27 @@ The script is configured automatically during XNAT initialization via ``configur
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist, not a DICOM PS3.15 confidentiality profile. It removes the tags it lists, wherever they occur, and every vendor private tag; any other tag survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is a denylist, not a DICOM PS3.15 confidentiality profile. It removes the tags it lists, wherever they occur, and every vendor private tag; any other tag survives. Four boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
 - **Dates and patient characteristics are kept on purpose.** Study, series and acquisition dates and times, and the patient's age, sex, size and weight, pass through unchanged.
 - **The accession number survives as Study Description.** The script writes the XNAT session label there, and imaging-api names each session after its accession number.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+- **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 
 The script sets ``Patient Identity Removed`` to ``YES`` on every object it processes, and ``De-identification Method`` lists what it keeps. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Closing the remaining gaps to the PS3.15 Basic Profile is tracked in `FLIP#1513 <https://github.com/londonaicentre/FLIP/issues/1513>`__.
 
 Removing every private tag also removes vendor fields that dcm2niix reads for Siemens mosaic images (fMRI, diffusion), for diffusion directions, and for Philips' precise intensity scaling. CT, X-ray and structural MR convert without them.
+
+.. _dicom-defacing:
+
+De-facing (future work)
+^^^^^^^^^^^^^^^^^^^^^^^
+
+FLIP does not de-face images today. A possible future addition (`FLIP#1514 <https://github.com/londonaicentre/FLIP/issues/1514>`__) is an XNAT Container Service command that removes the face from head CT. An XNAT admin would enable it only for the projects that need it, then run it over a project from XNAT's **Run Containers** launcher. Candidate tools:
+
+- **TotalSegmentator's** ``face`` **task** (`TotalSegmentator <https://github.com/wasserth/TotalSegmentator>`__) is built for anonymisation. It is a licensed task: free for non-commercial use, with a commercial licence available from its author.
+- **CTA-DEFACE** (`CTA-DEFACE <https://github.com/neuroAI-HD/CTA-DEFACE>`__) is a deep-learning de-facing model for CT. Its repository publishes no licence.
+- **An openly licensed fallback.** TotalSegmentator's open model finds the brain and skull, then a `quickshear <https://github.com/nipy/quickshear>`__-style plane cut blanks everything in front of and below the brain. It removes more than the face, but carries no licence fees.
 
 Anonymize API Endpoints
 =======================

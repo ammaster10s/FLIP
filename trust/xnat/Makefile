@@ -14,8 +14,8 @@
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
 	create-xnat-network test unit_test local_test
 
-# Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
-# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*) and the
+# Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
+# XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*) and the
 # XNAT stack passwords (XNAT_DATASOURCE_PASSWORD, XNAT_DATASOURCE_ADMIN_PASSWORD,
 # XNAT_ACTIVEMQ_PASSWORD — minted by `make register-trust`) are pulled from the
 # kit file via `-include $(KIT_FILE)` below; non-secret XNAT-internal config
@@ -225,6 +225,9 @@ export XNAT_PATH=$(realpath .)
 ifneq ($(IS_DEPLOYED),)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
 XNAT_PLUGINS_FROM_HOST =
+# A deployed trust pulls XNAT from GHCR like every other image, whatever an older kit or the
+# caller's hub env says: an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
+export DOCKER_REGISTRY := ghcr.io/londonaicentre/
 else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml

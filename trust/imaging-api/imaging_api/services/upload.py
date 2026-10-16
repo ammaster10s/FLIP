@@ -27,7 +27,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
@@ -190,7 +190,7 @@ def create_xnat_scan(
         query={"xsiType": xsi_type},
     )
 
-    response = requests.put(scan_url, headers=headers)
+    response = requests.put(scan_url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
 
     if response.status_code != 200:
         raise Exception(f"Error creating scan: {response.text}")
