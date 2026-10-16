@@ -745,6 +745,9 @@ images ship PyTorch built for CUDA 13. The operator installs the driver itself, 
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
 
+On NVFLARE, `flClient.gpu.count` is also the number of GPUs the client offers its scheduler, so a job that declares
+more than that stays queued on the FL server rather than starting.
+
 ### Autoscaling
 
 ```yaml

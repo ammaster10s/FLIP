@@ -513,6 +513,8 @@ flClient:
       memory: "32Gi"
       cpu: "16"
   shmSize: 8Gi
+  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the chart renders the kit's
+  # local/resources.template.json with it at start. 0 on a CPU-only node.
   gpu:
     enabled: false
     count: 0
