@@ -203,13 +203,25 @@ The script is configured automatically during XNAT initialization via ``configur
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Four boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
 - **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
 - **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+- **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 
 The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
+
+.. _dicom-defacing:
+
+De-facing (future work)
+^^^^^^^^^^^^^^^^^^^^^^^
+
+FLIP does not de-face images today. A possible future addition (`FLIP#1514 <https://github.com/londonaicentre/FLIP/issues/1514>`__) is an XNAT Container Service command that removes the face from head CT. An XNAT admin would enable it only for the projects that need it, then run it over a project from XNAT's **Run Containers** launcher. Candidate tools:
+
+- **TotalSegmentator's** ``face`` **task** (`TotalSegmentator <https://github.com/wasserth/TotalSegmentator>`__) is built for anonymisation. It is a licensed task: free for non-commercial use, with a commercial licence available from its author.
+- **CTA-DEFACE** (`CTA-DEFACE <https://github.com/neuroAI-HD/CTA-DEFACE>`__) is a deep-learning de-facing model for CT. Its repository publishes no licence.
+- **An openly licensed fallback.** TotalSegmentator's open model finds the brain and skull, then a `quickshear <https://github.com/nipy/quickshear>`__-style plane cut blanks everything in front of and below the brain. It removes more than the face, but carries no licence fees.
 
 Anonymize API Endpoints
 =======================
