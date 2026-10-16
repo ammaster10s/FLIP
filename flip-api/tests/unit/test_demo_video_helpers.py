@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the demo-video recorder's credential fallback, app-file listing, tutorial copy and frame timing."""
+"""Unit tests for the demo-video recorder's credential fallback, app-file listing, tutorial copy, frame timing and
+workspace reset."""
 
+import json
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import requests
@@ -23,12 +26,13 @@ from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
 from tests import demo_video
 from tests.demo_recorder import FrameSink
-from tests.demo_segments import strip_licence_header
+from tests.demo_segments import Persona, strip_licence_header
 from tests.demo_video import (
     APPS,
     REPO_ROOT,
     app_files_for,
     check_reused_project_matches_profile,
+    reset_researcher_workspace,
     resolve_ui_credentials,
 )
 from tests.e2e_smoke import TUTORIALS, SmokeFailure, describe_tutorial
@@ -196,3 +200,75 @@ def test_each_frame_is_held_until_the_next_and_the_last_until_the_stop(tmp_path:
         # The concat demuxer only honours the last duration when the last file is repeated.
         "file '000002.jpg'",
     ]
+
+
+RESEARCHER = Persona("flip-demo-researcher@example.com", "pw", role="researcher")
+RESEARCHER_ID = "11111111-1111-1111-1111-111111111111"
+SOMEONE_ELSE = "22222222-2222-2222-2222-222222222222"
+
+
+class FakeHub(requests.Session):
+    """Paged GETs answered from a path→pages table; every DELETE is recorded."""
+
+    def __init__(self, pages: dict[str, list[list[dict]]]) -> None:
+        super().__init__()
+        self.pages = pages
+        self.deleted: list[str] = []
+
+    def paged_get(self, client, path: str, headers) -> requests.Response:  # signature of tests.e2e_smoke._get
+        prefix, _, query = path.partition("&pageNumber=")
+        page = int(query.split("&")[0])
+        response = requests.Response()
+        response.status_code = 200
+        rows = self.pages[prefix]
+        response._content = json.dumps({"data": rows[page - 1], "totalPages": len(rows)}).encode()
+        return response
+
+    def delete(self, url, **kwargs) -> requests.Response:
+        self.deleted.append(str(url).rsplit("/", 1)[-1])
+        response = requests.Response()
+        response.status_code = 204
+        return response
+
+
+def _hub(monkeypatch: pytest.MonkeyPatch, users: list[list[dict]], projects: list[list[dict]]) -> FakeHub:
+    hub = FakeHub({
+        f"/users?search={quote(RESEARCHER.email)}": users,
+        f"/projects?owner={RESEARCHER_ID}": projects,
+    })
+    monkeypatch.setattr(demo_video, "_get", hub.paged_get)
+    return hub
+
+
+def test_workspace_reset_deletes_only_the_demo_researchers_own_projects(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub = _hub(
+        monkeypatch,
+        users=[[{"id": SOMEONE_ELSE, "email": "flip-demo-researcher@example.com.other"}],
+               [{"id": RESEARCHER_ID, "email": "FLIP-Demo-Researcher@example.com"}]],
+        projects=[[{"id": "p1", "ownerId": RESEARCHER_ID}, {"id": "shared", "ownerId": SOMEONE_ELSE}],
+                  [{"id": "p2", "ownerId": RESEARCHER_ID}]],
+    )  # fmt: skip
+
+    assert reset_researcher_workspace(hub, {}, RESEARCHER) == 2
+    assert hub.deleted == ["p1", "p2"]
+
+
+def test_workspace_reset_never_runs_for_the_fallback_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub = _hub(monkeypatch, users=[[]], projects=[[{"id": "admins-project", "ownerId": RESEARCHER_ID}]])
+    fallback = Persona(constants.ADMIN_EMAIL_1, "pw", role="researcher", fallback=True)
+
+    assert reset_researcher_workspace(hub, {}, fallback) == 0
+    assert hub.deleted == []
+
+
+def test_workspace_reset_refuses_an_unknown_demo_researcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub = _hub(monkeypatch, users=[[{"id": SOMEONE_ELSE, "email": "someone@example.com"}]], projects=[[]])
+
+    with pytest.raises(SmokeFailure, match="make demo-users"):
+        reset_researcher_workspace(hub, {}, RESEARCHER)
+    assert hub.deleted == []
+
+
+def test_workspace_reset_is_on_by_default_and_can_be_kept() -> None:
+    assert demo_video.parse_args([]).keep_workspace is False
+    assert demo_video.parse_args(["--keep-workspace"]).keep_workspace is True

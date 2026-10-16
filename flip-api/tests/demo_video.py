@@ -48,6 +48,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from playwright.sync_api import Browser, sync_playwright
@@ -177,6 +178,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="First segment to record; earlier segments must already have their mp4s for assembly",
     )
     parser.add_argument("--skip-xnat", action="store_true", help="Skip the XNAT/OHIF segment")
+    parser.add_argument(
+        "--keep-workspace",
+        action="store_true",
+        help="On a fresh run, keep the demo researcher's earlier projects instead of deleting them first",
+    )
     parser.add_argument("--ui-url", default="http://localhost:44357", help="The dev flip-ui the segments sign in to")
     parser.add_argument(
         "--xnat-url",
@@ -425,6 +431,55 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
+def _paged(client: requests.Session, headers: dict[str, str], path: str, what: str) -> list[dict[str, Any]]:
+    """Every row of a paged hub listing (``path`` already carries its query string)."""
+    rows: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        body = e2e_smoke._ensure_ok(_get(client, f"{path}&pageNumber={page}&pageSize=100", headers), what).json()
+        rows.extend(body.get("data", []))
+        if page >= body.get("totalPages", 1):
+            return rows
+        page += 1
+
+
+def reset_researcher_workspace(client: requests.Session, headers: dict[str, str], researcher: Persona) -> int:
+    """Delete every project the demo researcher owns, so each take opens on the same workspace.
+
+    The demo researcher exists only for the recorder, so anything it owns is left over from an earlier
+    take, and the researcher's project list is the opening shot. Matching on the researcher's own user id
+    keeps other people's projects, including ones shared with the researcher, out of reach. When the
+    researcher fell back to the well-known admin there is no dedicated account, so nothing is deleted.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        researcher (Persona): The researcher the segments sign in as.
+
+    Returns:
+        int: How many projects were deleted.
+
+    Raises:
+        SmokeFailure: When the demo researcher is not a hub user, or a listing or delete fails.
+    """
+    if researcher.fallback:
+        _log("⚠️  No demo researcher: keeping the workspace (the fallback admin's projects are not the recorder's)")
+        return 0
+    email = researcher.email.lower()
+    users = _paged(client, headers, f"/users?search={quote(researcher.email)}", "look up the demo researcher")
+    user_id = next((u["id"] for u in users if str(u.get("email", "")).lower() == email), None)
+    if user_id is None:
+        raise SmokeFailure(f"Demo researcher {researcher.email} is not a hub user — run `make demo-users` first")
+    # The owner filter narrows the listing; the id check is what guarantees nobody else's project goes.
+    listed = _paged(client, headers, f"/projects?owner={user_id}", "list the demo researcher's projects")
+    owned = [p for p in listed if str(p.get("ownerId")) == str(user_id)]
+    for project in owned:
+        resp = client.delete(f"{constants.BASE_URL}/projects/{project['id']}", headers=headers, timeout=60)
+        e2e_smoke._ensure_ok(resp, f"delete project {project['id']}")
+    _log(f"🧹 Workspace reset: deleted {len(owned)} earlier project(s) owned by {researcher.email}")
+    return len(owned)
+
+
 def check_reused_project_matches_profile(
     client: requests.Session, headers: dict[str, str], project_id: str, app: str, profile: dict[str, Any]
 ) -> None:
@@ -506,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
             old.unlink()
         STATE_FILE.unlink(missing_ok=True)
         state: dict[str, str] = {}
+        if not args.keep_workspace:
+            reset_researcher_workspace(client, headers, researcher)
     else:
         state = read_state()
         if args.project_id:
