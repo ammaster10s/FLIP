@@ -82,18 +82,19 @@ def test_dcm2niix_script_deletes_no_event_subscription() -> None:
     )
 
 
-def test_dcm2niix_script_does_not_enumerate_subscriptions_for_deletion() -> None:
-    """Belt and braces: it should not even fetch the subscription list.
+def test_dcm2niix_script_sends_no_delete_at_all() -> None:
+    """Belt and braces: no DELETE of any kind, however its URL is built.
 
-    The removed cleanup started by GETting ``/xapi/events/subscriptions``. Nothing
-    else in this script has any reason to, so a reappearing read is the first step
-    of a reappearing delete and worth catching on its own.
+    The script reads the subscription list to warn about invalid triggers (FLIP#1451), and
+    updates the dcm2niix command in place rather than deleting and re-registering it, so it has
+    no call for a DELETE anywhere. A delete whose URL is assembled in a variable would slip past
+    the line-based guard above; this one catches the method itself.
     """
     code = _strip_comments(CONFIGURE_DCM2NIIX.read_text())
 
-    assert "xapi/events/subscriptions" not in code, (
-        "configure-dcm2niix.sh reads the event-subscription list again. This script "
-        "creates and enables a command; it has no business enumerating subscriptions."
+    assert not _SUBSCRIPTION_DELETE.search(code), (
+        "configure-dcm2niix.sh sends a DELETE again. It updates the dcm2niix command in place "
+        "and only reads subscriptions; a delete there can remove a project's live trigger."
     )
 
 
