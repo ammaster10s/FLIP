@@ -194,11 +194,10 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
-      # Per-job GPU resource spec the fl-api stamps onto an NVFLARE job's meta.
+      # GPUs the fl-api writes into an NVFLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
-      # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
-      JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
-      JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+      # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
+      JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
       # Both names for one release (FLIP#1291): an fl-api image from before the
