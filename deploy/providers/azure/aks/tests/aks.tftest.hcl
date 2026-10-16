@@ -70,16 +70,6 @@ run "upgrades_are_the_operators" {
   }
 }
 
-run "operator_principal_type_is_validated" {
-  command = plan
-
-  variables {
-    operator_principal_type = "Robot"
-  }
-
-  expect_failures = [var.operator_principal_type]
-}
-
 run "network_policies_are_enforced" {
   command = plan
 

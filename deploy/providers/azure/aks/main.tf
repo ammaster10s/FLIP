@@ -113,5 +113,5 @@ resource "azurerm_role_assignment" "operator_cluster_admin" {
   scope                = azurerm_kubernetes_cluster.this.id
   role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
   principal_id         = data.azurerm_client_config.current.object_id
-  principal_type       = var.operator_principal_type
+  principal_type       = "User" # applied by the operator's own az login
 }
