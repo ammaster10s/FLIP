@@ -14,11 +14,9 @@
 
 Production and staging share one edge NLB address: ``:8002`` forwards to production's FL server and
 ``:8003`` to staging's FL server, which listens on 8002. A client's ``connect_to.port`` (NVFLARE falls
-back to the server's ``fed_learn_port`` when it is absent) therefore chooses the estate. The published
-staging kits came from an edited copy of the template; re-provisioning from the tree would have minted
-kits that reach production's listener and fail its TLS handshake.
+back to the server's ``fed_learn_port`` when it is absent) therefore chooses the estate.
 
-Flower has no minted kit, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``.
+Flower's kit carries no address, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``.
 
 Stdlib-only and executable as a plain script, like the rest of ``scripts/tests``.
 """

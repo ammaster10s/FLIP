@@ -68,7 +68,9 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
 
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
 # scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip-api/src/flip_api/scripts/register_trust.py.
+# flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
+# FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
+# every existing site's upgrade checklist.
 HUB_SHARED_KEYS: tuple[str, ...] = (
     "AES_KEY_BASE64",
     "CENTRAL_HUB_API_URL",
@@ -81,8 +83,6 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )
-# FL_EDGE_PORT is left out on purpose: a kit synced before FLIP#1365 lacks it, and every reader
-# falls back to FL_SERVER_PORT, so requiring it would fail every existing site's upgrade checklist.
 KIT_CRED_KEYS: tuple[str, ...] = (
     "TRUST_API_KEY",
     "TRUST_INTERNAL_SERVICE_KEY",

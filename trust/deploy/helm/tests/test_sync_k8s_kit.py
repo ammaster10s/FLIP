@@ -103,6 +103,18 @@ def test_render_override_points_a_flower_supernode_at_the_edge():
     assert "superlink" not in nvflare
 
 
+def test_render_override_blank_edge_port_falls_back_to_server_port():
+    """A blank FL_EDGE_PORT line in the kit must not drop the egress rule."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "FL_EDGE_PORT": "  "}, "Trust_K8s", "eu-west-2")
+    assert "- port: 8002" in out
+
+
+def test_render_override_no_superlink_without_nlb_host():
+    """No NLB_SUBDOMAIN (a dev kit's commented hub-shared block) emits no Flower superlink."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "NLB_SUBDOMAIN"} | {"FL_BACKEND": "flower"}
+    assert "superlink" not in sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+
+
 def test_render_override_omits_block_without_fl_port():
     """No FL_SERVER_PORT in the kit ⇒ no egress override emitted (the chart
     default egress allowlist from values.yaml applies unchanged)."""

@@ -1167,8 +1167,8 @@ dial is set separately (FLIP#1365):
 
 - **NVFLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
   kit's `fed_client.json`.
-- **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.lza-stag`, which `register-trust` /
-  `sync-trust-kit` copy into each kit. It drives the Flower `--superlink`, the Kubernetes egress rule and the
+- **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.lza-stag`, which `sync-trust-kit` copies
+  into each kit (and refuses to default on `lza-stag`). It drives the Flower `--superlink`, the Kubernetes egress rule and the
   Helm Flower superlink; unset, it falls back to `FL_SERVER_PORT`, so production needs nothing.
 
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a

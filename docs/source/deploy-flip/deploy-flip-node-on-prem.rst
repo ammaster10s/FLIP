@@ -190,10 +190,10 @@ environment of the one-off ``flip-api`` Fargate task
 (``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
 comprehension that silently skips absent keys), and that task definition
 (``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
-``FL_BACKEND`` of the ten: ``AES_KEY_BASE64`` is read from Secrets Manager at
+``FL_BACKEND`` of the eleven: ``AES_KEY_BASE64`` is read from Secrets Manager at
 use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
-image tags, the two kit dates, ``NLB_SUBDOMAIN`` and
-``FL_SERVER_PORT`` are not in the task definition at all. Those eight stay at their
+image tags, the two kit dates, ``NLB_SUBDOMAIN``, ``FL_SERVER_PORT`` and
+``FL_EDGE_PORT`` are not in the task definition at all. Those nine stay at their
 placeholder until the next step. The hub stores only SHA-256 hashes of the
 credentials and cannot re-emit them, so the credentials half is write-once —
 re-register to rotate.
@@ -451,7 +451,7 @@ Troubleshooting
 |                                  | Check ``trust-api`` logs for polling errors.               |
 +----------------------------------+------------------------------------------------------------+
 | ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |
-|                                  | Host/router firewall blocking outbound on port 8002?       |
+|                                  | Firewall blocking outbound 8002 (8003 on LZA staging)?     |
 +----------------------------------+------------------------------------------------------------+
 | Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
 |                                  | (443) and the FL gRPC port (``FL_EDGE_PORT``, def. 8002).  |

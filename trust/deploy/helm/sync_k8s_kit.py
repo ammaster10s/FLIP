@@ -854,7 +854,7 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
             "      protocol: TCP",
             "    - port: 443",
             "      protocol: TCP",
-            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_EDGE_PORT)",
+            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL dial port)",
             "      protocol: TCP",
         ]
 

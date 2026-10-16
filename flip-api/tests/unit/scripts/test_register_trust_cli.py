@@ -335,13 +335,16 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     assert kit["hub_shared"] == env
 
 
-def test_hub_shared_edge_port_defaults_to_the_server_port(monkeypatch, session):
-    """An env without FL_EDGE_PORT hands trusts FL_SERVER_PORT, so prod and dev kits are unchanged."""
+@pytest.mark.parametrize("edge_port", [None, ""])
+def test_hub_shared_edge_port_defaults_to_the_server_port(monkeypatch, session, edge_port):
+    """An unset or empty FL_EDGE_PORT hands trusts FL_SERVER_PORT, so prod and dev kits dial as before."""
     monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
     session.exec.return_value.first.return_value = None
     for key in HUB_SHARED_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("FL_SERVER_PORT", "8002")
+    if edge_port is not None:
+        monkeypatch.setenv("FL_EDGE_PORT", edge_port)
 
     kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
 
