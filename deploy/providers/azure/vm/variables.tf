@@ -56,6 +56,17 @@ variable "existing_subnet_id" {
   default     = ""
 }
 
+variable "image_version" {
+  description = "Ubuntu 24.04 image version (az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all). \"latest\" follows Canonical's current image, as the AWS trust follows its stable AMI; pin one to rebuild a node bit-for-bit. Changing it replaces the VM."
+  type        = string
+  default     = "latest"
+
+  validation {
+    condition     = can(regex("^(latest|[0-9]+\\.[0-9]+\\.[0-9]+)$", var.image_version))
+    error_message = "image_version must be \"latest\" or a version like 24.04.202510010."
+  }
+}
+
 variable "vm_size" {
   description = "VM size; the default fits the 4-vCPU trial quota."
   type        = string
