@@ -57,7 +57,7 @@ def test_plan_passes_the_looked_up_ip_to_terraform(tmp_path):
     assert _terraform(calls, "plan").endswith(" -var operator_ip=203.0.113.7")
 
 
-@pytest.mark.parametrize("answer", [*HOSTILE, "<html>busy</html>", ""])
+@pytest.mark.parametrize("answer", [*HOSTILE, "<html>busy</html>", "", "999.1.1.1", "203.0.113.256", "1.2.3"])
 def test_an_answer_that_is_not_one_ipv4_address_never_reaches_the_shell(tmp_path, answer):
     calls = _plan(tmp_path, [answer.replace("PWNED", str(tmp_path / "PWNED"))])
 
