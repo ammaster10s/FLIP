@@ -71,6 +71,12 @@ PHI_VALUES_THAT_MUST_NOT_LEAK = [
     "PHI history of test",
     "OLD-MRN-99999",
     "SEQ-OLD-MRN-PHI",
+    "SR^NESTED^PHI",
+    "NESTED-ACC-PHI",
+    "NESTED-PRIV-PHI",
+    "ORIG^NAME^PHI",
+    "ORIG-MRN-PHI",
+    "PRIV-MRN-PHI",
 ]
 
 ORIGINAL_UID_VALUES = [
@@ -176,11 +182,19 @@ def test_xnat_session_label_preserved_for_linkage(anonymized: Dataset, xnat_labe
 
 def test_deidentification_flags_set(anonymized: Dataset) -> None:
     assert anonymized[0x00120062].value == "YES", "Patient Identity Removed must be 'YES'"
-    assert "FLIP" in anonymized[0x00120063].value, "De-identification Method must reference FLIP"
+    method = anonymized[0x00120063]
+    values = list(method.value) if method.VM > 1 else [method.value]
+    assert "FLIP" in values[0], "De-identification Method must reference FLIP"
+    assert all(len(v) <= 64 for v in values), f"each De-identification Method value is an LO, max 64 chars: {values}"
+
+
+def test_no_private_tags_remain(anonymized: Dataset) -> None:
+    private = [str(elem.tag) for elem in anonymized.iterall() if elem.tag.is_private]
+    assert not private, f"private tags survived anonymization: {private}"
 
 
 def test_no_phi_string_remains_anywhere(anonymized: Dataset) -> None:
-    """Belt-and-braces: walk every top-level data element and assert no original PHI value survives."""
+    """Belt-and-braces: walk every data element, nested ones included, and assert no original PHI value survives."""
     leaked: list[tuple[str, str]] = []
     for elem in anonymized.iterall():
         if elem.VR in ("OB", "OW", "OF", "OD", "UN", "SQ"):

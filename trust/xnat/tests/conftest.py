@@ -110,10 +110,32 @@ def _phi_study() -> Dataset:
     ds.StudyInstanceUID = "1.2.3.4.5.6.7.8.9.10"
     ds.SeriesInstanceUID = "1.2.3.4.5.6.7.8.9.11"
 
-    # Optional: a structured-report-style Person Name (we don't put it in a
-    # sequence; the rule targets the top-level tag). DicomEdit traversal of
-    # nested sequences is out of scope for this lightweight interpreter.
+    # A structured-report Person Name, at the top level and where real reports
+    # carry it: inside Content Sequence
     ds.add_new(0x0040A123, "PN", "PERSON^IN^SR")
+    sr_item = Dataset()
+    sr_item.ValueType = "PNAME"
+    sr_item.PersonName = "SR^NESTED^PHI"
+    ds.ContentSequence = [sr_item]
+
+    # Nested copies of identifiers the script removes or replaces at the top level
+    request = Dataset()
+    request.AccessionNumber = "NESTED-ACC-PHI"
+    request.add_new(0x00110010, "LO", "ACME PRIVATE")
+    request.add_new(0x00111001, "LO", "NESTED-PRIV-PHI")
+    ds.RequestAttributesSequence = [request]
+    # What a PACS keeps after overwriting values, two sequence levels down
+    original = Dataset()
+    original.PatientName = "ORIG^NAME^PHI"
+    original.PatientID = "ORIG-MRN-PHI"
+    original.PatientBirthDate = "19800101"
+    modification = Dataset()
+    modification.ModifiedAttributesSequence = [original]
+    ds.OriginalAttributesSequence = [modification]
+
+    # Vendor private block
+    ds.add_new(0x00090010, "LO", "GEMS_IDEN_01")
+    ds.add_new(0x00091002, "LO", "PRIV-MRN-PHI")
 
     return ds
 

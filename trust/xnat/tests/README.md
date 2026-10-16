@@ -71,7 +71,13 @@ Run from `trust/xnat/tests/` or via `make -C trust/xnat/tests unit_test`.
 If you add a tag to `anon_script.das`, also add it to the
 `PHI_TAGS_REQUIRED` allowlist in `test_anon_script_static.py` (if it is
 a tag FLIP guarantees handling for) and to the synthetic study fixture
-in `conftest.py`.
+in `conftest.py`. Write removals as `- */(gggg,eeee)`: a bare tag matches the
+top level only, and the static tests fail on one.
+
+`anon_engine.py` is a stand-in for DicomEdit, so it only proves what it
+models. Its `*/`, `+/`, `removeAllPrivateTags` and `\\` semantics were checked
+against DicomEdit 6.9.0 from the `xnat-web` image (FLIP#1513); check any new
+construct the same way before relying on it.
 
 If you change what counts as a weak XNAT password, change it in **all four**
 places and update `CANONICAL_WEAK_VALUES` in `test_password_guards.py` — the

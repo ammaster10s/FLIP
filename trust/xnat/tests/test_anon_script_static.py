@@ -25,6 +25,7 @@ from anon_engine import (
     AssignLiteralRule,
     AssignVariableRule,
     HashUidRule,
+    RemoveAllPrivateRule,
     RemoveRule,
     Rule,
 )
@@ -89,7 +90,7 @@ def _final_disposition(rules: list[Rule], tag: int) -> str | None:
     """
     last: Rule | None = None
     for rule in rules:
-        if isinstance(rule, RemoveRule) and rule.tag == tag:
+        if isinstance(rule, RemoveRule) and rule.tag == tag and rule.scope != "nested":
             last = rule
         elif isinstance(rule, (AssignLiteralRule, AssignVariableRule, HashUidRule)) and rule.tag == tag:
             last = rule
@@ -134,6 +135,22 @@ def test_deidentification_method_documented(anon_rules: list[Rule]) -> None:
     assert "FLIP" in rules_for_tag[-1].value, (
         f"De-identification Method should reference FLIP, got {rules_for_tag[-1].value!r}"
     )
+
+
+def test_every_removal_reaches_nested_sequences(anon_rules: list[Rule]) -> None:
+    """A bare ``- (gggg,eeee)`` matches the top level only, leaving every nested copy (FLIP#1513)."""
+    top_only = [r.line_no for r in anon_rules if isinstance(r, RemoveRule) and r.scope == "top"]
+    assert not top_only, f"removal rules on lines {top_only} miss nested copies; write `- */(gggg,eeee)`"
+
+
+def test_nested_copies_of_replaced_identifiers_are_removed(anon_rules: list[Rule]) -> None:
+    """Patient Name and ID are replaced at the top level, so their nested copies need a rule of their own."""
+    nested = {r.tag for r in anon_rules if isinstance(r, RemoveRule) and r.scope == "nested"}
+    assert {0x00100010, 0x00100020} <= nested
+
+
+def test_private_tags_are_removed(anon_rules: list[Rule]) -> None:
+    assert any(isinstance(r, RemoveAllPrivateRule) for r in anon_rules), "removeAllPrivateTags is missing"
 
 
 def test_no_orphan_rules(anon_rules: list[Rule]) -> None:

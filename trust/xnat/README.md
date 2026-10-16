@@ -398,7 +398,7 @@ This can also be done manually from XNAT:
 
 ## DICOM Anonymization
 
-XNAT includes a built-in anonymization engine that processes incoming DICOM data to remove Protected Health Information (PHI) from DICOM headers. FLIP replaces the default XNAT anonymization script with a comprehensive site-wide script (`anon_script.das`) that removes patient identifiers, institutional identifiers, physician/operator identifiers, and pseudonymizes UIDs (including Patient ID, Patient Name and SOP/Study/Series Instance UIDs).
+XNAT includes a built-in anonymization engine that processes incoming DICOM data to remove Protected Health Information (PHI) from DICOM headers. FLIP replaces the default XNAT anonymization script with a site-wide script (`anon_script.das`) that removes patient identifiers, institutional identifiers and physician/operator identifiers wherever they occur, removes every vendor private tag, and pseudonymizes UIDs (including Patient ID, Patient Name and SOP/Study/Series Instance UIDs). It is a denylist, not a DICOM PS3.15 profile: dates and patient characteristics are kept on purpose, and its limits are listed in the [XNAT component docs](../../docs/source/components/component-xnat.rst) (FLIP#1513).
 
 The anonymization script is configured automatically during XNAT initialization via `configure-xnat.sh`. It is applied to all incoming DICOM data when the SCP receiver has `anonymizationEnabled` set to `true`.
 

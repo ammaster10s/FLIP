@@ -19,10 +19,13 @@ representative synthetic DICOM datasets.
 Supported grammar (line-oriented; comments via `//`, blank lines ignored):
 
     version "<string>"                       # ignored; documents the file
-    (gggg,eeee) := "<literal>"               # assign string literal
+    (gggg,eeee) := "<literal>"               # assign string literal; \\ separates values
     (gggg,eeee) := <variable>                # assign value of project|subject|session
     (gggg,eeee) := hashUID[(gggg,eeee)]      # replace with deterministic hash UID
-    - (gggg,eeee)                            # remove tag
+    - (gggg,eeee)                            # remove tag at the top level
+    - */(gggg,eeee)                          # remove tag at any depth
+    - +/(gggg,eeee)                          # remove tag inside sequences only
+    removeAllPrivateTags                     # remove private tags at any depth
 
 Anything else raises ``UnsupportedRuleError`` so unexpected new syntax in the
 .das file fails loudly in CI rather than being silently skipped.
@@ -41,6 +44,8 @@ from pydicom.dataset import Dataset
 
 # (gggg,eeee) - case insensitive, exactly 4 hex digits each
 _TAG_RE = re.compile(r"\(\s*([0-9A-Fa-f]{4})\s*,\s*([0-9A-Fa-f]{4})\s*\)")
+# Optional sequence wildcard before a removed tag: `*/` any depth, `+/` nested only
+_REMOVE_RE = re.compile(r"(?:([*+])\s*/\s*)?" + _TAG_RE.pattern)
 _VARIABLE_NAMES = frozenset({"project", "subject", "session"})
 _HASH_UID_RE = re.compile(r"hashUID\[\s*" + _TAG_RE.pattern + r"\s*\]")
 _LITERAL_RE = re.compile(r'"([^"]*)"')
@@ -54,9 +59,19 @@ def _parse_tag(group_hex: str, element_hex: str) -> int:
     return (int(group_hex, 16) << 16) | int(element_hex, 16)
 
 
+Scope = Literal["top", "any", "nested"]
+_SCOPES: dict[str | None, Scope] = {None: "top", "*": "any", "+": "nested"}
+
+
 @dataclass(frozen=True)
 class RemoveRule:
     tag: int
+    line_no: int
+    scope: Scope = "top"
+
+
+@dataclass(frozen=True)
+class RemoveAllPrivateRule:
     line_no: int
 
 
@@ -81,7 +96,7 @@ class HashUidRule:
     line_no: int
 
 
-Rule = Union[RemoveRule, AssignLiteralRule, AssignVariableRule, HashUidRule]
+Rule = Union[RemoveRule, RemoveAllPrivateRule, AssignLiteralRule, AssignVariableRule, HashUidRule]
 
 
 def _strip_comment(line: str) -> str:
@@ -107,12 +122,16 @@ def parse_script(path: Path) -> list[Rule]:
 
 
 def _parse_line(body: str, line_no: int) -> Rule:
+    if body == "removeAllPrivateTags":
+        return RemoveAllPrivateRule(line_no=line_no)
+
     if body.startswith("-"):
         rest = body[1:].strip()
-        match = _TAG_RE.fullmatch(rest)
+        match = _REMOVE_RE.fullmatch(rest)
         if not match:
             raise UnsupportedRuleError(f"line {line_no}: cannot parse remove rule: {body!r}")
-        return RemoveRule(tag=_parse_tag(*match.groups()), line_no=line_no)
+        wildcard, group_hex, element_hex = match.groups()
+        return RemoveRule(tag=_parse_tag(group_hex, element_hex), line_no=line_no, scope=_SCOPES[wildcard])
 
     lhs_match = _TAG_RE.match(body)
     if not lhs_match:
@@ -126,7 +145,9 @@ def _parse_line(body: str, line_no: int) -> Rule:
 
     literal_match = _LITERAL_RE.fullmatch(rhs)
     if literal_match:
-        return AssignLiteralRule(tag=target_tag, value=literal_match.group(1), line_no=line_no)
+        # DicomEdit reads `\\` as one backslash, which DICOM uses to separate values
+        value = literal_match.group(1).replace("\\\\", "\\")
+        return AssignLiteralRule(tag=target_tag, value=value, line_no=line_no)
 
     hash_match = _HASH_UID_RE.fullmatch(rhs)
     if hash_match:
@@ -180,8 +201,11 @@ def apply_rules(dataset: Dataset, rules: Iterable[Rule], labels: XnatLabels) -> 
     """
     for rule in rules:
         if isinstance(rule, RemoveRule):
-            if rule.tag in dataset:
-                del dataset[rule.tag]
+            for ds in _datasets(dataset, rule.scope):
+                if rule.tag in ds:
+                    del ds[rule.tag]
+        elif isinstance(rule, RemoveAllPrivateRule):
+            dataset.remove_private_tags()  # walks into sequences
         elif isinstance(rule, AssignLiteralRule):
             _assign(dataset, rule.tag, rule.value)
         elif isinstance(rule, AssignVariableRule):
@@ -193,6 +217,22 @@ def apply_rules(dataset: Dataset, rules: Iterable[Rule], labels: XnatLabels) -> 
         else:  # pragma: no cover - exhaustive over Rule union
             raise UnsupportedRuleError(f"unhandled rule type: {type(rule).__name__}")
     return dataset
+
+
+def _nested(dataset: Dataset) -> list[Dataset]:
+    """Every sequence item below ``dataset``, at any depth."""
+    items = [item for elem in dataset if elem.VR == "SQ" for item in elem.value]
+    return [ds for item in items for ds in (item, *_nested(item))]
+
+
+def _datasets(dataset: Dataset, scope: Scope) -> list[Dataset]:
+    match scope:
+        case "top":
+            return [dataset]
+        case "nested":
+            return _nested(dataset)
+        case "any":
+            return [dataset, *_nested(dataset)]
 
 
 def _assign(dataset: Dataset, tag: int, value: str) -> None:

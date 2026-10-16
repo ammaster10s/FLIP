@@ -79,7 +79,7 @@ performs the retrieval, driven over REST by the imaging API:
 4. The PACS **C-STOREs** the study back to XNAT's DICOM SCP receiver, where the site-wide
    anonymisation script runs on receipt, before the session is archived — see
    :ref:`DICOM Anonymization <dicom-anonymization>`. That script is a denylist, and its limits
-   (vendor private tags, unshifted dates, burned-in annotation) are stated there; read them before
+   (kept dates, the accession number, burned-in annotation) are stated there; read them before
    connecting a real PACS, since until now the script has only seen synthetic data.
 
 Only accession numbers belonging to an approved project cohort are ever requested. There is no
