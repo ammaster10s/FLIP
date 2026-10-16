@@ -20,7 +20,7 @@ from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 # Host-less "set your own password" path a newly created XNAT user follows. It is deliberately
 # host-less: XNAT is only reachable from inside the trust enclave, so the hub emails this path and
@@ -152,7 +152,7 @@ def get_xnat_user_profile(username: str, headers: dict[str, str]) -> User:
         # An empty or dot-segment name cannot be an XNAT account.
         raise NotFoundError("User not found by username")
 
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     if response.status_code == 404:
         raise NotFoundError("User not found by username")
     if response.status_code != 200:
