@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the demo project seeder's --states subset selection (select_entries) and --member access."""
+"""Unit tests for the demo project seeder's --states subset selection (select_entries) and catalogue ownership."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ import requests
 
 from tests import seed_demo_projects
 from tests.e2e_smoke import SmokeFailure
-from tests.seed_demo_projects import add_member, build_project, select_entries
+from tests.seed_demo_projects import build_project, select_entries
 
 CATALOGUE = [
     {"name": "Spleen", "state": "approved_model"},
@@ -49,9 +50,9 @@ def test_unknown_state_raises_with_known_ladder() -> None:
         select_entries(CATALOGUE, "staged,bogus")
 
 
-MEMBER = "11111111-1111-1111-1111-111111111111"
-OTHER = "22222222-2222-2222-2222-222222222222"
-OWNER = "33333333-3333-3333-3333-333333333333"
+ADMIN = {"authorization": "Bearer admin"}
+RESEARCHER = {"authorization": "Bearer researcher"}
+RESEARCHER_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _response(body: Any, status: int = 200) -> requests.Response:
@@ -61,67 +62,57 @@ def _response(body: Any, status: int = 200) -> requests.Response:
     return response
 
 
-class FakeHub(requests.Session):
-    """One project readable by GET; every PUT is recorded."""
+def _record_posts(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, str]]]:
+    posts: list[tuple[str, dict[str, str]]] = []
 
-    def __init__(self, project: dict[str, Any]) -> None:
-        super().__init__()
-        self.project = project
-        self.puts: list[dict[str, Any]] = []
-
-    def read(self, client, path: str, headers) -> requests.Response:  # signature of tests.e2e_smoke._get
-        return _response(self.project)
-
-    def put(self, url, data=None, **kwargs) -> requests.Response:
-        self.puts.append(kwargs["json"])
-        return _response(self.project)
-
-
-def _project(status: str, users: list[str]) -> dict[str, Any]:
-    return {"id": "p1", "name": "Spleen", "description": "d", "status": status, "ownerId": OWNER,
-            "users": [{"id": u} for u in users]}  # fmt: skip
-
-
-def _hub(monkeypatch: pytest.MonkeyPatch, project: dict[str, Any]) -> FakeHub:
-    hub = FakeHub(project)
-    monkeypatch.setattr(seed_demo_projects, "_get", hub.read)
-    return hub
-
-
-def test_member_is_given_access_when_a_project_is_created(monkeypatch: pytest.MonkeyPatch) -> None:
-    posted: list[dict[str, Any]] = []
-
-    def post(client, path: str, payload: dict[str, Any], headers) -> requests.Response:
-        posted.append(payload)
-        return _response({"id": "p1"})
+    def post(client, path: str, payload: dict[str, Any], headers, timeout: int = 30) -> requests.Response:
+        posts.append((path, headers))
+        return _response({"id": "p1", "query_id": "q1"})
 
     monkeypatch.setattr(seed_demo_projects, "_post", post)
-
-    build_project(requests.Session(), {}, {"name": "Spleen", "description": "d", "state": "unstaged"}, [], [MEMBER])
-
-    assert posted[0]["users"] == [MEMBER]
+    monkeypatch.setattr(seed_demo_projects.e2e_smoke, "wait_for_trusts_responded", lambda *a, **k: None)
+    return posts
 
 
-def test_member_is_added_to_an_existing_unstaged_project(monkeypatch: pytest.MonkeyPatch) -> None:
-    hub = _hub(monkeypatch, _project("UNSTAGED", [OTHER]))
+def test_the_owner_builds_the_project_and_the_admin_approves_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    posts = _record_posts(monkeypatch)
+    query = tmp_path / "query.sql"
+    query.write_text("SELECT 1")
+    entry = {"name": "Spleen", "description": "d", "state": "approved", "query_file": query}
 
-    add_member(hub, {}, {"id": "p1", "name": "Spleen"}, MEMBER)
+    build_project(requests.Session(), ADMIN, entry, [{"id": "t1"}], RESEARCHER)
 
-    assert hub.puts == [{"name": "Spleen", "description": "d", "users": [OTHER, MEMBER]}]
-
-
-@pytest.mark.parametrize("status", ["STAGED", "APPROVED"])
-def test_a_staged_or_approved_project_is_reported_not_edited(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
-    hub = _hub(monkeypatch, _project(status, []))
-
-    add_member(hub, {}, {"id": "p1", "name": "Spleen"}, MEMBER)
-
-    assert hub.puts == []
+    assert [(path, headers["authorization"]) for path, headers in posts] == [
+        ("/projects/", "Bearer researcher"),
+        ("/cohort/save/", "Bearer researcher"),
+        ("/cohort/submit/", "Bearer researcher"),
+        ("/projects/p1/stage/", "Bearer researcher"),
+        ("/step/project/p1/approve/", "Bearer admin"),
+    ]
 
 
-def test_an_existing_member_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    hub = _hub(monkeypatch, _project("UNSTAGED", [MEMBER]))
+def test_without_an_owner_the_admin_owns_the_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    posts = _record_posts(monkeypatch)
 
-    add_member(hub, {}, {"id": "p1", "name": "Spleen"}, MEMBER)
+    build_project(requests.Session(), ADMIN, {"name": "Spleen", "description": "d", "state": "unstaged"}, [])
 
-    assert hub.puts == []
+    assert posts == [("/projects/", ADMIN)]
+
+
+@pytest.mark.parametrize(("owner_id", "warned"), [(RESEARCHER_ID, False), ("someone-else", True)])
+def test_an_existing_entry_is_skipped_and_a_foreign_owner_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], owner_id: str, warned: bool
+) -> None:
+    monkeypatch.setattr(
+        seed_demo_projects, "existing_projects", lambda *a: {"Spleen": {"id": "p1", "ownerId": owner_id}}
+    )
+    built: list[Any] = []
+    monkeypatch.setattr(seed_demo_projects, "build_project", lambda *a: built.append(a))
+    owner = seed_demo_projects.Owner(RESEARCHER_ID, RESEARCHER)
+
+    seed_demo_projects.seed_catalogue(requests.Session(), ADMIN, [], [{"name": "Spleen"}], owner)
+
+    assert built == []
+    assert ("has another owner" in capsys.readouterr().out) is warned

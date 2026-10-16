@@ -241,10 +241,11 @@ def _hub(monkeypatch: pytest.MonkeyPatch, users: list[list[dict]], projects: lis
         }
     )
     monkeypatch.setattr(seed_demo_projects, "_get", hub.paged_get)
+    monkeypatch.setattr(demo_video, "sign_in_headers", lambda persona: {"authorization": f"Bearer {persona.email}"})
     monkeypatch.setattr(
         seed_demo_projects,
         "seed_catalogue",
-        lambda client, headers, trusts, entries, member_id: hub.seeded.append((trusts, member_id)),
+        lambda client, headers, trusts, entries, owner: hub.seeded.append((trusts, owner)),
     )
     return hub
 
@@ -262,12 +263,26 @@ def test_workspace_reset_deletes_only_the_demo_researchers_own_projects(monkeypa
     assert hub.deleted == ["p1", "p2"]
 
 
-def test_workspace_reset_seeds_the_catalogue_with_the_researcher_as_member(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_workspace_reset_keeps_the_researchers_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalogue_name = seed_demo_projects.CATALOGUE[0]["name"]
+    hub = _hub(
+        monkeypatch,
+        users=[[{"id": RESEARCHER_ID, "email": RESEARCHER.email}]],
+        projects=[[{"id": "take", "name": "Last take", "ownerId": RESEARCHER_ID},
+                   {"id": "catalogue", "name": catalogue_name, "ownerId": RESEARCHER_ID}]],
+    )  # fmt: skip
+
+    assert reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS) == 1
+    assert hub.deleted == ["take"]
+
+
+def test_workspace_reset_seeds_the_catalogue_as_the_researcher(monkeypatch: pytest.MonkeyPatch) -> None:
     hub = _hub(monkeypatch, users=[[{"id": RESEARCHER_ID, "email": RESEARCHER.email}]], projects=[[]])
 
     reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS)
 
-    assert hub.seeded == [(TRUSTS, RESEARCHER_ID)]
+    owner = seed_demo_projects.Owner(RESEARCHER_ID, {"authorization": f"Bearer {RESEARCHER.email}"})
+    assert hub.seeded == [(TRUSTS, owner)]
 
 
 def test_workspace_reset_never_runs_for_the_fallback_admin(monkeypatch: pytest.MonkeyPatch) -> None:

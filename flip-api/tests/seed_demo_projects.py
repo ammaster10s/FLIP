@@ -32,9 +32,10 @@ dev stack that is exactly the point (the projects are then fully explorable),
 but it is real work for Orthanc/XNAT.
 
 Created ids are recorded in tests/seed_demo_projects.json; `--cleanup`
-deletes everything listed there. `--member <email>` gives that user access to
-every catalogue project (the demo recorder passes its researcher, who otherwise
-sees only the projects it owns or belongs to).
+deletes everything listed there. The catalogue is owned by the admin it runs
+as; the demo recorder seeds it as its researcher instead (``Owner``), so the
+researcher's workspace shows projects it created itself. The admin still
+approves them.
 
 Usage:
     make seed-demo-projects                     # from the repo root
@@ -48,9 +49,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote
-from uuid import UUID
 
 import requests
 
@@ -130,6 +130,13 @@ CATALOGUE: list[dict[str, Any]] = [
 STATE_LADDER = ["unstaged", "unstaged_query", "staged", "approved", "approved_model"]
 
 
+class Owner(NamedTuple):
+    """The user the catalogue is seeded as: its hub id and its own auth headers."""
+
+    id: str
+    headers: dict[str, str]
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed (or clean up) the demo radiology project catalogue")
     parser.add_argument("--cleanup", action="store_true", help=f"Delete everything recorded in {RECORD_FILE.name}")
@@ -144,11 +151,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "approved entries — approval starts a real imaging import at every trust — e.g. "
             "--states unstaged,unstaged_query,staged first, --states approved_model later."
         ),
-    )
-    parser.add_argument(
-        "--member",
-        default=None,
-        help="Email of a hub user to give access to every catalogue project (e.g. the demo researcher)",
     )
     return parser.parse_args(argv)
 
@@ -245,31 +247,6 @@ def existing_projects(client: requests.Session, headers: dict[str, str], names: 
     return found
 
 
-def add_member(client: requests.Session, headers: dict[str, str], row: dict[str, Any], member_id: str) -> None:
-    """Give ``member_id`` access to an existing catalogue project, where the hub still allows it.
-
-    The hub only edits a project's users while it is UNSTAGED, so a staged or approved entry seeded without
-    the member is reported instead: re-seed it (``--cleanup``, then seed again) to include them.
-
-    Args:
-        client (requests.Session): HTTP session for hub calls.
-        headers (dict[str, str]): Auth headers.
-        row (dict[str, Any]): The project's listing row (id, name, status).
-        member_id (str): The user to add.
-    """
-    project = _ensure_ok(_get(client, f"/projects/{row['id']}", headers), f"read project {row['name']!r}").json()
-    users = [str(u["id"]) for u in project.get("users", [])]
-    if member_id in users or str(project.get("ownerId")) == member_id:
-        return
-    if project.get("status") != "UNSTAGED":
-        _log(f"⚠️  {row['name']} is {project.get('status')} and cannot gain a member; re-seed it to include them")
-        return
-    payload = {"name": project["name"], "description": project.get("description", ""), "users": users + [member_id]}
-    resp = client.put(f"{constants.BASE_URL}/projects/{row['id']}", json=payload, headers=headers, timeout=60)
-    _ensure_ok(resp, f"add the member to {row['name']!r}")
-    _log(f"    ✅ member added to {row['name']}")
-
-
 def submit_query(client: requests.Session, headers: dict[str, str], project_id: str, query_file: Path) -> None:
     query = query_file.read_text()
     save_resp = _ensure_ok(
@@ -306,16 +283,18 @@ def build_project(
     headers: dict[str, str],
     entry: dict[str, Any],
     trusts: list[dict[str, Any]],
-    member_ids: list[str],
+    owner_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Drive one catalogue entry through the real API up to its target state.
 
+    The owner creates, queries, stages and uploads the model, as a researcher would; the admin approves.
+
     Args:
         client (requests.Session): HTTP session for hub calls.
-        headers (dict[str, str]): Auth headers.
+        headers (dict[str, str]): Admin auth headers.
         entry (dict[str, Any]): Catalogue entry (name/description/state/…).
         trusts (list[dict[str, Any]]): Trusts to stage/approve at.
-        member_ids (list[str]): Users given access to the project.
+        owner_headers (dict[str, str] | None): Auth headers of the project's owner (default: the admin).
 
     Returns:
         dict[str, Any]: Record of what was created ({name, project_id, model_id?}).
@@ -323,8 +302,8 @@ def build_project(
     rung = STATE_LADDER.index(entry["state"])
     _log(f"🏗️  {entry['name']}  (target: {entry['state']})")
 
-    details = ProjectDetails(name=entry["name"], description=entry["description"], users=[UUID(m) for m in member_ids])
-    payload = details.model_dump(mode="json")
+    admin_headers, headers = headers, owner_headers or headers
+    payload = ProjectDetails(name=entry["name"], description=entry["description"]).model_dump(mode="json")
     project_id = _ensure_ok(_post(client, "/projects/", payload, headers), "create project").json()["id"]
     record: dict[str, Any] = {"name": entry["name"], "project_id": project_id}
 
@@ -343,7 +322,7 @@ def build_project(
     if rung >= STATE_LADDER.index("approved"):
         trust_ids = [t["id"] for t in trusts]
         _ensure_ok(
-            _post(client, f"/step/project/{project_id}/approve/", {"trusts": trust_ids}, headers),
+            _post(client, f"/step/project/{project_id}/approve/", {"trusts": trust_ids}, admin_headers),
             "approve project",
         )
         _log("    ✅ approved (imaging import dispatched to the trusts)")
@@ -400,8 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SmokeFailure("No trusts registered on the hub — register trusts before seeding")
     _log(f"🏥 Using trusts: {[t.get('code') or t['name'] for t in trusts]}")
 
-    member_id = find_user_id(client, headers, args.member) if args.member else None
-    seed_catalogue(client, headers, trusts, select_entries(CATALOGUE, args.states), member_id)
+    seed_catalogue(client, headers, trusts, select_entries(CATALOGUE, args.states))
     _log("🎉 Demo catalogue seeded. Remove it later with: make -C flip-api seed_demo_projects EXTRA_ARGS=--cleanup")
     return 0
 
@@ -411,16 +389,19 @@ def seed_catalogue(
     headers: dict[str, str],
     trusts: list[dict[str, Any]],
     entries: list[dict[str, Any]],
-    member_id: str | None = None,
+    owner: Owner | None = None,
 ) -> None:
-    """Create the catalogue entries not yet on the hub, and give ``member_id`` access to all of them.
+    """Create the catalogue entries not yet on the hub, owned by ``owner`` (default: the admin).
+
+    An entry already on the hub under another owner is reported, not changed: the hub cannot transfer
+    ownership, so ``--cleanup`` and seed again to re-create it.
 
     Args:
         client (requests.Session): HTTP session for hub calls.
         headers (dict[str, str]): Admin auth headers.
         trusts (list[dict[str, Any]]): Trusts to stage/approve at.
         entries (list[dict[str, Any]]): The catalogue entries to seed.
-        member_id (str | None): A user to add to every entry, if any.
+        owner (Owner | None): The user to seed the catalogue as, if not the admin.
     """
     # Idempotency: a re-run (or a lost record file) must not duplicate the
     # catalogue — approved entries kick off real imaging imports at the trusts.
@@ -431,10 +412,10 @@ def seed_catalogue(
         for entry in entries:
             if entry["name"] in already:
                 _log(f"⏭️  {entry['name']} already exists on the hub — skipping")
-                if member_id:
-                    add_member(client, headers, already[entry["name"]], member_id)
+                if owner and str(already[entry["name"]].get("ownerId")) != owner.id:
+                    _log(f"⚠️  {entry['name']} has another owner; --cleanup and seed again to re-create it")
                 continue
-            created.append(build_project(client, headers, entry, trusts, [member_id] if member_id else []))
+            created.append(build_project(client, headers, entry, trusts, owner.headers if owner else None))
     finally:
         if created:
             # Merge with any previous run (e.g. a phased --states seeding) so

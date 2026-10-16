@@ -52,6 +52,8 @@ from typing import Any
 import requests
 from playwright.sync_api import Browser, sync_playwright
 
+from flip_api.auth.identity.keycloak import password_grant
+from flip_api.config import get_settings
 from flip_api.utils import constants
 from tests import demo_segments, e2e_smoke, seed_demo_projects, xnat_seg_upload
 from tests.demo_recorder import take
@@ -182,7 +184,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "On a fresh run, keep the demo researcher's workspace as it is, instead of deleting its earlier projects "
-            "and seeding the demo catalogue with it as a member"
+            "and seeding the demo catalogue owned by it"
         ),
     )
     parser.add_argument("--ui-url", default="http://localhost:44357", help="The dev flip-ui the segments sign in to")
@@ -490,17 +492,32 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
+def sign_in_headers(persona: Persona) -> dict[str, str]:
+    """Hub auth headers for ``persona``, through the dev Keycloak's password grant (as the UI signs in).
+
+    Raises:
+        SmokeFailure: When the hub's identity provider is not Keycloak.
+    """
+    settings = get_settings()
+    if settings.AUTH_BACKEND != "keycloak" or not settings.KEYCLOAK_PUBLIC_URL:
+        raise SmokeFailure(f"Signing in as {persona.email} needs the dev Keycloak (AUTH_BACKEND=keycloak)")
+    realm, client_id = settings.KEYCLOAK_REALM, settings.KEYCLOAK_CLIENT_ID
+    tokens = password_grant(settings.KEYCLOAK_PUBLIC_URL, realm, client_id, persona.email, persona.password)
+    return {"scheme": "Bearer", "authorization": "Bearer " + tokens["access_token"]}
+
+
 def reset_researcher_workspace(
     client: requests.Session, headers: dict[str, str], researcher: Persona, trusts: list[dict[str, Any]]
 ) -> int:
     """Put the demo researcher's workspace in the same state for every take: the catalogue and nothing else.
 
     The researcher's project list is the opening shot. The demo researcher exists only for the recorder,
-    so every project it owns is left over from an earlier take and is deleted, matched on its own user id
-    so other people's projects, including ones shared with it, stay out of reach. The demo catalogue
-    (tests.seed_demo_projects) is then seeded with the researcher as a member, so the list shows believable
-    projects; the catalogue is owned by the admin, so it survives the next reset. When the researcher fell
-    back to the well-known admin there is no dedicated account, so nothing is touched.
+    so every project it owns outside the demo catalogue is left over from an earlier take and is deleted,
+    matched on its own user id so other people's projects, including ones shared with it, stay out of reach.
+    The catalogue (tests.seed_demo_projects) is then seeded as the researcher, signed in with its own login,
+    so the opening shot shows projects it created itself; it is kept across resets, as re-seeding the
+    approved entries restarts their imaging imports. When the researcher fell back to the well-known admin
+    there is no dedicated account, so nothing is touched.
 
     Args:
         client (requests.Session): HTTP session for hub calls.
@@ -520,12 +537,14 @@ def reset_researcher_workspace(
     user_id = seed_demo_projects.find_user_id(client, headers, researcher.email)
     # The owner filter narrows the listing; the id check is what guarantees nobody else's project goes.
     listed = seed_demo_projects.paged(client, headers, f"/projects?owner={user_id}", "list the researcher's projects")
-    owned = [p for p in listed if str(p.get("ownerId")) == str(user_id)]
+    catalogue = {entry["name"] for entry in seed_demo_projects.CATALOGUE}
+    owned = [p for p in listed if str(p.get("ownerId")) == str(user_id) and p.get("name") not in catalogue]
     for project in owned:
         resp = client.delete(f"{constants.BASE_URL}/projects/{project['id']}", headers=headers, timeout=60)
         e2e_smoke._ensure_ok(resp, f"delete project {project['id']}")
     _log(f"🧹 Workspace reset: deleted {len(owned)} earlier project(s) owned by {researcher.email}")
-    seed_demo_projects.seed_catalogue(client, headers, trusts, seed_demo_projects.CATALOGUE, user_id)
+    owner = seed_demo_projects.Owner(user_id, sign_in_headers(researcher))
+    seed_demo_projects.seed_catalogue(client, headers, trusts, seed_demo_projects.CATALOGUE, owner)
     return len(owned)
 
 
