@@ -69,9 +69,11 @@ batch-size = 2
 # Model configuration
 spatial-dims = 3
 num-classes = 2
-# Checkpoint filename to evaluate, relative to flip-job-dir.
-# Dummy placeholder -- the real value is supplied per run via config.toml.
-checkpoint = "dummy.pt"
+# Checkpoint filename to evaluate, relative to flip-job-dir: the model.pt that
+# `download-checkpoints` places in app/, which `make -C fl-services/flower submit` evaluates.
+# run-tutorial (sim-tutorial.sh) points flip-job-dir at fl-tutorials/data/model_checkpoints instead;
+# on the platform the uploaded app/config.toml sets this value.
+checkpoint = "model.pt"
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
 # See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
 flip-model-id = "uuid"
