@@ -504,7 +504,13 @@ def download_results(rec: Take, researcher: Persona, project_id: str, model_id: 
     rec.scroll_to(page.locator("canvas").first)
     rec.click(by_test(page, "metrics-view-grid"))
     by_test(page, "metrics-grid").wait_for()
-    rec.pause(6000)
+    rec.pause(3000)
+    # The grid sorts by metric name, so an app with many TEST-* plots (xray) pushes its
+    # training curves below the fold; scroll down to them.
+    train_cell = page.locator('[data-test^="metrics-grid-cell-train" i]')
+    if train_cell.count():
+        rec.scroll_to(train_cell.first, pause_ms=1500)
+        rec.pause(4000)
     rec.caption("Downloading the aggregated global model", 800)
     download_btn = by_test(page, "download-results-btn")
     rec.scroll_to(download_btn)
