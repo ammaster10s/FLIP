@@ -24,7 +24,7 @@ import requests
 
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
-from tests import demo_video, seed_demo_projects
+from tests import demo_recorder, demo_video, seed_demo_projects
 from tests.demo_recorder import FrameSink
 from tests.demo_segments import Persona, strip_licence_header
 from tests.demo_video import (
@@ -291,3 +291,26 @@ def test_workspace_reset_refuses_an_unknown_demo_researcher(monkeypatch: pytest.
 def test_workspace_reset_is_on_by_default_and_can_be_kept() -> None:
     assert demo_video.parse_args([]).keep_workspace is False
     assert demo_video.parse_args(["--keep-workspace"]).keep_workspace is True
+
+
+def test_the_encode_is_capped_and_writes_the_take(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(demo_recorder.subprocess, "run", lambda cmd, **kwargs: calls.append(cmd))
+    rec = demo_recorder.Take(page=None, frames_dir=tmp_path, scale=3)  # type: ignore[arg-type]
+    rec.sink.frames.append({"file": "000000.jpg", "ts": 0.0, "arrival": 0.0})
+
+    out = rec.encode(tmp_path / "segments" / "01-create-project.mp4")
+
+    (cmd,) = calls
+    # Uncapped, x264 at 4K reached 5.5 GB on the 32-core dev box.
+    assert cmd[cmd.index("-threads") + 1] == str(demo_recorder.ENCODE_THREADS)
+    assert cmd[cmd.index("-rc-lookahead") + 1] == "20"
+    assert "scale=3840:2400" in cmd[cmd.index("-vf") + 1]
+    assert cmd[-1] == str(out.resolve())
+
+
+def test_a_take_with_no_frames_is_refused(tmp_path: Path) -> None:
+    rec = demo_recorder.Take(page=None, frames_dir=tmp_path, scale=1)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="no frames"):
+        rec.encode(tmp_path / "out.mp4")

@@ -39,6 +39,7 @@ from tests.e2e_smoke import _log
 # The design viewport. Chromium renders it at `scale`× device pixels: 3 gives 3840x2400.
 WIDTH, HEIGHT = 1280, 800
 FPS = 30
+ENCODE_THREADS = 8
 
 CAPTION_HTML = (
     '<div style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);max-width:76%;'
@@ -218,10 +219,12 @@ class Take:
         width, height = WIDTH * self.scale, HEIGHT * self.scale
         fit = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
         out.parent.mkdir(parents=True, exist_ok=True)
+        # At 4K, x264's defaults (a frame per thread at 1.5 threads per core, a 50-frame lookahead on
+        # "slow") reached 5.5 GB on a 32-core dev box already short of memory; capped, about 2 GB.
         subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", concat.name,
              "-vf", f"{fit},fps={FPS},format=yuv420p", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-             "-movflags", "+faststart", str(out.resolve())],
+             "-threads", str(ENCODE_THREADS), "-rc-lookahead", "20", "-movflags", "+faststart", str(out.resolve())],
             cwd=self.sink.directory,
             check=True,
         )  # fmt: skip

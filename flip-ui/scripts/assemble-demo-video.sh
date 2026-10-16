@@ -19,7 +19,8 @@
 
 set -euo pipefail
 
-SEGMENTS_DIR="$1"
+# Absolute: the concat list below lives in a temp dir, and ffmpeg resolves its entries from there.
+SEGMENTS_DIR="$(cd "$1" && pwd)"
 OUT="$2"
 FPS=30
 
@@ -62,7 +63,7 @@ for ((j = 0; j < ${#segments[@]}; j++)); do
             -loop 1 -t "$TRANSITION_SECONDS" -i "$workdir/t${j}a.png" \
             -loop 1 -t "$TRANSITION_SECONDS" -i "$workdir/t${j}b.png" \
             -filter_complex "[0:v][1:v]xfade=transition=hblur:duration=${TRANSITION_SECONDS}:offset=0,fps=${FPS},format=yuv420p" \
-            -c:v libx264 -preset veryfast -crf 18 -an "$workdir/trans${j}.mp4"
+            -c:v libx264 -preset veryfast -crf 18 -threads 8 -an "$workdir/trans${j}.mp4"
         printf "file '%s'\n" "$workdir/trans${j}.mp4" >> "$concat_list"
         echo "  blur transition ${pair}"
     fi
@@ -72,5 +73,5 @@ mkdir -p "$(dirname "$OUT")"
 # Re-encode the concat — the generated transition clips make stream-copy
 # concatenation unreliable across encoder parameter differences.
 ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" \
-    -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -an "$OUT"
+    -c:v libx264 -preset veryfast -crf 18 -threads 8 -pix_fmt yuv420p -an "$OUT"
 echo "assembled ${#segments[@]} segments -> $OUT"
