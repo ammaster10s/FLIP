@@ -228,3 +228,10 @@ def test_dicom_service_carries_operator_annotations() -> None:
     )
     assert services["xnat-web-dicom"]["metadata"]["annotations"] == {annotation: "true"}
     assert "annotations" not in _services()["xnat-web-dicom"]["metadata"], "none unless asked for"
+
+
+def test_the_schema_refuses_a_nested_dicom_service_annotation() -> None:
+    """An annotation value is quoted into one string, so only a scalar can mean anything there."""
+    rendered = _render("xnat.web.dicomService.annotations.example\\.com/thing.nested=x")
+    assert rendered.returncode != 0
+    assert "annotations" in rendered.stderr
