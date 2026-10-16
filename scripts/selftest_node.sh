@@ -33,7 +33,18 @@ KIT_OUT="${SELFTEST_KIT_OUT:-${REPO_ROOT}/trust/.env.SELFTEST.production}"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 CHECKS_FILE="$(mktemp)"
-trap 'rm -f "${CHECKS_FILE}"' EXIT
+STACK_STARTED=false
+# Teardown lives in the EXIT trap, so an interrupt or an unbound variable under set -u cannot
+# leave the self-test stack running on a node whose next step may be a join.
+cleanup() {
+    rm -f "${CHECKS_FILE}"
+    if [ "${STACK_STARTED}" = true ] && [ "${SELFTEST_KEEP_UP:-0}" != 1 ]; then
+        make -C "${REPO_ROOT}/trust" down-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "${OUT}"
 
 record() { # <name> <ok:true|false> <detail>
@@ -112,7 +123,7 @@ fi
 
 if [ "${PREP_OK}" != true ]; then
     record "stack up" false "skipped: a preparation step above failed"
-elif make -C "${REPO_ROOT}/trust" up-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}"; then
+elif STACK_STARTED=true && make -C "${REPO_ROOT}/trust" up-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}"; then
     record "stack up" true "make -C trust up-trust KIT=SELFTEST PROD=true"
 else
     record "stack up" false "up-trust failed; see the output above"
@@ -153,6 +164,12 @@ fi
 # for the importer failures the Helm chart's smoke-cstore looks for. dicom.log alone is no
 # evidence: XNAT writes it only when something goes wrong, so a working store leaves it empty.
 ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
+# curl against Orthanc with the credentials in a config read from stdin, never in argv, where
+# any process on the node could read them.
+orthanc_curl() {
+    local auth="${ORTHANC_AUTH//\\/\\\\}"
+    printf 'user = "%s"\n' "${auth//\"/\\\"}" | curl -fsS -K - "$@"
+}
 XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
 RECEIVED_LOG=/data/xnat/home/logs/received.log
 DICOM_LOG=/data/xnat/home/logs/dicom.log
@@ -165,8 +182,8 @@ log_lines() {
 }
 before="$(log_lines "${RECEIVED_LOG}")"
 dicom_before="$(log_lines "${DICOM_LOG}")"
-instance="$(curl -fsS -u "${ORTHANC_AUTH}" "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
-store="$(curl -fsS -u "${ORTHANC_AUTH}" -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
+instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
+store="$(orthanc_curl -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
     -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
 # XNAT records the receipt after the store has returned, so poll for it rather than read once
 # (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
@@ -208,10 +225,6 @@ else
         tail_log="$(docker logs --tail 5 "${FL_CTR}" 2>&1 | tr '\n' ' ' | cut -c1-240)"
         record "fl client running" false "${FL_CTR} not steady (${first} -> ${second}); last log: ${tail_log}"
     fi
-fi
-
-if [ "${SELFTEST_KEEP_UP:-0}" != 1 ]; then
-    make -C "${REPO_ROOT}/trust" down-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}" >/dev/null 2>&1 || true
 fi
 
 FINISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
