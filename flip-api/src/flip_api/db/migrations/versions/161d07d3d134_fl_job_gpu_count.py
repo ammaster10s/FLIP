@@ -13,7 +13,7 @@
 """fl_job GPU count override
 
 Revision ID: 161d07d3d134
-Revises: e8c4a2f71b36
+Revises: b3f1c857a001
 Create Date: 2026-10-12 21:00:00.000000
 
 """
@@ -24,7 +24,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '161d07d3d134'
-down_revision: str | None = 'e8c4a2f71b36'
+down_revision: str | None = 'b3f1c857a001'  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
