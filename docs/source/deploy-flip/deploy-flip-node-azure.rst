@@ -48,7 +48,8 @@ survives the node being destroyed and rebuilt.
 +---------------------------+--------------------------------------------------------------+
 | Kit drop (with the node)  | A storage account with shared keys off and a private         |
 |                           | container. Its firewall admits only the node subnet and the  |
-|                           | operator's IP; every blob is deleted a day after upload      |
+|                           | operator's IP; a daily lifecycle run deletes each blob a     |
+|                           | day after upload, so within about 48 hours                   |
 +---------------------------+--------------------------------------------------------------+
 
 *************
@@ -176,8 +177,10 @@ Troubleshooting
   UNIT=cloud-final`` its output; the portal's boot diagnostics show the serial console. Fix the
   cause in the repo, push, then ``make reprovision REF=<new sha>``.
 - **The node cannot fetch its kit.** It retries for about five minutes, then names the HTTP
-  status: 403 right after an apply is the node's read role still propagating; 404 means the kit
-  was never uploaded or has expired (kits last a day).
+  status: 403 right after an apply is the node's read role still propagating, and a 403 that
+  persists on a site-supplied subnet (``existing_subnet_id``) means that subnet lacks the
+  ``Microsoft.Storage`` service endpoint the kit drop's firewall needs; 404 means the kit
+  was never uploaded or has expired (kits are deleted within about 48 hours).
 - **kit-upload is refused (403).** Your public IP has changed since ``plan``: plan and apply
   again (or pass ``OPERATOR_IP=<ip>``).
 - **A self-test check fails.** The report names it. Fix the cause in the repo and reprovision;

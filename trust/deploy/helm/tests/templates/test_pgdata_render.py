@@ -54,3 +54,16 @@ def test_pgdata_stays_at_the_volume_root_by_default():
 def test_pgdata_moves_into_the_named_subdirectory():
     found = _pgdata(*(f"{key}=pgdata" for key in STATEFULSETS.values()))
     assert found == {name: "/var/lib/postgresql/data/pgdata" for name in STATEFULSETS}
+
+
+@pytest.mark.parametrize("value", ["/pgdata", "../pgdata", "pg/data", ".."])
+@pytest.mark.parametrize("key", STATEFULSETS.values())
+def test_the_schema_refuses_a_pgdata_subdir_that_is_not_one_relative_name(key, value):
+    """The value is joined under the mount path, so anything but one plain name would put the data
+    somewhere other than one level down. The schema catches a bad value, not a misspelt key."""
+    args = ["helm", "template", "trust-release", str(CHART_DIR), "--set", "flClient.kitHostPath=/opt/flip/fl-kit"]
+    result = subprocess.run(
+        [*args, "--set-string", f"{key}={value}"], capture_output=True, text=True, check=False, timeout=120
+    )
+    assert result.returncode != 0
+    assert "pgdataSubdir" in result.stderr

@@ -38,6 +38,10 @@ run "vm_is_hardened" {
     condition     = azurerm_linux_virtual_machine.node.size == "Standard_D4s_v5"
     error_message = "Default size is Standard_D4s_v5 (fits the 4-vCPU trial quota)."
   }
+  assert {
+    condition     = azurerm_linux_virtual_machine.node.source_image_reference[0].version == "latest"
+    error_message = "The image follows Canonical's current 24.04 image unless image_version pins one."
+  }
 }
 
 run "public_ip_mode_puts_the_bootstrap_ip_on_the_nic" {
@@ -91,6 +95,49 @@ run "rejects_a_branch_name_as_ref" {
   }
 
   expect_failures = [var.flip_ref]
+}
+
+run "rejects_a_prefix_no_storage_account_name_allows" {
+  command = plan
+
+  variables {
+    name_prefix = "flip-az"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_a_prefix_too_long_for_a_storage_account_name" {
+  command = plan
+
+  variables {
+    name_prefix = "flipazuresite01"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "image_follows_latest_by_default_and_can_be_pinned" {
+  command = plan
+
+  variables {
+    image_version = "24.04.202510010"
+  }
+
+  assert {
+    condition     = azurerm_linux_virtual_machine.node.source_image_reference[0].version == "24.04.202510010"
+    error_message = "A pinned image_version must reach the VM's image reference."
+  }
+}
+
+run "rejects_an_image_version_that_is_not_a_version" {
+  command = plan
+
+  variables {
+    image_version = "newest"
+  }
+
+  expect_failures = [var.image_version]
 }
 
 run "data_disk_is_lun_0" {

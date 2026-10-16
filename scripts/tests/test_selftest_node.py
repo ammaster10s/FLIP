@@ -81,6 +81,8 @@ def _run(
     bad_template: bool = False,
     log_lag: int = 0,
     no_kit: bool = False,
+    abort_in_sleep: bool = False,
+    keep_up: bool = False,
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -96,12 +98,14 @@ def _run(
     _stub(bin_dir, "make", f'echo "make $*" >> "{calls}"; case "$*" in *up-trust*) {markers};; esac; exit 0')
     for tool in ("chown", "chgrp"):
         _stub(bin_dir, tool, f'echo "{tool} $*" >> "{calls}"; exit 0')
-    _stub(bin_dir, "sleep", "exit 0")
+    # abort_in_sleep: the first sleep (the FL settle wait, with the stack up) kills the runner.
+    _stub(bin_dir, "sleep", 'kill -TERM "$PPID"; exit 0' if abort_in_sleep else "exit 0")
     store_reply = '{"FailedInstancesCount":0}' if store_ok else '{"FailedInstancesCount":1}'
     _stub(
         bin_dir,
         "curl",
         f'echo "curl $*" >> "{calls}"\n'
+        f'case " $* " in *" -K - "*) cat >> "{tmp / "curl-config.log"}";; esac\n'
         f'if [ -n "{failing_port}" ]; then case "$*" in *":{failing_port}/health"*) exit 22;; esac; fi\n'
         'case "$*" in\n'
         '  *"%{http_code}"*) echo 401;;\n'
@@ -152,6 +156,8 @@ def _run(
         "SELFTEST_FL_KIT_DIR": str(tmp / "fl-kit"),
         "SELFTEST_FL_SETTLE_SECONDS": "0",
     }
+    if keep_up:
+        env["SELFTEST_KEEP_UP"] = "1"
     if bad_template:
         template = tmp / "template"
         template.write_text("SOMETHING_NEW=<run-make-register-trust>\n")
@@ -187,6 +193,23 @@ def main() -> int:
     ):
         _assert(_check(report, name).get("ok") is True, f"check '{name}' passed", json.dumps(_check(report, name)))
     _assert(calls.exists() and "down-trust KIT=SELFTEST PROD=true" in calls.read_text(), "stack torn down afterwards")
+    password = next(
+        line.split("=", 1)[1]
+        for line in (tmp / ".env.SELFTEST.production").read_text().splitlines()
+        if line.startswith("ORTHANC_PASSWORD=")
+    )
+    _assert(bool(password) and password not in calls.read_text(), "the Orthanc password never appears in argv")
+    config = tmp / "curl-config.log"
+    _assert(config.exists() and password in config.read_text(), "curl reads it from a config on stdin")
+
+    print("an_aborted_run_still_tears_the_stack_down")
+    aborted, _, aborted_calls, _ = _run("abort", abort_in_sleep=True)
+    _assert(aborted.returncode == 143, "the run exits on the signal", aborted.stdout + aborted.stderr)
+    _assert("down-trust KIT=SELFTEST PROD=true" in aborted_calls.read_text(), "the trap tears the stack down")
+
+    print("keep_up_survives_an_abort")
+    _, _, kept_calls, _ = _run("keepup", abort_in_sleep=True, keep_up=True)
+    _assert("down-trust" not in kept_calls.read_text(), "SELFTEST_KEEP_UP=1 leaves the stack up")
 
     print("fl_kit_is_staged_for_the_nvflare_client")
     staged = tmp / "fl-kit" / "net-1" / "services" / "Trust_1" / "startup" / "fed_client.json"
@@ -248,6 +271,7 @@ def main() -> int:
         check.get("ok") is False and "missing-kit" in check.get("detail", ""), "a missing kit names where it looked"
     )
     _assert("up-trust" not in calls.read_text(), "and the stack is not started")
+    _assert("down-trust" not in calls.read_text(), "so there is nothing to tear down")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

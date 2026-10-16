@@ -205,6 +205,8 @@ Postgres data below the fresh disk's `lost+found`, the S3 vocabulary load off); 
 the per-trust override. Better, put `K8S_PLATFORM_VALUES=values-aks.yaml` in the kit file: every `deploy`,
 `deploy-trust-k8s` and `upgrade-trust-k8s` with that `KIT` then applies it. A run without it would move PGDATA back
 to the volume root (both databases crash-loop) and look for the kit on the node (the FL client stays Pending).
+The overlays live beside the chart in this repository, not in the packaged chart (`.helmignore` keeps them out),
+so a deploy from a chart tarball passes a checkout's copy by path.
 `kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
 ...) in `<release>-flip-trust-fl-kit` (set `flClient.kit.secretName` only for a Secret you build yourself with `scripts/kit_secret.py --name`; `make kit-secret` always writes the default name) and refuses a kit
 missing its backend's files, a nested directory, or more than a Secret's 1 MiB — and a Flower kit
@@ -263,7 +265,8 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
 
 `sync-kit` stamps a newly created Secret with Helm ownership metadata so the
 first install can adopt it. It also regenerates the FL-server egress port from
-the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
+the kit on every run, so upgrades do not lose the fl-client gRPC allowance, and,
+for a Flower trust, `flClient.flower.superlink`.
 
 #### Secret field ownership under Helm 4 (server-side apply)
 
@@ -336,10 +339,17 @@ make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's pr
 against the release's own `xnat.web.plugins.urls`, failing with both versions named when
 they disagree. They disagree when the **pod spec** is older than the values — the plugins
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
-means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
-different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
-the importer and passes throughout.
+means no upgrade has rolled `xnat-web` since the roster changed. It then asks XNAT which plugins
+it **loaded** (`GET /xapi/plugins`, inside the pod as the service account, the credential on
+curl's stdin) and fails a jar that is **present on disk but not loaded** — unreadable, typically
+a truncated download; see the `tomcat` container's startup log. XNAT lists plugins by id, not by
+these keys (`container-service` is `containers`), hence `XNAT_PLUGIN_IDS` in `check_status.py`;
+when XNAT cannot be asked, `status` warns and checks the jars alone. This is the chart's only
+check of what XNAT loaded: the `xnat-init` readiness wait runs in its own pod, whose jars are the
+image's rather than this pod's, so it waits for the DQR route alone. A plugin built for a
+different XNAT core loads and then aborts every C-STORE in the importer, which is why
+`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
+C-ECHO never reaches the importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the
@@ -374,10 +384,15 @@ trust shape shares (the VM node self-test's, FLIP#1406) against the deployed rel
 | orthanc seeded | Orthanc holds instances |
 | orthanc requires auth | Orthanc answers 401 without credentials |
 | xnat c-store | `smoke-cstore` exits 0; its inconclusive exit 2 fails the check |
+| dcm2niix conversion | the smallest Orthanc series, imported into a throwaway `FLIPSELFTEST` project, is converted by a dcm2niix Job: its container ends `Complete` and the scan holds a `.nii`/`.nii.gz` file within 10 minutes (`--conversion-timeout`) |
 | fl client running | the FL client is running, with no restart, at two samples 45 s apart |
 
 It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
-the release already has, so it adds no workload, RBAC or NetworkPolicy exception. It writes
+the release already has, so it adds no RBAC or NetworkPolicy exception. The conversion check
+starts one dcm2niix Job, as a cohort pull would, and deletes its `FLIPSELFTEST` project when it
+ends, pass or fail. A C-STORE alone shows XNAT received a study, not that this cluster can
+convert it. If other conversions are queued, its Job waits for a slot under the cap
+([Container Service jobs](#container-service-jobs-dcm2niix)), so run it on an idle trust. It writes
 `selftest-k8s-<backend>-<stamp>.json` and `.md` (and `latest-k8s-<backend>.md`) under
 `SELFTEST_OUT` (default `build/selftest/` in the checkout) and exits non-zero on any failure.
 
@@ -437,7 +452,7 @@ PVCs explicitly if you want a clean slate.
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `true` | Whether to create the namespace |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20260917` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261014` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
 | `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
@@ -643,7 +658,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. `sync-kit` skips the load, with a warning, when an older kit still carries the dev bucket (`flipdev-aicentre`) outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390) — the hook would otherwise fail and, being post-install, fail the whole release. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. `sync-kit` skips the load, with a warning, when an older kit still carries the dev bucket (`flipdev-aicentre`) outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390). A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):
@@ -799,6 +814,46 @@ images ship PyTorch built for CUDA 13. The operator installs the driver itself, 
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
 
+### Container Service jobs (dcm2niix)
+
+```yaml
+xnat:
+  containerService:
+    maxConcurrentJobs: 4   # null removes the cap
+```
+
+XNAT's Container Service converts DICOM to NIfTI by starting one Kubernetes Job per archived
+scan, so a cohort pull of a few hundred studies starts a few hundred Jobs within minutes. The
+plugin has no concurrency setting of its own on this backend, so the chart bounds them
+(FLIP#1448):
+
+- **Each dcm2niix pod is BestEffort.** The `xnat-init` Job registers dcm2niix without the
+  command file's `reserve-memory` and `limit-cpu`. On this backend the Container Service turns
+  `limit-cpu` into a CPU limit with no request (container-service 3.8.1 has no `reserve-cpu`), so
+  Kubernetes set the request to the limit: every pod reserved a whole CPU and 1000 MiB. On a
+  4-vCPU AKS node about 300 of them filled the node's requests, and nothing else could schedule
+  (FLIP#1448). A BestEffort pod reserves nothing, so it never stops another pod from scheduling,
+  and it runs at the lowest CPU weight on the node, so it yields to the trust's services. The
+  Compose deployment registers the same file unchanged, where those keys are Docker limits.
+- **At most `maxConcurrentJobs` of them run at once.** A ResourceQuota
+  (`<release>-flip-trust-xnat-container-jobs`) admits that many BestEffort pods in the
+  namespace. A Job over the cap gets no pod yet: its events say `FailedCreate ... exceeded quota`,
+  which is expected, and the Job controller retries it at most a minute apart until a slot frees.
+  A creation the quota refuses is not a pod failure, so it never counts against the Job's
+  `backoffLimit`: a conversion over the cap waits, it is not dropped.
+  The backlog drains with no Pending pods.
+
+Watch a pull convert with `kubectl describe resourcequota -n <ns>` (pods used against the cap)
+and `kubectl get jobs -n <ns>`. One conversion takes seconds plus a pod start, so the default of 4
+converts a 300-study cohort in tens of minutes on one node. Raise the cap on a larger node pool to
+convert faster.
+
+The quota counts *every* BestEffort pod in the namespace. No pod of this chart is one
+(`tests/templates/test_container_jobs_quota.py` renders them all), but a pod someone starts here
+with no resources at all (a bare `kubectl run`) takes a slot too. Jobs the Container Service
+created before this change keep their old 1-CPU request and are outside the quota: see
+[TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot).
+
 ### Autoscaling
 
 ```yaml
@@ -857,7 +912,7 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-password` | xnat-web, xnat-db | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values (FLIP-PT-056). imaging-api does not hold it: it reads import status through XNAT's REST API (FLIP#1456) |
 | `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 
@@ -868,8 +923,7 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 
 xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
 superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
-application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
-imaging-import worker authenticate with. The `xnat` role is created by the
+application role (`xnat-datasource-password`) that xnat-web authenticates with. The `xnat` role is created by the
 image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
 
 > **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
@@ -889,21 +943,20 @@ the old hash.) The two roles are handled differently from here:
 | `xnat` application role | `xnat-datasource-password` | **Automatic.** A `postStart` hook on the xnat-db container re-applies it to the live role on every pod start, so rotating the secret and restarting the pod is enough. |
 | `postgres` superuser | `xnat-datasource-admin-password` | **Manual.** Still first-initdb only — rotate it by hand as below. |
 
-Rotating the `xnat` role needs the secret updated and **all three**
-consumers restarted, in that order — `xnat-web` and `imaging-api` also hold
-`xnat-datasource-password` as a plain `secretKeyRef` env var, which resolves
-once at pod start with no `checksum/secret` annotation to force a restart, so
-stopping after `xnat-db` leaves them authenticating with the old password:
+Rotating the `xnat` role needs the secret updated and **both** consumers
+restarted, in that order — `xnat-web` also holds `xnat-datasource-password` as
+a plain `secretKeyRef` env var, which resolves once at pod start with no
+`checksum/secret` annotation to force a restart, so stopping after `xnat-db`
+leaves it authenticating with the old password:
 
 ```bash
 kubectl rollout restart statefulset/<release>-flip-trust-xnat-db
 kubectl rollout status statefulset/<release>-flip-trust-xnat-db
 kubectl rollout restart deployment/<release>-flip-trust-xnat-web
-kubectl rollout restart deployment/<release>-flip-trust-imaging-api
 ```
 
-`make patch-kit-secrets` restarts `imaging-api` (along with `trust-api` and
-`data-access-api`) but neither `xnat-db` nor `xnat-web`, so running it alone
+`make patch-kit-secrets` restarts `imaging-api`, `trust-api` and
+`data-access-api` but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
@@ -1190,6 +1243,7 @@ The chart is validated in CI via:
 | ------- | ------- | ----- |
 | **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
 | **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
+| **dcm2niix backlog** | Hundreds of Pending pods that are not the release's own (`<release>-flip-trust-*`) | Container Service Jobs from before the conversion cap: [TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot). |
 | **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
 | **Image pull** | Pod event shows `ErrImagePull` or `ImagePullBackOff` | Verify GHCR credentials. Check `imagePullSecrets` config. For private repos ensure `image.tag` exists. |
 
@@ -1199,7 +1253,7 @@ The chart is validated in CI via:
 | ------- | ------- | ----- |
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
-| **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
@@ -1315,13 +1369,16 @@ Include:
    conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
    spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
    `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
-   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   entry the xnat-init Job registers (`configure-dcm2niix.sh` with
+   `XNAT_CS_BACKEND=kubernetes`). Because the Job mounts the *same* PVC
    as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
    scheduled onto the node running `xnat-web` — true for a single-node cluster.
    For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
    (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
    [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
    including the trailing slash that `combined-path-translation` must keep.
+   How many of those Jobs run at once is capped: see
+   [Container Service jobs](#container-service-jobs-dcm2niix).
 
 3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with

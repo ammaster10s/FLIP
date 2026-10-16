@@ -47,6 +47,7 @@ def managed_values(backend: str, docker_tag: str) -> dict[str, str]:
         "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
         "NLB_SUBDOMAIN": "fl-server.invalid",
         "FL_SERVER_PORT": "8002",
+        "FL_EDGE_PORT": "8002",
         "TRUST_API_KEY": secrets.token_urlsafe(32),
         "TRUST_INTERNAL_SERVICE_KEY": secrets.token_urlsafe(32),
         "FL_KIT_SLOT": "Trust_1",
