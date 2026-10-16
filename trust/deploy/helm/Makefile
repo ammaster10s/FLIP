@@ -314,7 +314,8 @@ _upgrade-trust-k8s-apply:
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 # The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
-# API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, FL client steady. Needs no hub.
+# API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),
+# FL client steady. Needs no hub.
 # Writes selftest-k8s-<backend>-<stamp>.{json,md} under SELFTEST_OUT; exits non-zero on a failure.
 SELFTEST_OUT ?= $(REPO_ROOT)/build/selftest
 selftest: ## Run the trust self-test against the deployed release and write a report
@@ -385,6 +386,10 @@ clean: ## Clean up rendered output
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env auto-detected from $(PROD).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
+	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
+	@# wait return at once, without running the configuration again.
+	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
