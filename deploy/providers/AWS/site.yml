@@ -190,6 +190,15 @@
           + (['/opt/flip/data/trust-' ~ trust_num]
              if trust_num is defined and trust_num | string | length > 0
              else [])) | unique }}
+    # The approved-cohort membership stores (FLIP#857), the same slot derivation as the images
+    # trees: the production composes default COHORT_SNAPSHOT_STORAGE_DIR to
+    # /opt/flip/cohort-snapshots/trust-<slot>. `make upgrade-trust-ec2` also prepares the
+    # registered slot's, for a host provisioned before the store existed.
+    flip_cohort_snapshot_dirs: >-
+      {{ (['/opt/flip/cohort-snapshots/trust-1', '/opt/flip/cohort-snapshots/trust-2']
+          + (['/opt/flip/cohort-snapshots/trust-' ~ trust_num]
+             if trust_num is defined and trust_num | string | length > 0
+             else [])) | unique }}
     # The EC2 stack bind-mounts Loki/Grafana data from /opt/flip/volumes.
     flip_observability_volume_dirs: true
   roles:

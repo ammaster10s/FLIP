@@ -12,14 +12,13 @@
 """dcm2niix on Kubernetes runs as BestEffort pods, at most N at a time (FLIP#1448), rendered.
 
 The xnat-init Job registers dcm2niix without the command file's resource settings, so the
-Container Service's pods reserve nothing, and a BestEffort-scoped ResourceQuota caps how many run
-at once. The cap counts every BestEffort pod in the namespace, so it holds only while no pod of
+Container Service's pods reserve nothing (configure-dcm2niix.sh drops them on the kubernetes
+backend, trust/xnat/tests/test_dcm2niix_registration.py), and a BestEffort-scoped ResourceQuota caps
+how many run at once. The cap counts every BestEffort pod in the namespace, so it holds only while no pod of
 the chart is BestEffort itself: one that were would compete with the conversions for the cap and
 could wait behind a backlog of them. Asserted on `helm template` output. Skipped without helm.
 """
 
-import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,12 +27,8 @@ import pytest
 import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[2]
-REPO_ROOT = CHART_DIR.parents[2]
-COMMAND_FILE = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "dcm2niix_command.json"
 KIT_PATH = "flClient.kitHostPath=/opt/flip/fl-kit"
 POD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "Job")
-# The command keys the Container Service turns into pod requests and limits.
-RESOURCE_KEY = re.compile(r"^(reserve|limit)-")
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
@@ -49,19 +44,6 @@ def _quotas(*sets: str) -> list[dict]:
     for item in sets:
         args += ["--set", item]
     return [d for d in _docs(*args) if d["kind"] == "ResourceQuota"]
-
-
-def registration_body(script: str) -> str:
-    """The file the command registration POSTs: the `-d @<file>` within that curl's continuation lines."""
-    lines = script.splitlines()
-    start = next((i for i, line in enumerate(lines) if '-X POST "${XNAT_URL}/xapi/commands"' in line), None)
-    assert start is not None, "the command registration call moved; update this test"
-    for line in lines[start:]:
-        if found := re.search(r"-d @(\S+)", line):
-            return found.group(1)
-        if not line.rstrip().endswith("\\"):
-            break
-    raise AssertionError("the command registration posts no -d @<file>")
 
 
 def test_the_quota_admits_the_configured_number_of_best_effort_pods():
@@ -109,41 +91,3 @@ def test_no_pod_of_the_chart_is_best_effort(render):
         if not any(c.get("resources", {}).get("requests") or c.get("resources", {}).get("limits") for c in containers):
             best_effort.append(f"{doc['kind']}/{doc['metadata']['name']}")
     assert not best_effort, f"BestEffort pods would count against the conversion cap: {best_effort}"
-
-
-def _init_job_parts() -> tuple[str, dict]:
-    """The configure-dcm2niix script and the command JSON the xnat-init ConfigMap carries."""
-    docs = _docs("--set", KIT_PATH, "--show-only", "templates/xnat-init-job.yaml")
-    job = next(d for d in docs if d["kind"] == "Job")
-    container = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "configure-dcm2niix")
-    configmap = next(d for d in docs if d["kind"] == "ConfigMap")
-    return container["command"][-1], json.loads(configmap["data"]["dcm2niix_command.json"])
-
-
-def test_the_configmap_carries_the_command_file_unchanged():
-    """The chart cannot read the file (it lives outside the chart), so it carries a copy. The
-    Kubernetes difference is made at registration, below, and nowhere else."""
-    _, command = _init_job_parts()
-    assert command == json.loads(COMMAND_FILE.read_text())
-
-
-def test_dcm2niix_is_registered_without_any_resource_setting():
-    """Run the script's own jq filter over the command it registers: whatever resource keys the
-    command file gains, none may reach the Kubernetes registration."""
-    if shutil.which("jq") is None:
-        pytest.skip("jq is not installed")
-    script, command = _init_job_parts()
-    assert any(RESOURCE_KEY.match(key) for key in command), "premise: the command file sets resources"
-
-    found = re.search(r"jq '([^']+)' \\\s*/cs-config/dcm2niix_command\.json > (\S+)", script)
-    assert found, "configure-dcm2niix no longer filters the command before registering it"
-    expression, stripped_path = found.groups()
-    stripped = json.loads(
-        subprocess.run(
-            ["jq", expression], input=json.dumps(command), capture_output=True, text=True, check=True, timeout=30
-        ).stdout
-    )
-    assert not [key for key in stripped if RESOURCE_KEY.match(key)], stripped
-    assert {k: v for k, v in command.items() if not RESOURCE_KEY.match(k)} == stripped
-
-    assert registration_body(script) == stripped_path, "the registration must post the filtered command"
