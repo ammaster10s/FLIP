@@ -96,7 +96,13 @@ make aks-destroy     AZ_SUBSCRIPTION="$SUB"
 
 The API server admits one IP, and Azure refuses to change it while the cluster is stopped, which
 is why `aks-start` does it after starting. If that step fails the cluster is still running, and
-billing: retry with `aks-allow-ip`, or `aks-stop`. Deploying the chart onto the cluster:
+billing: retry with `aks-allow-ip`, or `aks-stop`.
+
+Azure never upgrades the cluster on its own (no upgrade channel, and the node OS patches itself in
+place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
+`node_size` node first: 8 vCPUs at the default size, so raise the quota before it.
+
+Deploying the chart onto the cluster:
 [`trust/deploy/helm`](../../../trust/deploy/helm/README.md).
 
 ## Joining a hub
