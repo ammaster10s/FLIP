@@ -37,6 +37,10 @@ run "state_account_is_entra_only" {
     condition     = azurerm_storage_account.state.allow_nested_items_to_be_public == false
     error_message = "State storage must not allow public blobs."
   }
+  assert {
+    condition     = azurerm_role_assignment.state_blob.principal_type == "User"
+    error_message = "The operator's state role states its principal type (an az login user by default)."
+  }
 }
 
 run "egress_ip_is_static_standard" {
