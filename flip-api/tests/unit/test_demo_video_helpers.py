@@ -314,3 +314,112 @@ def test_a_take_with_no_frames_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="no frames"):
         rec.encode(tmp_path / "out.mp4")
+
+
+class FakeClock:
+    """Stands in for ``demo_video.time``: sleeping advances the clock instantly."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakeXnat(requests.Session):
+    """Answers XNAT GETs by URL fragment; container listings come from a script, one per poll."""
+
+    def __init__(self, container_polls: list) -> None:
+        super().__init__()
+        self.container_polls = container_polls
+        self.calls: list[tuple[str, str]] = []
+
+    @staticmethod
+    def _json(body) -> requests.Response:
+        response = requests.Response()
+        response.status_code = 200
+        response._content = json.dumps(body).encode()
+        return response
+
+    def get(self, url, **kwargs) -> requests.Response:
+        url = str(url)
+        self.calls.append(("GET", url))
+        if url.endswith("/containers"):
+            poll = self.container_polls.pop(0) if len(self.container_polls) > 1 else self.container_polls[0]
+            if isinstance(poll, Exception):
+                raise poll
+            return self._json([{"status": status} for status in poll])
+        if "/data/projects?" in url:
+            return self._json({"ResultSet": {"Result": [{"ID": "xp1", "secondary_ID": "flip-1"}]}})
+        if "/experiments?" in url:
+            return self._json({"ResultSet": {"Result": [{"ID": "XNAT_E1"}]}})
+        return self._json({"ResultSet": {"Result": []}})  # assessors
+
+    def delete(self, url, **kwargs) -> requests.Response:
+        self.calls.append(("DELETE", str(url)))
+        response = requests.Response()
+        response.status_code = 200
+        return response
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    fake = FakeClock()
+    monkeypatch.setattr(demo_video, "time", fake)
+    return fake
+
+
+def _container_polls(xnat: FakeXnat) -> int:
+    return sum(1 for _, url in xnat.calls if url.endswith("/containers"))
+
+
+def test_the_xnat_wait_returns_once_the_project_conversions_drain(clock: FakeClock) -> None:
+    xnat = FakeXnat([["Created", "Finalizing", "Complete"], ["Finalizing", "Complete"], ["Complete", "Failed"]])
+
+    demo_video.wait_for_xnat_conversions(xnat, "http://xnat", "xp1", poll_s=10)
+
+    assert _container_polls(xnat) == 3
+    assert ("GET", "http://xnat/xapi/projects/xp1/containers") in xnat.calls
+
+
+def test_a_stalled_container_queue_does_not_hold_the_take(clock: FakeClock, capsys) -> None:
+    # A finalize stall leaves jobs in Finalizing for good.
+    xnat = FakeXnat([["Finalizing"] * 14])
+
+    demo_video.wait_for_xnat_conversions(xnat, "http://xnat", "xp1", timeout_s=900, stall_s=90, poll_s=10)
+
+    assert 90 <= clock.now < 900
+    assert "unchanged for 90s" in capsys.readouterr().out
+
+
+def test_a_queue_still_moving_at_the_timeout_is_recorded_anyway(clock: FakeClock, capsys) -> None:
+    xnat = FakeXnat([["Created"] * n for n in range(300, 0, -1)])
+
+    demo_video.wait_for_xnat_conversions(xnat, "http://xnat", "xp1", timeout_s=120, stall_s=90, poll_s=10)
+
+    assert clock.now == 120
+    assert "still running after 120s" in capsys.readouterr().out
+
+
+def test_container_query_errors_are_retried_not_taken_for_a_stall(clock: FakeClock) -> None:
+    xnat = FakeXnat([requests.exceptions.ConnectionError()] * 12 + [[]])
+
+    demo_video.wait_for_xnat_conversions(xnat, "http://xnat", "xp1", timeout_s=900, stall_s=90, poll_s=10)
+
+    assert clock.now == 120  # twelve failed polls, then the empty queue
+    assert _container_polls(xnat) == 13
+
+
+def test_xnat_sessions_are_cleared_after_the_last_poll(clock: FakeClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Any request after the sweep opens a session, which the browser's login then makes "2 sessions from one IP".
+    xnat = FakeXnat([["Created"], []])
+    monkeypatch.setattr(demo_video.requests, "Session", lambda: xnat)
+
+    resolved = demo_video.resolve_xnat_ids("http://xnat", "admin", "pw", "flip-1")
+
+    assert resolved == {"project": "xp1", "experiment": "XNAT_E1", "has_segmentation": ""}
+    assert xnat.calls[-1] == ("DELETE", "http://xnat/xapi/users/active/admin")
+    assert _container_polls(xnat) == 2

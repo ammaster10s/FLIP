@@ -300,8 +300,11 @@ make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
 ```
 
 XNAT is reached from Python by IPv4 literal (`--xnat-url`, default `http://127.0.0.1:8105`): Docker Swarm ingress
-accepts `::1` connections and never answers them. Before segment 3 the recorder deletes the XNAT user's stale sessions,
-which otherwise surface on camera as a sessions-per-IP banner or a greyed "Session Expired" page.
+accepts `::1` connections and never answers them. Before segment 3 the recorder waits for the XNAT project's container
+jobs (the dcm2niix burst right after the import, during which a page takes ~40 s to open) to drain, giving up with a
+warning after 90 s without progress (a finalize stall) or 15 min, then deletes the XNAT user's sessions last, which
+otherwise surface on camera as a sessions-per-IP banner or a greyed "Session Expired" page. Segment 6 switches the
+metrics to the grid so the finished curves are on camera before the download.
 
 ## Hub Environment Variables
 

@@ -331,6 +331,68 @@ def _pick_experiment(xnat: requests.Session, xnat_url: str, experiments: list[di
     return experiments[0]
 
 
+CONTAINER_DONE_STATUSES = ("Complete", "Failed", "Killed")
+
+
+def clear_xnat_sessions(xnat: requests.Session, xnat_url: str, username: str) -> None:
+    """Sweep the user's XNAT sessions, this one included, just before the take.
+
+    Piles of stale JSESSIONs make XNAT show a sessions-per-IP attention banner and stale-expiry
+    dialogs in the recording. Swept last, so no poll of ours re-opens one before the browser signs in.
+    """
+    try:
+        xnat.delete(f"{xnat_url}/xapi/users/active/{username}", timeout=30)
+        _log("  🧹 cleared existing XNAT sessions for the demo user")
+    except requests.exceptions.RequestException:
+        _log("  ⚠️  could not clear XNAT sessions; continuing")
+
+
+def wait_for_xnat_conversions(
+    xnat: requests.Session,
+    xnat_url: str,
+    xnat_project: str,
+    timeout_s: int = 900,
+    stall_s: int = 90,
+    poll_s: int = 10,
+) -> None:
+    """Block until the project's container jobs (dcm2niix) have drained, so XNAT is responsive on camera.
+
+    The pull threshold is met while XNAT is still converting hundreds of fresh studies, and a page
+    opened then takes ~40 s to load. Returns early, with a warning, when the active count stops
+    moving for ``stall_s`` (a finalize stall never drains) or at ``timeout_s``; the take goes on.
+
+    Args:
+        xnat (requests.Session): Authenticated XNAT session.
+        xnat_url (str): Base URL of the trust's XNAT.
+        xnat_project (str): XNAT project id whose containers to wait on.
+        timeout_s (int): Longest wait in seconds.
+        stall_s (int): How long an unchanged active count counts as stalled.
+        poll_s (int): Seconds between polls.
+    """
+    _log(f"⏳ Waiting for XNAT container jobs in {xnat_project} to drain (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    last_active, last_change = None, time.monotonic()
+    while time.monotonic() < deadline:
+        try:
+            resp = xnat.get(f"{xnat_url}/xapi/projects/{xnat_project}/containers", timeout=60)
+            resp.raise_for_status()
+            active = sum(1 for c in resp.json() if not str(c.get("status", "")).startswith(CONTAINER_DONE_STATUSES))
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            _log(f"  ⚠️  container query error ({type(exc).__name__}); retrying")
+        else:
+            if active == 0:
+                _log("  ✅ no container jobs running")
+                return
+            if active != last_active:
+                _log(f"  📊 {active} container job(s) still running")
+                last_active, last_change = active, time.monotonic()
+            elif time.monotonic() - last_change >= stall_s:
+                _log(f"  ⚠️  {active} container job(s) unchanged for {stall_s}s (stalled?); recording anyway")
+                return
+        time.sleep(poll_s)
+    _log(f"  ⚠️  container jobs still running after {timeout_s}s; recording anyway")
+
+
 def resolve_xnat_ids(
     xnat_url: str, username: str, password: str, flip_project_id: str, timeout_s: int = 600
 ) -> dict[str, str]:
@@ -338,7 +400,8 @@ def resolve_xnat_ids(
 
     The imaging import creates one XNAT project per FLIP project with
     ``secondary_ID`` set to the FLIP project UUID
-    (trust/imaging-api services/projects.py), so match on that.
+    (trust/imaging-api services/projects.py), so match on that. Once found, waits for the
+    project's conversions to drain, then clears the user's XNAT sessions for the take.
 
     Args:
         xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8105).
@@ -356,14 +419,6 @@ def resolve_xnat_ids(
     # per-request basic auth would also mint a fresh JSESSION every poll.
     xnat = requests.Session()
     xnat.auth = (username, password)
-    # Sweep the user's accumulated sessions first — piles of stale JSESSIONs
-    # make XNAT show a sessions-per-IP attention banner and stale-expiry
-    # dialogs in the recording.
-    try:
-        xnat.delete(f"{xnat_url}/xapi/users/active/{username}", timeout=30)
-        _log("  🧹 cleared existing XNAT sessions for the demo user")
-    except requests.exceptions.RequestException:
-        _log("  ⚠️  could not clear XNAT sessions; continuing")
     while time.monotonic() < deadline:
         try:
             resp = xnat.get(f"{xnat_url}/data/projects?format=json", timeout=60)
@@ -386,6 +441,8 @@ def resolve_xnat_ids(
                                 "has_segmentation": "yes" if experiment.get("_has_roi_collection") else "",
                             }
                             _log(f"  ✅ XNAT ids: {resolved}")
+                            wait_for_xnat_conversions(xnat, xnat_url, xnat_project_id)
+                            clear_xnat_sessions(xnat, xnat_url, username)
                             return resolved
         except requests.exceptions.RequestException as exc:
             _log(f"  ⚠️  XNAT query error ({type(exc).__name__}); retrying")
