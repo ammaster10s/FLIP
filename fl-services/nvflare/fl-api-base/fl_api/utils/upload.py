@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -302,7 +303,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # The job's own meta.json: the template's, or the researcher's when they upload one. It is checked before any
     # folder is configured, and its GPU count settled, because the request is job-level (FLIP#70).
     meta_json_path = safe_join(job_dir, META)
-    job_meta = parse_job_meta(read_config(meta_json_path)) if meta_json_path.is_file() else JobMeta()
+    job_meta = JobMeta()
+    if meta_json_path.is_file():
+        try:
+            raw_meta = read_config(meta_json_path)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"meta.json is not valid JSON: {e}") from e
+        job_meta = parse_job_meta(raw_meta)
     resources, resources_source = resolve_job_resources(
         override=body.resources,
         declared_gpus=job_meta.declared_gpus,

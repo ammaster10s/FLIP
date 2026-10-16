@@ -471,7 +471,8 @@ def _assemble(tmp_path, monkeypatch, meta=None, resources=None, default_gpus=0, 
 
     def fake_get(url, **_):
         resp = MagicMock(is_redirect=False, is_permanent_redirect=False)
-        resp.content = json.dumps(files[url.removeprefix(f"{base}/")]).encode()
+        content = files[url.removeprefix(f"{base}/")]
+        resp.content = (content if isinstance(content, str) else json.dumps(content)).encode()
         return resp
 
     monkeypatch.setattr(upload_module.requests, "get", fake_get)
@@ -548,6 +549,11 @@ def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
     assert meta["resource_spec"] == {"@default": {"num_of_cpus": 4}}
     assert response["resources"] == {"num_gpus": 0}
     assert response["resources_source"] == "submission"
+
+
+def test_a_meta_json_that_is_not_json_is_refused_naming_the_file(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="meta.json is not valid JSON"):
+        _assemble(tmp_path, monkeypatch, meta='{"resource_spec": ')
 
 
 def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
