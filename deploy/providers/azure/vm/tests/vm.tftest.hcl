@@ -93,6 +93,26 @@ run "rejects_a_branch_name_as_ref" {
   expect_failures = [var.flip_ref]
 }
 
+run "rejects_a_prefix_no_storage_account_name_allows" {
+  command = plan
+
+  variables {
+    name_prefix = "flip-az"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_a_prefix_too_long_for_a_storage_account_name" {
+  command = plan
+
+  variables {
+    name_prefix = "flipazuresite01"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
 run "data_disk_is_lun_0" {
   command = plan
 

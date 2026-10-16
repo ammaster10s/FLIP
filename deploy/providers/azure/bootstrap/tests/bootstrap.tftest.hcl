@@ -81,6 +81,26 @@ run "rejects_a_non_guid_subscription" {
   expect_failures = [var.subscription_id]
 }
 
+run "rejects_a_prefix_no_storage_account_name_allows" {
+  command = plan
+
+  variables {
+    name_prefix = "flip-az"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_a_prefix_too_long_for_a_storage_account_name" {
+  command = plan
+
+  variables {
+    name_prefix = "flipazuresite01"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
 run "budget_needs_an_email" {
   command = plan
 

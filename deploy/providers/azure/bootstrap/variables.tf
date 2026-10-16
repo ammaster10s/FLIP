@@ -35,9 +35,14 @@ variable "egress_location" {
 }
 
 variable "name_prefix" {
-  description = "Prefix for resource names."
+  description = "Prefix for resource names; the vm root takes the same one and builds a storage account name from it, hence 3-13 lowercase letters and digits."
   type        = string
   default     = "flipaz"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,13}$", var.name_prefix))
+    error_message = "name_prefix must be 3-13 lowercase letters and digits: it starts a storage account name (<prefix>kit<8 hex>, at most 24)."
+  }
 }
 
 variable "state_storage_account_name" {
