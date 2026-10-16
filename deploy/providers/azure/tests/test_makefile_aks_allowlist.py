@@ -53,6 +53,7 @@ def test_start_admits_the_operator_once_the_cluster_is_up(tmp_path):
     [
         "",  # the api.ipify.org lookup failed
         "203.0.113.0/24",
+        "999.1.1.1",  # shaped like an address, but no octet exceeds 255
         "203.0.113.7,198.51.100.1",
         "example.com",
         "203.0.113.7; touch PWNED",
