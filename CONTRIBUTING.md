@@ -678,8 +678,8 @@ make -C trust/deploy/helm smoke-cstore
 make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 
 # The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
-# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, FL client steady; writes a
-# JSON + markdown report under build/selftest/ and needs no hub
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
+# steady; writes a JSON + markdown report under build/selftest/ and needs no hub
 make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 

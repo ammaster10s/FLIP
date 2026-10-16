@@ -205,6 +205,8 @@ Postgres data below the fresh disk's `lost+found`, the S3 vocabulary load off); 
 the per-trust override. Better, put `K8S_PLATFORM_VALUES=values-aks.yaml` in the kit file: every `deploy`,
 `deploy-trust-k8s` and `upgrade-trust-k8s` with that `KIT` then applies it. A run without it would move PGDATA back
 to the volume root (both databases crash-loop) and look for the kit on the node (the FL client stays Pending).
+The overlays live beside the chart in this repository, not in the packaged chart (`.helmignore` keeps them out),
+so a deploy from a chart tarball passes a checkout's copy by path.
 `kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
 ...) in `<release>-flip-trust-fl-kit` (set `flClient.kit.secretName` only for a Secret you build yourself with `scripts/kit_secret.py --name`; `make kit-secret` always writes the default name) and refuses a kit
 missing its backend's files, a nested directory, or more than a Secret's 1 MiB — and a Flower kit
@@ -837,6 +839,8 @@ plugin has no concurrency setting of its own on this backend, so the chart bound
   (`<release>-flip-trust-xnat-container-jobs`) admits that many BestEffort pods in the
   namespace. A Job over the cap gets no pod yet: its events say `FailedCreate ... exceeded quota`,
   which is expected, and the Job controller retries it at most a minute apart until a slot frees.
+  A creation the quota refuses is not a pod failure, so it never counts against the Job's
+  `backoffLimit`: a conversion over the cap waits, it is not dropped.
   The backlog drains with no Pending pods.
 
 Watch a pull convert with `kubectl describe resourcequota -n <ns>` (pods used against the cap)
