@@ -25,7 +25,7 @@ the AKS half comes later.
 |---|---|---|---|
 | Bootstrap | `bootstrap/` | Resource group, Terraform state storage (Entra ID access only), a budget alert, the node's static outbound IP | Created once, kept across node rebuilds |
 | Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs, all inbound denied at the VM's NIC, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
-| Kit drop | `modules/kit_drop/` (on by default in `vm/`) | A storage account with shared keys off and a private `kits` container. Its firewall admits only the node's subnet and your IP; every blob is deleted a day after upload. The node can read the container, you can write to it | With the node |
+| Kit drop | `modules/kit_drop/` (on by default in `vm/`) | A storage account with shared keys off and a private `kits` container. Its firewall admits only the node's subnet and your IP; a lifecycle rule deletes every blob a day after upload, and Azure runs it daily, so within about 48 hours. The node can read the container, you can write to it | With the node |
 
 At first boot cloud-init installs `flip-node` (`vm/templates/flip-node.sh`). It mounts the data
 disk, clones FLIP at the commit you planned with, and runs `trust/deploy/ansible/azure.yml` on
@@ -115,7 +115,7 @@ then pass the same `LOCATION=<region>` to `bootstrap` (to move the IP) and to `p
 - **The node cannot fetch its kit.** `fetch-kit` retries for about five minutes and then
   names the status: 403 right after an apply is the node's read role still propagating (run it
   again); a 403 that persists on a site-supplied subnet (`existing_subnet_id`) means the subnet
-  lacks the `Microsoft.Storage` service endpoint the kit drop's firewall needs; 404 means the blob was never uploaded or has expired (kits last a day: upload again).
+  lacks the `Microsoft.Storage` service endpoint the kit drop's firewall needs; 404 means the blob was never uploaded or has expired (kits are deleted within about 48 hours: upload again).
 
 ## Checks without Azure
 

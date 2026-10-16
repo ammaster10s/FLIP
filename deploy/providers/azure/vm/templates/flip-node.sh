@@ -138,7 +138,7 @@ fetch_kit() {
             echo "ERROR: could not fetch ${name} from the kit drop (HTTP ${status} after ${attempt} attempts)." >&2
             echo "  403: the node's read role may still be propagating (minutes after an apply), or the" >&2
             echo "       storage firewall does not admit the node subnet. 404: the blob was never uploaded," >&2
-            echo "       or has expired (kits are deleted a day after upload): run make kit-upload again." >&2
+            echo "       or has expired (deleted within about 48 hours of upload): run make kit-upload again." >&2
             exit 1
         fi
         echo "Kit drop answered HTTP ${status}; retrying (${attempt}/${FETCH_ATTEMPTS})..."
