@@ -82,8 +82,9 @@ spec:
           #
           # configure-xnat.sh is self-contained: it waits for XNAT, waits for the DQR plugin routes
           # via wait-for-xnat-plugins.sh, then applies site, user, DQR, SCP receiver and PACS
-          # configuration. It short-circuits when the site is already initialised, so re-running on
-          # helm upgrade is safe.
+          # configuration. On an already-initialised site it converges rather than exits: it skips
+          # what is already in place and re-applies the rest, anonymisation script included, so
+          # re-running on helm upgrade is safe and picks up a new image's configuration.
           #
           # The `cd /data/xnat/config` below is a literal on purpose. XNAT_ROOT is a build ARG only —
           # the image never exports it (the Dockerfile exports XNAT_HOME, not XNAT_ROOT), so there is

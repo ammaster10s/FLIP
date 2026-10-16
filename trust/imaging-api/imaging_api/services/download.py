@@ -32,7 +32,6 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_token import SESSION_CHECK_TIMEOUT_SECONDS
 from imaging_api.utils.xnat_url import xnat_url
 
 # Get download directory
@@ -40,6 +39,9 @@ BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
 # The resource-listing columns a cache hit compares: scan id, label, resource id, file count, bytes.
 _STATS_COLUMNS = ("cat_id", "label", "xnat_abstractresource_id", "file_count", "file_size")
+
+# Short: a cache hit holds imaging-api's single event loop while it waits for this listing.
+_CACHE_CHECK_TIMEOUT_SECONDS = 5
 
 
 async def download_and_unzip_images(
@@ -304,8 +306,7 @@ def get_resource_stats(experiment_id: str, resource_type: str, headers: dict[str
         requests.RequestException: If the request fails or times out.
     """
     url = xnat_url("data", "experiments", experiment_id, "scans", "ALL", "resources", query={"format": "json"})
-    # Short, like the session check: a hit holds imaging-api's single event loop for as long as this takes.
-    response = requests.get(url, headers=headers, timeout=SESSION_CHECK_TIMEOUT_SECONDS)
+    response = requests.get(url, headers=headers, timeout=_CACHE_CHECK_TIMEOUT_SECONDS)
     if response.status_code == 404:
         raise NotFoundError(f"XNAT experiment {experiment_id} not found")
     if response.status_code != 200:
