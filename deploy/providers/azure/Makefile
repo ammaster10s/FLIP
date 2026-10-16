@@ -276,7 +276,7 @@ HELM_DIR := $(REPO_ROOT)/trust/deploy/helm
 K8S_NAMESPACE ?= flip-trust
 KUBECTL = kubectl --context $(AKS_NAME)
 CHART = $(MAKE) -C $(HELM_DIR) KUBE_CONTEXT=$(AKS_NAME) NAMESPACE=$(K8S_NAMESPACE)
-AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(MOCK_PACS), $(CURDIR)/aks/values-mock-pacs.yaml)
+AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), $(CURDIR)/aks/values-mock-pacs.yaml)
 AKS_KIT_DIR = build/kits/$(notdir $(TARBALL:.tar.gz=))
 # The kit file's name carries the env token (trust/.env.<KIT>.<env>), derived from PROD in one place.
 ifneq ($(filter aks-join,$(MAKECMDGOALS)),)
@@ -312,15 +312,18 @@ aks-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit
 	@[ -n "$(KIT)" ] && [ -n "$(PROD)" ] || { echo "❌ KIT=<slot> PROD=<env> are required."; exit 1; }
 	$(CHART) deploy-trust-k8s KIT=$(KIT) PROD=$(PROD) PLATFORM_VALUES="$(AKS_VALUES)"
 
-aks-selftest: ## Run the trust self-test against the deployed release (report under build/selftest/)
+aks-selftest: ## Run the trust self-test against the deployed release (report under build/selftest/ at the repo root)
 	$(CHART) selftest
 
 # Container Service Jobs from before the conversion cap (FLIP#1448) still request a CPU each and can
-# fill the node; a Job keeps the pod spec it was created with. TROUBLESHOOTING.md §2.3d.
+# fill the node; a Job keeps the pod spec it was created with. The rule: a Job whose pod template
+# carries a CPU limit at all. The capped registration has none (configure-dcm2niix.sh strips the
+# resource keys on Kubernetes). TROUBLESHOOTING.md §2.3d.
 aks-clear-jobs: ## Delete dcm2niix Jobs created before the conversion cap (asks first)
 	@set -o pipefail; jobs=$$($(KUBECTL) get jobs -n $(K8S_NAMESPACE) -l XNAT_PROJECT -o json | jq -r '.items[] \
 		| select(.spec.template.spec.containers[0].resources.limits.cpu != null) | .metadata.name') || exit 1; \
 	[ -n "$$jobs" ] || { echo "No Container Service Jobs from before the cap."; exit 0; }; \
+	echo "$$jobs"; \
 	echo "$$(echo "$$jobs" | wc -l | tr -d ' ') Jobs from before the cap. Their scans stay unconverted: relaunch dcm2niix from XNAT."; \
 	read -r -p "Delete them? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Nothing deleted."; exit 1; }; \
 	echo "$$jobs" | xargs $(KUBECTL) delete job -n $(K8S_NAMESPACE)

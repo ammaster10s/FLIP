@@ -40,6 +40,14 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
     assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
 
 
+@pytest.mark.parametrize("value", ["0", "false"])
+def test_mock_pacs_off_values_add_no_overlay(tmp_path, value):
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag", MOCK_PACS=value)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "values-mock-pacs.yaml" not in result.stdout
+
+
 @pytest.mark.parametrize("target", ["aks-deploy", "aks-join"])
 def test_kit_and_env_are_required(tmp_path, target):
     result, calls = run_make(tmp_path, target, MAKE="echo make", KIT="Trust_3")
@@ -125,7 +133,7 @@ def test_clear_jobs_deletes_only_the_jobs_from_before_the_cap_after_a_yes(tmp_pa
     result, calls = run_make(tmp_path, "aks-clear-jobs", kubectl_jobs=JOBS, stdin="yes\n")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 Jobs from before the cap" in result.stdout
+    assert "old-1\nold-2\n2 Jobs from before the cap" in result.stdout, "the names come before the prompt"
     assert calls[-1] == "kubectl --context flipaz-aks delete job -n flip-trust old-1 old-2"
 
 

@@ -233,7 +233,7 @@ The chart loads no OMOP core vocabulary: it is licensed, so each site loads its 
 ``omop.concept`` return nothing, so test with a query that does not.
 
 ``aks-selftest`` runs the VM self-test's checks against the release
-and writes its report under ``build/selftest/``; it needs no hub. The trust has joined when its
+and writes its report under ``build/selftest/`` at the repo root; it needs no hub. The trust has joined when its
 heartbeat is answered:
 
 .. code-block:: bash
@@ -252,6 +252,7 @@ Troubleshooting:
 
 - **kubectl times out or is refused.** Your IP has changed: ``make aks-allow-ip``.
 - **Pods stay Pending while the node is full of dcm2niix Jobs.** Jobs created before the
-  conversion cap still request a CPU each: ``make aks-clear-jobs`` counts them and deletes them
-  once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
+  conversion cap still request a CPU each. ``make aks-clear-jobs`` selects the Jobs whose pod
+  template carries a CPU limit at all (the capped registration sets none), lists them and deletes
+  them once you type ``yes``. Then relaunch dcm2niix on those scans from XNAT
   (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).
