@@ -438,3 +438,19 @@ def test_xnat_sessions_are_cleared_after_the_last_poll(clock: FakeClock, monkeyp
     assert resolved == {"project": "xp1", "experiment": "XNAT_E1", "has_segmentation": ""}
     assert xnat.calls[-1] == ("DELETE", "http://xnat/xapi/users/active/admin")
     assert _container_polls(xnat) == 2
+
+
+def test_workspace_reset_spares_kept_projects(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub = _hub(
+        monkeypatch,
+        users=[[{"id": RESEARCHER_ID, "email": RESEARCHER.email}]],
+        projects=[[{"id": "old-take", "ownerId": RESEARCHER_ID}, {"id": "monai-label", "ownerId": RESEARCHER_ID}]],
+    )
+
+    assert reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS, keep=["monai-label"]) == 1
+    assert hub.deleted == ["old-take"]
+
+
+def test_keep_project_is_repeatable() -> None:
+    assert demo_video.parse_args([]).keep_project == []
+    assert demo_video.parse_args(["--keep-project", "a", "--keep-project", "b"]).keep_project == ["a", "b"]

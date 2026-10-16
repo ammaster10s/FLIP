@@ -46,6 +46,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "On a fresh run, keep the demo researcher's workspace as it is, instead of deleting its earlier projects "
             "and seeding the demo catalogue owned by it"
         ),
+    )
+    parser.add_argument(
+        "--keep-project",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="On a fresh run, spare this project of the researcher's from the workspace reset (repeatable)",
     )
     parser.add_argument("--ui-url", default="http://localhost:44357", help="The dev flip-ui the segments sign in to")
     parser.add_argument(
@@ -507,7 +515,11 @@ def sign_in_headers(persona: Persona) -> dict[str, str]:
 
 
 def reset_researcher_workspace(
-    client: requests.Session, headers: dict[str, str], researcher: Persona, trusts: list[dict[str, Any]]
+    client: requests.Session,
+    headers: dict[str, str],
+    researcher: Persona,
+    trusts: list[dict[str, Any]],
+    keep: Collection[str] = (),
 ) -> int:
     """Put the demo researcher's workspace in the same state for every take: the catalogue and nothing else.
 
@@ -524,6 +536,8 @@ def reset_researcher_workspace(
         headers (dict[str, str]): Admin auth headers.
         researcher (Persona): The researcher the segments sign in as.
         trusts (list[dict[str, Any]]): Trusts the catalogue is staged/approved at.
+        keep (Collection[str]): Ids of the researcher's projects to spare (``--keep-project``), e.g. one
+            another tool still points at.
 
     Returns:
         int: How many projects were deleted.
@@ -538,7 +552,11 @@ def reset_researcher_workspace(
     # The owner filter narrows the listing; the id check is what guarantees nobody else's project goes.
     listed = seed_demo_projects.paged(client, headers, f"/projects?owner={user_id}", "list the researcher's projects")
     catalogue = {entry["name"] for entry in seed_demo_projects.CATALOGUE}
-    owned = [p for p in listed if str(p.get("ownerId")) == str(user_id) and p.get("name") not in catalogue]
+    owned = [
+        p
+        for p in listed
+        if str(p.get("ownerId")) == str(user_id) and p.get("name") not in catalogue and str(p["id"]) not in keep
+    ]
     for project in owned:
         resp = client.delete(f"{constants.BASE_URL}/projects/{project['id']}", headers=headers, timeout=60)
         e2e_smoke._ensure_ok(resp, f"delete project {project['id']}")
@@ -630,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
         STATE_FILE.unlink(missing_ok=True)
         state: dict[str, str] = {}
         if not args.keep_workspace:
-            reset_researcher_workspace(client, headers, researcher, trusts)
+            reset_researcher_workspace(client, headers, researcher, trusts, keep=args.keep_project)
     else:
         state = read_state()
         if args.project_id:

@@ -289,7 +289,7 @@ are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
 the pull; `--model-id` for 5–6), `--keep-workspace` (a fresh run otherwise first deletes every project the demo
 researcher owns outside the demo catalogue, then seeds that catalogue (`make seed-demo-projects`) as the researcher, so
 each take opens on the same workspace of its own projects; never for the fallback admin. A catalogue seeded earlier
-under another owner is only reported: `make seed-demo-projects EXTRA_ARGS=--cleanup` once to re-seed it), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
+under another owner is only reported: `make seed-demo-projects EXTRA_ARGS=--cleanup` once to re-seed it), `--keep-project <uuid>` (repeatable: reset as usual but spare that project, e.g. the spleen project MONAI Label points at), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
 the default 3 records the 1280x800 viewport at 3840x2400). Segment mp4s, `state.json` and the final cut land under
 `flip-api/demo-video/` (gitignored); the final mp4 is named for the recorded app (`flip-demo-xray.mp4` /
 `flip-demo-spleen.mp4`), and a failed segment leaves a `*.failure.png` of the page beside its mp4. The spleen take:
