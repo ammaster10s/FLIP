@@ -177,7 +177,12 @@ UNDRAWN_MODULES: frozenset[str] = frozenset(
     }
 )
 
-GRAPH_ATTR = {"fontsize": "20", "pad": "0.4", "nodesep": "0.4", "ranksep": "0.7", "splines": "spline"}
+#: Font sizes a notch above the diagrams defaults (title 20, nodes 13, edges 14, clusters 12) so labels stay legible
+#: once Sphinx scales the pictures to page width.
+GRAPH_ATTR = {"fontsize": "24", "pad": "0.4", "nodesep": "0.6", "ranksep": "0.7", "splines": "spline"}
+NODE_ATTR = {"fontsize": "15"}
+EDGE_ATTR = {"fontsize": "15"}
+CLUSTER_ATTR = {"fontsize": "15", "margin": "20"}
 DEFAULT_NAME = "central-hub-aws"
 
 #: The pictures ``render`` produces, as ``<DEFAULT_NAME>-<suffix>.png``. One canvas holding every edge was
@@ -187,6 +192,11 @@ DIAGRAMS: tuple[tuple[str, str, str], ...] = (
     ("lza-network", "FLIP Central Hub on an LZA estate — request and FL paths", "LR"),
     ("lza-data", "FLIP Central Hub on an LZA estate — data and platform services", "TB"),
 )
+
+
+def _cluster(label: str) -> Cluster:
+    """A ``Cluster`` with the shared label font size."""
+    return Cluster(label, graph_attr=CLUSTER_ATTR)
 
 
 class _Drawn:
@@ -239,7 +249,7 @@ class _Drawn:
 
 def _fargate_services(drawn: _Drawn) -> tuple[Node, Node, Node]:
     """Draw the ECS cluster with its three services; shared by every picture."""
-    with Cluster(drawn.mark("ECS Fargate cluster")):
+    with _cluster(drawn.mark("ECS Fargate cluster")):
         flip_api = drawn.node("flip-api", Fargate)
         fl_api = drawn.node("fl-api-net-1", Fargate)
         fl_server = drawn.node("fl-server-net-1", Fargate)
@@ -256,23 +266,23 @@ def _hub_internal_edges(flip_api: Node, fl_api: Node, fl_server: Node, cloud_map
 def _draw_network(drawn: _Drawn) -> None:
     """Request and FL paths: the networking account's edge, the Transit Gateway, one internal NLB."""
     users = drawn.node("Users", Users)
-    with Cluster("Trust node (on-prem or AWS-hosted)"):
+    with _cluster("Trust node (on-prem or AWS-hosted)"):
         trust_api = drawn.node("trust-api", Server)
         fl_client = drawn.node("fl-client-net-1", Server)
 
-    with Cluster("Networking account (edge stack, separate repository)"):
+    with _cluster("Networking account (edge stack, separate repository)"):
         edge_cloudfront = drawn.node(
             "Edge CloudFront + WAF", CloudFront, caption="Edge CloudFront + WAF\n(UI via cross-account OAC)"
         )
         relay_nlb = drawn.node("Web relay NLB", NLB, caption="Web relay NLB\n(CloudFront VPC origin)")
         edge_nlb = drawn.node("Edge NLB", NLB, caption="Edge NLB (internet-facing)\nFL :8002 prod / :8003 stag")
-        with Cluster("Transit Gateway"):
+        with _cluster("Transit Gateway"):
             firewall = drawn.node("Network Firewall", NetworkFirewall, caption="Network Firewall\n(central)")
             tgw = drawn.node("Transit Gateway", TransitGateway, caption="Transit Gateway\n(attachment, both AZs)")
 
-    with Cluster("Workload account"):
-        with Cluster(drawn.mark("Workload account VPC (accelerator-provisioned)") + "\n(no IGW, no NAT)"):
-            with Cluster(drawn.mark("App subnets") + "\n(route to the TGW · both AZs)"):
+    with _cluster("Workload account"):
+        with _cluster(drawn.mark("Workload account VPC (accelerator-provisioned)") + "\n(no IGW, no NAT)"):
+            with _cluster(drawn.mark("App subnets") + "\n(route to the TGW · both AZs)"):
                 internal_nlb = drawn.node(
                     "Internal NLB", NLB, caption="Internal NLB\nstatic .251 per subnet\n:443 web · :8002 FL"
                 )
@@ -325,38 +335,38 @@ def _draw_data(drawn: _Drawn) -> None:
 
     RDS sits in the isolated data subnets; the interface endpoints are centralised in the networking account.
     """
-    with Cluster(drawn.mark("Workload account VPC (accelerator-provisioned)")):
-        with Cluster(drawn.mark("App subnets") + "\n(route to the TGW)"):
+    with _cluster(drawn.mark("Workload account VPC (accelerator-provisioned)")):
+        with _cluster(drawn.mark("App subnets") + "\n(route to the TGW)"):
             flip_api, fl_api, fl_server = _fargate_services(drawn)
             rds_proxy = drawn.node("RDS Proxy", RDS, caption="RDS Proxy\n(IAM auth, TLS)")
             efs = drawn.node("EFS", EFS, caption="EFS\n(FL workspaces)")
-        with Cluster(drawn.mark("Data subnets") + "\n(local routes only)"):
+        with _cluster(drawn.mark("Data subnets") + "\n(local routes only)"):
             rds = drawn.node("RDS PostgreSQL", RDSPostgresqlInstance)
-    with Cluster("Networking account"):
+    with _cluster("Networking account"):
         endpoints = drawn.node(
             "Central VPC endpoints",
             Endpoint,
             caption="Central interface endpoints\n(Secrets, Cognito, SES, SSM, Logs)",
         )
 
-    with Cluster("S3"):
+    with _cluster("S3"):
         kits = drawn.node("Participant kits bucket", S3, caption="Participant kits\nbucket")
         app_bundles = drawn.node("App bundles bucket", S3, caption="App bundles\nbucket")
-        model_files = drawn.node("Model files bucket", S3, caption="Model files bucket\nuploaded/ → scanned/")
+        model_files = drawn.node("Model files bucket", S3, caption="Model files bucket\nuploaded → scanned")
         fl_results = drawn.node("FL results bucket", S3, caption="FL results\nbucket")
         drawn.node("Access logs buckets", S3, caption="Access logs\nbucket")
         # Read by the networking account's edge over cross-account OAC, which is why it carries no edge of its own
         # in this picture — the edge is in another repository.
-        drawn.node("Demo assets bucket", S3, caption="Ark+ demo assets\nbucket (public downloads)")
+        drawn.node("Demo assets bucket", S3, caption="Ark+ demo bucket\n(public downloads)")
 
-    with Cluster("Regional services"):
-        cognito = drawn.node("Cognito", Cognito, caption="Cognito\n(user pool, TOTP MFA)")
+    with _cluster("Regional services"):
+        cognito = drawn.node("Cognito", Cognito, caption="Cognito user pool\n(TOTP MFA)")
         ses = drawn.node("SES", SES)
         secrets = drawn.node("Secrets Manager", SecretsManager, caption="Secrets Manager\nFLIP_API")
         params = drawn.node("Parameter Store", ParameterStore, caption="Parameter Store\n/flip/*")
         kms = drawn.node("KMS", KMS, caption="KMS\nflip-app-key")
         logs = drawn.node("CloudWatch Logs", CloudwatchLogs)
-        drawn.node("ACM certificates", ACM, caption="ACM certificate\n(NLB :443 once DNS moves)")
+        drawn.node("ACM certificates", ACM, caption="ACM cert, NLB :443\n(once DNS moves)")
 
     flip_api >> Edge(label="SQL") >> rds_proxy >> rds
     fl_api >> efs
@@ -409,7 +419,14 @@ def render(out_dir: Path) -> list[Path]:
         target = out_dir / f"{DEFAULT_NAME}-{suffix}"
         drawn.start_picture()
         with Diagram(
-            title, filename=str(target), outformat="png", show=False, direction=direction, graph_attr=GRAPH_ATTR
+            title,
+            filename=str(target),
+            outformat="png",
+            show=False,
+            direction=direction,
+            graph_attr=GRAPH_ATTR,
+            node_attr=NODE_ATTR,
+            edge_attr=EDGE_ATTR,
         ):
             _PAINTERS[suffix](drawn)
         outputs.append(target.with_suffix(".png"))
