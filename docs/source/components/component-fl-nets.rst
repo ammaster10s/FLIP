@@ -83,6 +83,14 @@ Each net trains one job at a time; the queue is first-come, first-served, and a 
 shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
 nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
 
+A job's server-side process reports the model's final status to the hub itself. If that process dies first (out of
+memory, killed, or lost when its server restarts), the hub notices on its own: every ``SCHEDULER_FL_JOB_WATCHDOG_RATE``
+minutes it compares each running job with its net's job list, and a job the FL server has ended or no longer has, while
+its model is still running, is set to ``ERROR`` after ``FL_JOB_WATCHDOG_STRIKES`` checks in a row (default 3). The
+model's log says what the FL server reported, and the net takes the next queued job. A job still being prepared
+``FL_JOB_PREPARE_TIMEOUT_MINUTES`` (default 30) after pickup is treated the same way. An FL API the hub cannot reach
+fails nothing: the net shows offline on the Connection Status page instead.
+
 GPU requirements and NVFLARE's scheduler
 ========================================
 
@@ -106,14 +114,14 @@ not provide the resources:
   ``ERROR`` and the net is freed. Without this, a job that never starts has nothing inside it to tell the
   hub, and the model would sit at ``INITIATED`` with the net ``BUSY``. That last update is the reporter's
   only chance, so it retries it for about a minute until the hub accepts it; if the hub is unreachable for
-  longer, the model stays ``INITIATED`` and **Abort job** on it frees the net.
+  longer, the job watchdog above fails the model once NVFLARE lists the job as failed.
 
 The reporter only hears about a job once the scheduler has asked the Trusts for their resources. NVFLARE
 stops before that, and fires no event, when a job has no deploy map (refused outright), when one of its
 Trusts is not connected (FLIP makes every Trust in a run mandatory), or when fewer Trusts are connected
 than its ``min_clients`` (both retried as above). The hub is told about none of these: the model stays at
-``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. A hub-side check of in-flight models
-against the FL net's own state is tracked in `FLIP#727 <https://github.com/londonaicentre/FLIP/issues/727>`__.
+``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. The job watchdog does not catch the two retried
+cases either, because NVFLARE still lists the job as pending.
 
 **Abort job** also takes a job that is still waiting out of the FL server's queue (NVFLARE marks it
 ``FINISHED:ABORTED``), so it cannot start later, or report to the model once it has been queued again.
@@ -456,9 +464,10 @@ These calls - among others - communicate with the Imaging API and retrieve the d
 
 The first ``get_by_accession_number`` call per (project, accession, resource type) is a full study download out of
 XNAT onto the trust host. The Imaging API caches it there, so later calls — e.g. the same fetch loop running again on
-the next FL round — return the local copy without touching XNAT. Training code can therefore call it every round
-without penalty and should not build its own on-disk guards around it; to force a re-download after the accession's
-content changed in XNAT, the Imaging API's download route accepts ``force_refresh=true`` (uploads through
+the next FL round — return the local copy after one small XNAT check, which downloads it again if the study changed
+there. Training code can therefore call it every round
+without penalty and should not build its own on-disk guards around it; to force a re-download (e.g. a file replaced
+by one of the same size), the Imaging API's download route accepts ``force_refresh=true`` (uploads through
 ``flip.add_resource`` invalidate the cache automatically).
 
 For communication with the Central Hub:
