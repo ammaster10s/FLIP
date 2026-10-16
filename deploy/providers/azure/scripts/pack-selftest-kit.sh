@@ -10,8 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# flip-node: the on-node helper for an Azure FLIP trust node (FLIP#1390). Installed by
-#
 # Pack the FL kit a hubless node self-test runs on (FLIP#1390), on the operator's machine:
 # provision the backend's dev kit here, then tarball only what Trust_1's client needs, in the
 # layout package-onprem-trust-kit uses (fl-kit/...). The node downloads it from the kit drop, so
