@@ -48,13 +48,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import requests
 from playwright.sync_api import Browser, sync_playwright
 
 from flip_api.utils import constants
-from tests import demo_segments, e2e_smoke, xnat_seg_upload
+from tests import demo_segments, e2e_smoke, seed_demo_projects, xnat_seg_upload
 from tests.demo_recorder import take
 from tests.demo_segments import Persona
 from tests.e2e_smoke import SmokeFailure, _get, _log, describe_tutorial
@@ -181,7 +180,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--keep-workspace",
         action="store_true",
-        help="On a fresh run, keep the demo researcher's earlier projects instead of deleting them first",
+        help=(
+            "On a fresh run, keep the demo researcher's workspace as it is, instead of deleting its earlier projects "
+            "and seeding the demo catalogue with it as a member"
+        ),
     )
     parser.add_argument("--ui-url", default="http://localhost:44357", help="The dev flip-ui the segments sign in to")
     parser.add_argument(
@@ -431,52 +433,42 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
-def _paged(client: requests.Session, headers: dict[str, str], path: str, what: str) -> list[dict[str, Any]]:
-    """Every row of a paged hub listing (``path`` already carries its query string)."""
-    rows: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        body = e2e_smoke._ensure_ok(_get(client, f"{path}&pageNumber={page}&pageSize=100", headers), what).json()
-        rows.extend(body.get("data", []))
-        if page >= body.get("totalPages", 1):
-            return rows
-        page += 1
+def reset_researcher_workspace(
+    client: requests.Session, headers: dict[str, str], researcher: Persona, trusts: list[dict[str, Any]]
+) -> int:
+    """Put the demo researcher's workspace in the same state for every take: the catalogue and nothing else.
 
-
-def reset_researcher_workspace(client: requests.Session, headers: dict[str, str], researcher: Persona) -> int:
-    """Delete every project the demo researcher owns, so each take opens on the same workspace.
-
-    The demo researcher exists only for the recorder, so anything it owns is left over from an earlier
-    take, and the researcher's project list is the opening shot. Matching on the researcher's own user id
-    keeps other people's projects, including ones shared with the researcher, out of reach. When the
-    researcher fell back to the well-known admin there is no dedicated account, so nothing is deleted.
+    The researcher's project list is the opening shot. The demo researcher exists only for the recorder,
+    so every project it owns is left over from an earlier take and is deleted, matched on its own user id
+    so other people's projects, including ones shared with it, stay out of reach. The demo catalogue
+    (tests.seed_demo_projects) is then seeded with the researcher as a member, so the list shows believable
+    projects; the catalogue is owned by the admin, so it survives the next reset. When the researcher fell
+    back to the well-known admin there is no dedicated account, so nothing is touched.
 
     Args:
         client (requests.Session): HTTP session for hub calls.
         headers (dict[str, str]): Admin auth headers.
         researcher (Persona): The researcher the segments sign in as.
+        trusts (list[dict[str, Any]]): Trusts the catalogue is staged/approved at.
 
     Returns:
         int: How many projects were deleted.
 
     Raises:
-        SmokeFailure: When the demo researcher is not a hub user, or a listing or delete fails.
+        SmokeFailure: When the demo researcher is not a hub user, or a hub call fails.
     """
     if researcher.fallback:
         _log("⚠️  No demo researcher: keeping the workspace (the fallback admin's projects are not the recorder's)")
         return 0
-    email = researcher.email.lower()
-    users = _paged(client, headers, f"/users?search={quote(researcher.email)}", "look up the demo researcher")
-    user_id = next((u["id"] for u in users if str(u.get("email", "")).lower() == email), None)
-    if user_id is None:
-        raise SmokeFailure(f"Demo researcher {researcher.email} is not a hub user — run `make demo-users` first")
+    user_id = seed_demo_projects.find_user_id(client, headers, researcher.email)
     # The owner filter narrows the listing; the id check is what guarantees nobody else's project goes.
-    listed = _paged(client, headers, f"/projects?owner={user_id}", "list the demo researcher's projects")
+    listed = seed_demo_projects.paged(client, headers, f"/projects?owner={user_id}", "list the researcher's projects")
     owned = [p for p in listed if str(p.get("ownerId")) == str(user_id)]
     for project in owned:
         resp = client.delete(f"{constants.BASE_URL}/projects/{project['id']}", headers=headers, timeout=60)
         e2e_smoke._ensure_ok(resp, f"delete project {project['id']}")
     _log(f"🧹 Workspace reset: deleted {len(owned)} earlier project(s) owned by {researcher.email}")
+    seed_demo_projects.seed_catalogue(client, headers, trusts, seed_demo_projects.CATALOGUE, user_id)
     return len(owned)
 
 
@@ -562,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         STATE_FILE.unlink(missing_ok=True)
         state: dict[str, str] = {}
         if not args.keep_workspace:
-            reset_researcher_workspace(client, headers, researcher)
+            reset_researcher_workspace(client, headers, researcher, trusts)
     else:
         state = read_state()
         if args.project_id:

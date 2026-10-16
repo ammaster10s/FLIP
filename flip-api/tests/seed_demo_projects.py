@@ -32,7 +32,9 @@ dev stack that is exactly the point (the projects are then fully explorable),
 but it is real work for Orthanc/XNAT.
 
 Created ids are recorded in tests/seed_demo_projects.json; `--cleanup`
-deletes everything listed there.
+deletes everything listed there. `--member <email>` gives that user access to
+every catalogue project (the demo recorder passes its researcher, who otherwise
+sees only the projects it owns or belongs to).
 
 Usage:
     make seed-demo-projects                     # from the repo root
@@ -48,6 +50,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import requests
 
@@ -142,7 +145,55 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--states unstaged,unstaged_query,staged first, --states approved_model later."
         ),
     )
+    parser.add_argument(
+        "--member",
+        default=None,
+        help="Email of a hub user to give access to every catalogue project (e.g. the demo researcher)",
+    )
     return parser.parse_args(argv)
+
+
+def paged(client: requests.Session, headers: dict[str, str], path: str, what: str) -> list[dict[str, Any]]:
+    """Every row of a paged hub listing (``path`` already carries its query string).
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        path (str): The listing path with its query string.
+        what (str): What is being listed, for the error message.
+
+    Returns:
+        list[dict[str, Any]]: The rows of every page.
+    """
+    rows: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        body = _ensure_ok(_get(client, f"{path}&pageNumber={page}&pageSize=100", headers), what).json()
+        rows.extend(body.get("data", []))
+        if page >= body.get("totalPages", 1):
+            return rows
+        page += 1
+
+
+def find_user_id(client: requests.Session, headers: dict[str, str], email: str) -> str:
+    """The hub user id of ``email`` (case-insensitive).
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        email (str): The user's email.
+
+    Returns:
+        str: The user's id.
+
+    Raises:
+        SmokeFailure: When no hub user has that email.
+    """
+    users = paged(client, headers, f"/users?search={quote(email)}", f"look up user {email}")
+    user_id = next((u["id"] for u in users if str(u.get("email", "")).lower() == email.lower()), None)
+    if user_id is None:
+        raise SmokeFailure(f"{email} is not a hub user — run `make demo-users` first")
+    return str(user_id)
 
 
 def select_entries(catalogue: list[dict[str, Any]], states_arg: str | None) -> list[dict[str, Any]]:
@@ -169,8 +220,8 @@ def select_entries(catalogue: list[dict[str, Any]], states_arg: str | None) -> l
     return entries
 
 
-def existing_project_names(client: requests.Session, headers: dict[str, str], names: set[str]) -> set[str]:
-    """Return the subset of catalogue names that already exist as projects on the hub.
+def existing_projects(client: requests.Session, headers: dict[str, str], names: set[str]) -> dict[str, dict[str, Any]]:
+    """Return the catalogue names that already exist as projects on the hub, with their listing rows.
 
     /projects is paginated and its `search` matches substrings of name AND
     description, so query per name and keep exact name matches only.
@@ -181,16 +232,42 @@ def existing_project_names(client: requests.Session, headers: dict[str, str], na
         names (set[str]): Candidate catalogue project names.
 
     Returns:
-        set[str]: The names already present on the hub.
+        dict[str, dict[str, Any]]: Each name already present on the hub, mapped to its project row.
     """
-    found: set[str] = set()
+    found: dict[str, dict[str, Any]] = {}
     for name in sorted(names):
         resp = _ensure_ok(
             _get(client, f"/projects/?search={quote(name)}&pageSize=50", headers), f"look up project {name!r}"
         )
-        if any(row.get("name") == name for row in resp.json().get("data", [])):
-            found.add(name)
+        row = next((row for row in resp.json().get("data", []) if row.get("name") == name), None)
+        if row is not None:
+            found[name] = row
     return found
+
+
+def add_member(client: requests.Session, headers: dict[str, str], row: dict[str, Any], member_id: str) -> None:
+    """Give ``member_id`` access to an existing catalogue project, where the hub still allows it.
+
+    The hub only edits a project's users while it is UNSTAGED, so a staged or approved entry seeded without
+    the member is reported instead: re-seed it (``--cleanup``, then seed again) to include them.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        row (dict[str, Any]): The project's listing row (id, name, status).
+        member_id (str): The user to add.
+    """
+    project = _ensure_ok(_get(client, f"/projects/{row['id']}", headers), f"read project {row['name']!r}").json()
+    users = [str(u["id"]) for u in project.get("users", [])]
+    if member_id in users or str(project.get("ownerId")) == member_id:
+        return
+    if project.get("status") != "UNSTAGED":
+        _log(f"⚠️  {row['name']} is {project.get('status')} and cannot gain a member; re-seed it to include them")
+        return
+    payload = {"name": project["name"], "description": project.get("description", ""), "users": users + [member_id]}
+    resp = client.put(f"{constants.BASE_URL}/projects/{row['id']}", json=payload, headers=headers, timeout=60)
+    _ensure_ok(resp, f"add the member to {row['name']!r}")
+    _log(f"    ✅ member added to {row['name']}")
 
 
 def submit_query(client: requests.Session, headers: dict[str, str], project_id: str, query_file: Path) -> None:
@@ -229,6 +306,7 @@ def build_project(
     headers: dict[str, str],
     entry: dict[str, Any],
     trusts: list[dict[str, Any]],
+    member_ids: list[str],
 ) -> dict[str, Any]:
     """Drive one catalogue entry through the real API up to its target state.
 
@@ -237,6 +315,7 @@ def build_project(
         headers (dict[str, str]): Auth headers.
         entry (dict[str, Any]): Catalogue entry (name/description/state/…).
         trusts (list[dict[str, Any]]): Trusts to stage/approve at.
+        member_ids (list[str]): Users given access to the project.
 
     Returns:
         dict[str, Any]: Record of what was created ({name, project_id, model_id?}).
@@ -244,7 +323,8 @@ def build_project(
     rung = STATE_LADDER.index(entry["state"])
     _log(f"🏗️  {entry['name']}  (target: {entry['state']})")
 
-    payload = ProjectDetails(name=entry["name"], description=entry["description"], users=[]).model_dump()
+    details = ProjectDetails(name=entry["name"], description=entry["description"], users=[UUID(m) for m in member_ids])
+    payload = details.model_dump(mode="json")
     project_id = _ensure_ok(_post(client, "/projects/", payload, headers), "create project").json()["id"]
     record: dict[str, Any] = {"name": entry["name"], "project_id": project_id}
 
@@ -320,19 +400,41 @@ def main(argv: list[str] | None = None) -> int:
         raise SmokeFailure("No trusts registered on the hub — register trusts before seeding")
     _log(f"🏥 Using trusts: {[t.get('code') or t['name'] for t in trusts]}")
 
-    entries = select_entries(CATALOGUE, args.states)
+    member_id = find_user_id(client, headers, args.member) if args.member else None
+    seed_catalogue(client, headers, trusts, select_entries(CATALOGUE, args.states), member_id)
+    _log("🎉 Demo catalogue seeded. Remove it later with: make -C flip-api seed_demo_projects EXTRA_ARGS=--cleanup")
+    return 0
 
+
+def seed_catalogue(
+    client: requests.Session,
+    headers: dict[str, str],
+    trusts: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    member_id: str | None = None,
+) -> None:
+    """Create the catalogue entries not yet on the hub, and give ``member_id`` access to all of them.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        trusts (list[dict[str, Any]]): Trusts to stage/approve at.
+        entries (list[dict[str, Any]]): The catalogue entries to seed.
+        member_id (str | None): A user to add to every entry, if any.
+    """
     # Idempotency: a re-run (or a lost record file) must not duplicate the
     # catalogue — approved entries kick off real imaging imports at the trusts.
-    already = existing_project_names(client, headers, {e["name"] for e in entries})
+    already = existing_projects(client, headers, {e["name"] for e in entries})
 
     created: list[dict[str, Any]] = []
     try:
         for entry in entries:
             if entry["name"] in already:
                 _log(f"⏭️  {entry['name']} already exists on the hub — skipping")
+                if member_id:
+                    add_member(client, headers, already[entry["name"]], member_id)
                 continue
-            created.append(build_project(client, headers, entry, trusts))
+            created.append(build_project(client, headers, entry, trusts, [member_id] if member_id else []))
     finally:
         if created:
             # Merge with any previous run (e.g. a phased --states seeding) so
@@ -340,9 +442,6 @@ def main(argv: list[str] | None = None) -> int:
             previous = json.loads(RECORD_FILE.read_text()).get("created", []) if RECORD_FILE.exists() else []
             RECORD_FILE.write_text(json.dumps({"created": previous + created}, indent=4))
             _log(f"💾 Recorded {len(previous) + len(created)} project(s) in {RECORD_FILE}")
-
-    _log("🎉 Demo catalogue seeded. Remove it later with: make -C flip-api seed_demo_projects EXTRA_ARGS=--cleanup")
-    return 0
 
 
 if __name__ == "__main__":

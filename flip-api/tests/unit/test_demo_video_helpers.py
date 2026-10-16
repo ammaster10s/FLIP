@@ -24,7 +24,7 @@ import requests
 
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
-from tests import demo_video
+from tests import demo_video, seed_demo_projects
 from tests.demo_recorder import FrameSink
 from tests.demo_segments import Persona, strip_licence_header
 from tests.demo_video import (
@@ -205,6 +205,7 @@ def test_each_frame_is_held_until_the_next_and_the_last_until_the_stop(tmp_path:
 RESEARCHER = Persona("flip-demo-researcher@example.com", "pw", role="researcher")
 RESEARCHER_ID = "11111111-1111-1111-1111-111111111111"
 SOMEONE_ELSE = "22222222-2222-2222-2222-222222222222"
+TRUSTS = [{"id": "t1", "code": "GSTT"}]
 
 
 class FakeHub(requests.Session):
@@ -214,6 +215,7 @@ class FakeHub(requests.Session):
         super().__init__()
         self.pages = pages
         self.deleted: list[str] = []
+        self.seeded: list[tuple] = []
 
     def paged_get(self, client, path: str, headers) -> requests.Response:  # signature of tests.e2e_smoke._get
         prefix, _, query = path.partition("&pageNumber=")
@@ -232,11 +234,18 @@ class FakeHub(requests.Session):
 
 
 def _hub(monkeypatch: pytest.MonkeyPatch, users: list[list[dict]], projects: list[list[dict]]) -> FakeHub:
-    hub = FakeHub({
-        f"/users?search={quote(RESEARCHER.email)}": users,
-        f"/projects?owner={RESEARCHER_ID}": projects,
-    })
-    monkeypatch.setattr(demo_video, "_get", hub.paged_get)
+    hub = FakeHub(
+        {
+            f"/users?search={quote(RESEARCHER.email)}": users,
+            f"/projects?owner={RESEARCHER_ID}": projects,
+        }
+    )
+    monkeypatch.setattr(seed_demo_projects, "_get", hub.paged_get)
+    monkeypatch.setattr(
+        seed_demo_projects,
+        "seed_catalogue",
+        lambda client, headers, trusts, entries, member_id: hub.seeded.append((trusts, member_id)),
+    )
     return hub
 
 
@@ -249,24 +258,34 @@ def test_workspace_reset_deletes_only_the_demo_researchers_own_projects(monkeypa
                   [{"id": "p2", "ownerId": RESEARCHER_ID}]],
     )  # fmt: skip
 
-    assert reset_researcher_workspace(hub, {}, RESEARCHER) == 2
+    assert reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS) == 2
     assert hub.deleted == ["p1", "p2"]
+
+
+def test_workspace_reset_seeds_the_catalogue_with_the_researcher_as_member(monkeypatch: pytest.MonkeyPatch) -> None:
+    hub = _hub(monkeypatch, users=[[{"id": RESEARCHER_ID, "email": RESEARCHER.email}]], projects=[[]])
+
+    reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS)
+
+    assert hub.seeded == [(TRUSTS, RESEARCHER_ID)]
 
 
 def test_workspace_reset_never_runs_for_the_fallback_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     hub = _hub(monkeypatch, users=[[]], projects=[[{"id": "admins-project", "ownerId": RESEARCHER_ID}]])
     fallback = Persona(constants.ADMIN_EMAIL_1, "pw", role="researcher", fallback=True)
 
-    assert reset_researcher_workspace(hub, {}, fallback) == 0
+    assert reset_researcher_workspace(hub, {}, fallback, TRUSTS) == 0
     assert hub.deleted == []
+    assert hub.seeded == []
 
 
 def test_workspace_reset_refuses_an_unknown_demo_researcher(monkeypatch: pytest.MonkeyPatch) -> None:
     hub = _hub(monkeypatch, users=[[{"id": SOMEONE_ELSE, "email": "someone@example.com"}]], projects=[[]])
 
     with pytest.raises(SmokeFailure, match="make demo-users"):
-        reset_researcher_workspace(hub, {}, RESEARCHER)
+        reset_researcher_workspace(hub, {}, RESEARCHER, TRUSTS)
     assert hub.deleted == []
+    assert hub.seeded == []
 
 
 def test_workspace_reset_is_on_by_default_and_can_be_kept() -> None:

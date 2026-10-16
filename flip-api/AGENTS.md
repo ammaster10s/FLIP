@@ -58,7 +58,7 @@ make migration_history         # alembic history
 make migration_current         # alembic current
 make demo_video    # record the end-to-end demo video against the running stack (tests/demo_video.py; DEMO_ARGS=...)
 make create_demo_users         # provision the demo Cognito users (DEMO_*_PASSWORD from env; restart flip-api after)
-make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARGS="--cleanup" removes it)
+make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARGS="--cleanup" removes it, "--member <email>" shares it)
 make backfill_cohort_snapshots # queue PERSIST_COHORT for approved projects with no snapshot record (EXTRA_ARGS="--dry-run")
 ```
 
@@ -287,7 +287,8 @@ X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera label upload, s
 conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust
 are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate on later segments without re-running
 the pull; `--model-id` for 5–6), `--keep-workspace` (a fresh run otherwise first deletes every project the demo
-researcher owns, so each take opens on the same workspace; never the fallback admin's), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
+researcher owns, then seeds the demo catalogue (`make seed-demo-projects`) with it as a member, so each take opens on
+the same workspace; never for the fallback admin), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
 the default 3 records the 1280x800 viewport at 3840x2400). Segment mp4s, `state.json` and the final cut land under
 `flip-api/demo-video/` (gitignored); the final mp4 is named for the recorded app (`flip-demo-xray.mp4` /
 `flip-demo-spleen.mp4`), and a failed segment leaves a `*.failure.png` of the page beside its mp4. The spleen take:
