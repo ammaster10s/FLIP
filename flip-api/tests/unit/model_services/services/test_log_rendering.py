@@ -152,10 +152,12 @@ class TestRenderLog:
             == "Training could not start · this trust cannot provide 2 GPUs · NVFLARE gave up after 10 tries"
         )
 
-    def test_a_trust_that_never_answered_is_said_to_have_not_answered(self):
+    @pytest.mark.parametrize("requested", [{}, {"num_of_gpus": 0}, {"num_of_gpus": 0, "num_of_cpus": 4}])
+    def test_a_trust_that_never_answered_is_said_to_have_not_answered(self, requested):
+        """A held trust with no GPU ask to refuse (none, or a job declaring 0 GPUs) did not confirm."""
         row = _row(
             event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
-            details={"attempt": 1, "max_attempts": 10, "final": False, "requested": {}},
+            details={"attempt": 1, "max_attempts": 10, "final": False, "requested": requested},
         )
         assert render_log(row) == "Waiting for resources · this trust did not confirm its resources · try 1 of 10"
 

@@ -144,7 +144,9 @@ def _render_waiting_for_resources(details: dict[str, Any]) -> str:
             if isinstance(mem, (int, float)) and not isinstance(mem, bool) and mem > 0:
                 need += f" with {mem:g} GiB"
             parts.append(f"this trust cannot provide {need}")
-        elif not requested:
+        else:
+            # No GPU ask to refuse (none at all, or 0 since jobs declare their own, FLIP#70): the trust
+            # is held because it did not confirm, e.g. it never answered the scheduler's check.
             parts.append("this trust did not confirm its resources")
 
     attempt, max_attempts = details.get("attempt"), details.get("max_attempts")
