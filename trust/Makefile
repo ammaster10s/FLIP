@@ -60,7 +60,7 @@ ifeq ($(ENV),development)
 # guard then rejects ''), so it is exported after that include instead, once the default has applied.
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT
 # UID/GID/UNAME come from the same hub .env and must be exported too:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
@@ -69,6 +69,10 @@ export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
 # (no CAP_DAC_OVERRIDE) that root cannot write a host-user-owned dir. The visible symptom is
 # every FL image download failing 500 and training dying with num_samples=0.
 export UID GID UNAME
+else
+# A deployed trust pulls from GHCR (the production compose files hardcode it) and its kit carries no
+# registry (FLIP#1480). Set so DOCKER_FL_REGISTRY's default, and UP_PULL_FLAGS' --pull always, still hold.
+DOCKER_REGISTRY := ghcr.io/londonaicentre/
 endif
 
 include ../deploy/fl_backend.mk
