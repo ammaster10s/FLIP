@@ -35,9 +35,14 @@ variable "egress_location" {
 }
 
 variable "name_prefix" {
-  description = "Prefix for resource names."
+  description = "Prefix for resource names; the vm root takes the same one and builds a storage account name from it, hence 3-13 lowercase letters and digits."
   type        = string
   default     = "flipaz"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,13}$", var.name_prefix))
+    error_message = "name_prefix must be 3-13 lowercase letters and digits: it starts a storage account name (<prefix>kit<8 hex>, at most 24)."
+  }
 }
 
 variable "state_storage_account_name" {
@@ -76,5 +81,16 @@ variable "alert_emails" {
   validation {
     condition     = !var.create_budget || length(var.alert_emails) > 0
     error_message = "alert_emails needs at least one address while create_budget is true."
+  }
+}
+
+variable "operator_principal_type" {
+  description = "What kind of principal runs Terraform here: User for an `az login` operator, ServicePrincipal for a pipeline. Stated on its role assignment rather than left for Azure to look up."
+  type        = string
+  default     = "User"
+
+  validation {
+    condition     = contains(["User", "ServicePrincipal", "Group"], var.operator_principal_type)
+    error_message = "operator_principal_type must be User, ServicePrincipal or Group."
   }
 }

@@ -75,6 +75,7 @@ resource "azurerm_role_assignment" "state_blob" {
   scope                = azurerm_storage_account.state.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
+  principal_type       = var.operator_principal_type
 }
 
 # The node's one outbound address. Lives here so destroying and recreating the node keeps it,

@@ -82,4 +82,8 @@ run "node_reads_and_operator_writes_the_container_only" {
     condition     = azurerm_role_assignment.uploader.role_definition_name == "Storage Blob Data Contributor" && azurerm_role_assignment.uploader.principal_id == var.uploader_principal_id
     error_message = "The operator gets Storage Blob Data Contributor to upload."
   }
+  assert {
+    condition     = azurerm_role_assignment.reader.principal_type == "ServicePrincipal" && azurerm_role_assignment.uploader.principal_type == "User"
+    error_message = "Both assignments state their principal type: the node's identity, and an az login operator by default."
+  }
 }

@@ -29,9 +29,14 @@ variable "location" {
 }
 
 variable "name_prefix" {
-  description = "Prefix for resource names."
+  description = "Prefix for resource names; it also starts the kit drop's storage account name, hence 3-13 lowercase letters and digits."
   type        = string
   default     = "flipaz"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,13}$", var.name_prefix))
+    error_message = "name_prefix must be 3-13 lowercase letters and digits: it starts a storage account name (<prefix>kit<8 hex>, at most 24)."
+  }
 }
 
 variable "egress_public_ip_id" {
@@ -46,9 +51,20 @@ variable "egress_mode" {
 }
 
 variable "existing_subnet_id" {
-  description = "A subnet the site supplies; empty creates the network."
+  description = "A subnet the site supplies; empty creates the network. With the kit drop on, it needs the Microsoft.Storage service endpoint, or the storage firewall refuses the node (403)."
   type        = string
   default     = ""
+}
+
+variable "image_version" {
+  description = "Ubuntu 24.04 image version (az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all). \"latest\" follows Canonical's current image, as the AWS trust follows its stable AMI; pin one to rebuild a node bit-for-bit. Changing it replaces the VM."
+  type        = string
+  default     = "latest"
+
+  validation {
+    condition     = can(regex("^(latest|[0-9]+\\.[0-9]+\\.[0-9]+)$", var.image_version))
+    error_message = "image_version must be \"latest\" or a version like 24.04.202510010."
+  }
 }
 
 variable "vm_size" {

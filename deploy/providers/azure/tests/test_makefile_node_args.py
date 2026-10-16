@@ -59,6 +59,7 @@ def test_a_valid_argument_reaches_the_node(tmp_path, target, variables, sent):
         ("logs", {"UNIT": "flip-provision; touch PWNED"}, "UNIT"),
         ("logs", {"LINES": "80 && touch PWNED"}, "LINES"),
         ("report", {"FL_BACKEND": "both"}, "FL_BACKEND"),
+        ("selftest-kit", {"FL_BACKEND": "nvflare; touch PWNED"}, "FL_BACKEND"),
     ],
 )
 def test_an_unsafe_argument_never_reaches_the_node(tmp_path, target, variables, bad):
@@ -69,3 +70,28 @@ def test_an_unsafe_argument_never_reaches_the_node(tmp_path, target, variables, 
     assert f"{bad}=" in result.stdout + result.stderr, "the refusal names the argument"
     assert not _sent(calls), "nothing was sent to the node"
     assert not (tmp_path / "PWNED").exists(), "the value was never run as a command locally either"
+
+
+@pytest.mark.parametrize("name", ["kit.tar.gz; touch PWNED", "../kit.tar.gz", "kit.zip"])
+def test_kit_upload_checks_the_blob_name_before_azure_sees_it(tmp_path, name):
+    tarball = tmp_path / "kit.tar.gz"
+    tarball.write_bytes(b"kit")
+    sentinel = str(tmp_path / "PWNED")
+
+    result, calls = run_make(tmp_path, "kit-upload", TARBALL=str(tarball), NAME=name.replace("PWNED", sentinel))
+
+    assert result.returncode != 0
+    assert "NAME=" in result.stdout + result.stderr, "the refusal names the argument"
+    assert not [c for c in calls if c.startswith("storage blob")], "nothing was uploaded"
+    assert not (tmp_path / "PWNED").exists()
+
+
+def test_kit_upload_names_the_blob_after_the_tarball_by_default(tmp_path):
+    tarball = tmp_path / "flip-trust-kit-AZ1.tar.gz"
+    tarball.write_bytes(b"kit")
+
+    result, calls = run_make(tmp_path, "kit-upload", TARBALL=str(tarball))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    (upload,) = [c for c in calls if c.startswith("storage blob upload")]
+    assert "/flip-trust-kit-AZ1.tar.gz " in upload

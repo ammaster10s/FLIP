@@ -14,7 +14,8 @@
 
 # The kit drop hands a trust node its kit (kit file + FL participant kit) without a shell or a
 # secret in any command: the operator uploads with their Entra identity, the node downloads with
-# its managed identity, and the blob is gone a day later. Entra-only (no shared keys), so no key
+# its managed identity, and a lifecycle rule deletes the blob a day after upload
+# (Azure runs it once a day, so within about 48 hours). Entra-only (no shared keys), so no key
 # can leak through Terraform state or a log.
 
 locals {
@@ -91,4 +92,5 @@ resource "azurerm_role_assignment" "uploader" {
   scope                = azurerm_storage_container.kits.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = var.uploader_principal_id
+  principal_type       = var.operator_principal_type
 }

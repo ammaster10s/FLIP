@@ -37,6 +37,10 @@ run "state_account_is_entra_only" {
     condition     = azurerm_storage_account.state.allow_nested_items_to_be_public == false
     error_message = "State storage must not allow public blobs."
   }
+  assert {
+    condition     = azurerm_role_assignment.state_blob.principal_type == "User"
+    error_message = "The operator's state role states its principal type (an az login user by default)."
+  }
 }
 
 run "egress_ip_is_static_standard" {
@@ -79,6 +83,26 @@ run "rejects_a_non_guid_subscription" {
   }
 
   expect_failures = [var.subscription_id]
+}
+
+run "rejects_a_prefix_no_storage_account_name_allows" {
+  command = plan
+
+  variables {
+    name_prefix = "flip-az"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_a_prefix_too_long_for_a_storage_account_name" {
+  command = plan
+
+  variables {
+    name_prefix = "flipazuresite01"
+  }
+
+  expect_failures = [var.name_prefix]
 }
 
 run "budget_needs_an_email" {
