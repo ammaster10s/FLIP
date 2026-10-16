@@ -33,6 +33,7 @@ from imaging_api.services.import_requests import (
     PacsRequest,
     PrearchiveSession,
     archive_prearchive_session,
+    delete_prearchive_session,
     get_direct_archive_sessions,
     get_executed_import_requests,
     get_prearchive_sessions,
@@ -422,8 +423,9 @@ def _rearchive_failed_sessions(project_id: str, accession_numbers: list[str], he
     """Re-archives the prearchive ERROR sessions among ``accession_numbers``, and returns the rest.
 
     A failed direct-archive leaves the received study in the prearchive with status ERROR, and archiving
-    it again from there is what recovers it (FLIP#1511). Pulling it from the PACS again would leave the
-    stale session behind, so only a study with no such session, or one that will not archive, is pulled.
+    it again from there is what recovers it (FLIP#1511). Only a study with no such session, or one that
+    will not archive, is pulled from the PACS again, and its stale session is deleted first so the study
+    lands in a fresh one.
 
     Args:
         project_id (str): The XNAT project ID.
@@ -454,6 +456,8 @@ def _rearchive_failed_sessions(project_id: str, accession_numbers: list[str], he
             logger.info(f"Re-archived the failed session of accession number {idx}/{total}")
         else:
             logger.warning(f"Could not re-archive the failed session of accession number {idx}/{total}; pulling it")
+            if not delete_prearchive_session(src, headers):
+                logger.warning(f"Could not delete the stale session of accession number {idx}/{total}")
             to_pull.append(accession_number)
     return to_pull
 

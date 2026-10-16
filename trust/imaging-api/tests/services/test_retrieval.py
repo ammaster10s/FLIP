@@ -1314,24 +1314,38 @@ async def test_retry_rearchives_a_prearchive_error_and_pulls_only_the_rest(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [True, False], ids=["stale-entry-deleted", "delete-refused"])
+@patch("imaging_api.services.retrieval.delete_prearchive_session")
 @patch("imaging_api.services.retrieval.archive_prearchive_session", return_value=False)
 @patch("imaging_api.services.retrieval.get_prearchive_sessions")
 @patch("imaging_api.services.retrieval.queue_image_import_request")
 @patch("imaging_api.services.retrieval.query_by_accession_number")
 @patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retry_pulls_a_study_again_when_its_rearchive_fails(
-    mock_get_project, mock_get_status, mock_query, mock_queue, mock_prearchive, mock_archive, headers
+async def test_retry_clears_the_stale_session_then_pulls_a_study_again_when_its_rearchive_fails(
+    mock_get_project,
+    mock_get_status,
+    mock_query,
+    mock_queue,
+    mock_prearchive,
+    mock_archive,
+    mock_delete,
+    deleted,
+    headers,
 ):
+    """The stale ERROR entry is deleted before the re-pull, so the study lands in a fresh session; a delete
+    XNAT refuses is logged, and the study is still pulled."""
+    calls = []
+    mock_delete.side_effect = lambda src, hdrs: calls.append(("delete", src)) or deleted
+    mock_query.side_effect = lambda accession, hdrs: calls.append(("query", accession)) or [_make_study("ACC_P")]
     mock_get_status.return_value = ImportStatus(failed=["ACC_P"])
     mock_prearchive.return_value = [_prearchived("ACC_P")]
-    mock_query.return_value = [_make_study("ACC_P")]
     mock_queue.return_value = [_make_import_response("ACC_P")]
 
     assert await retry_retrieve_images_for_project("proj1", "SELECT *", headers) is True
 
     mock_archive.assert_called_once()
-    mock_query.assert_called_once_with("ACC_P", headers)
+    assert calls == [("delete", _prearchived("ACC_P").url), ("query", "ACC_P")]
 
 
 @pytest.mark.asyncio

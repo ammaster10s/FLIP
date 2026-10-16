@@ -374,3 +374,28 @@ def archive_prearchive_session(src: str, headers: dict[str, str]) -> bool:
         return True
     logger.warning(f"XNAT archive request failed: {response.status_code}")
     return False
+
+
+def delete_prearchive_session(src: str, headers: dict[str, str]) -> bool:
+    """Deletes a prearchive session (``DELETE /data/prearchive/projects/{project}/{timestamp}/{session}``).
+
+    XNAT also clears the study's routing, so a study pulled from the PACS again lands in a fresh session.
+    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession.
+
+    Args:
+        src (str): The session's prearchive path, as ``PrearchiveSession.url`` gives it.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        bool: True when XNAT deleted it.
+    """
+    url = xnat_url("data", *src.strip("/").split("/"))
+    try:
+        response = requests.request("DELETE", url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    except requests.RequestException as e:
+        logger.warning(f"XNAT prearchive delete failed in transport ({type(e).__name__})")
+        return False
+    if 200 <= response.status_code < 300:
+        return True
+    logger.warning(f"XNAT prearchive delete failed: {response.status_code}")
+    return False

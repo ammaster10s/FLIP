@@ -195,7 +195,7 @@ The DQR records come from XNAT's REST API, not its database (`services/import_re
 `all=true` and kept by `xnatProject`, `POST /xapi/direct-archive` with a `project` filter, and
 `GET /data/prearchive/projects/{project}`. A retry re-archives a prearchive `ERROR` session
 (`POST /data/services/archive?overwrite=append`) and pulls from the PACS again only what that does not
-recover. When every
+recover, deleting its stale prearchive session first. When every
 accession is already an experiment they are not read at all. A failed read is a 500, never the 404 the
 hub reads as "the XNAT project is missing" (FLIP#1022).
 

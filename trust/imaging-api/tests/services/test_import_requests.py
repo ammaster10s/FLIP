@@ -33,6 +33,7 @@ from imaging_api.services.import_requests import (
     DirectArchiveSession,
     PacsRequest,
     archive_prearchive_session,
+    delete_prearchive_session,
     get_direct_archive_sessions,
     get_executed_import_requests,
     get_prearchive_sessions,
@@ -546,5 +547,36 @@ def test_an_archive_transport_failure_is_false_and_never_logs_the_session(xnat, 
     xnat.on("POST", "/data/services/archive", refuse)
 
     assert archive_prearchive_session(src, {}) is False
+    assert "ConnectionError" in caplog.text
+    assert "ACC_SECRET" not in caplog.text
+
+
+def test_deleting_a_prearchive_session_deletes_it_by_its_url(xnat):
+    src = _prearchived()["url"]
+    xnat.on("DELETE", f"/data{src}", lambda r: (200, ""))
+
+    assert delete_prearchive_session(src, {}) is True
+
+    assert len(xnat.requested("DELETE", f"/data{src}")) == 1
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_a_refused_delete_is_false(xnat, status):
+    src = _prearchived()["url"]
+    xnat.on("DELETE", f"/data{src}", lambda r: (status, "Unable to modify session data"))
+
+    assert delete_prearchive_session(src, {}) is False
+
+
+def test_a_delete_transport_failure_is_false_and_never_logs_the_session(xnat, caplog):
+    caplog.set_level(logging.DEBUG)
+    src = _prearchived("ACC_SECRET")["url"]
+
+    def refuse(request):
+        raise requests.ConnectionError(f"failed to reach {request.url}")
+
+    xnat.on("DELETE", f"/data{src}", refuse)
+
+    assert delete_prearchive_session(src, {}) is False
     assert "ConnectionError" in caplog.text
     assert "ACC_SECRET" not in caplog.text
