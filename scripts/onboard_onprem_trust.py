@@ -81,6 +81,8 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )
+# FL_EDGE_PORT is left out on purpose: a kit synced before FLIP#1365 lacks it, and every reader
+# falls back to FL_SERVER_PORT, so requiring it would fail every existing site's upgrade checklist.
 KIT_CRED_KEYS: tuple[str, ...] = (
     "TRUST_API_KEY",
     "TRUST_INTERNAL_SERVICE_KEY",

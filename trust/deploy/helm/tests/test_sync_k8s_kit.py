@@ -85,6 +85,24 @@ def test_render_override_uses_kit_fl_server_port():
     assert "- port: 8002" not in out
 
 
+def test_render_override_allows_the_edge_port_the_client_dials():
+    """LZA staging's edge remaps :8003 to the server's :8002, so the egress rule must allow the
+    port the client dials (FL_EDGE_PORT), not the one the server listens on (FLIP#1365)."""
+    kit = {**_FL_KIT, "FL_EDGE_PORT": "8003"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "- port: 8003" in out
+    assert "- port: 8002" not in out
+
+
+def test_render_override_points_a_flower_supernode_at_the_edge():
+    """A Flower trust's SuperNode dials NLB_SUBDOMAIN on the edge port, as the Compose client does."""
+    kit = {**_FL_KIT, "FL_BACKEND": "flower", "FL_EDGE_PORT": "8003"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert 'superlink: "fl.stag.flip.aicentre.co.uk:8003"' in out
+    nvflare = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+    assert "superlink" not in nvflare
+
+
 def test_render_override_omits_block_without_fl_port():
     """No FL_SERVER_PORT in the kit ⇒ no egress override emitted (the chart
     default egress allowlist from values.yaml applies unchanged)."""

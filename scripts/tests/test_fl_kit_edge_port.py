@@ -10,13 +10,15 @@
 # limitations under the License.
 #
 
-"""NVFLARE trust kits dial the LZA edge port of their own estate (FLIP#1365).
+"""NVFLARE trust kits dial their own estate's server on its LZA edge port (FLIP#1365).
 
 Production and staging share one edge NLB address: ``:8002`` forwards to production's FL server and
-``:8003`` to staging's, which itself listens on 8002. A client's ``connect_to.port`` (NVFLARE falls
-back to the server's ``fed_learn_port`` when it is absent) is therefore the only thing choosing the
-estate. Staging kits once came from an edited copy of the template; re-provisioning from the tree
-then minted kits that reached production's listener and failed its TLS handshake.
+``:8003`` to staging's FL server, which listens on 8002. A client's ``connect_to.port`` (NVFLARE falls
+back to the server's ``fed_learn_port`` when it is absent) therefore chooses the estate. The published
+staging kits came from an edited copy of the template; re-provisioning from the tree would have minted
+kits that reach production's listener and fail its TLS handshake.
+
+Flower has no minted kit, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``.
 
 Stdlib-only and executable as a plain script, like the rest of ``scripts/tests``.
 """
@@ -27,7 +29,8 @@ import re
 import unittest
 from pathlib import Path
 
-PROVISION = Path(__file__).resolve().parents[2] / "fl-services" / "nvflare" / "provision"
+REPO = Path(__file__).resolve().parents[2]
+PROVISION = REPO / "fl-services" / "nvflare" / "provision"
 
 # project file -> (server fed_learn_port, port every client must dial)
 EXPECTED = {
@@ -43,22 +46,37 @@ def participants(path: Path) -> list[str]:
     return re.split(r"^  - ", body.group(1), flags=re.M)[1:]
 
 
-def port(entry: str, key: str) -> int | None:
-    match = re.search(rf"^\s+{key}: (\d+)\s*$", entry, re.M)
-    return int(match.group(1)) if match else None
+def field(block: str, key: str, indent: int) -> str | None:
+    """The scalar ``key`` at exactly ``indent`` spaces in ``block``, without quotes or a trailing comment."""
+    match = re.search(rf"^ {{{indent}}}{key}:[ \t]*['\"]?([^'\"#\s]+)", block, re.M)
+    return match.group(1) if match else None
+
+
+def connect_to(entry: str) -> str:
+    """The lines nested under an entry's ``connect_to:`` key, or empty when it has none."""
+    match = re.search(r"^    connect_to:\n((?:(?: {6}.*)?\n)*)", entry, re.M)
+    return match.group(1) if match else ""
 
 
 class EdgePort(unittest.TestCase):
-    def test_clients_dial_their_estates_edge_port(self):
+    def test_clients_dial_their_estates_server_on_its_edge_port(self):
         for name, (server_port, client_port) in EXPECTED.items():
             entries = participants(PROVISION / name)
-            servers = [e for e in entries if re.search(r"^\s+type: server$", e, re.M)]
-            clients = [e for e in entries if re.search(r"^\s+type: client$", e, re.M)]
+            servers = [e for e in entries if field(e, "type", 4) == "server"]
+            clients = [e for e in entries if field(e, "type", 4) == "client"]
             assert len(servers) == 1, name
             assert clients, name
-            assert port(servers[0], "fed_learn_port") == server_port, name
+            server = servers[0].split("\n", 1)[0].removeprefix("name: ").strip()
+            assert field(servers[0], "fed_learn_port", 4) == str(server_port), name
             for client in clients:
-                assert (port(client, "port") or server_port) == client_port, f"{name}: {client.splitlines()[0]}"
+                where = f"{name}: {client.splitlines()[0]}"
+                block = connect_to(client)
+                assert field(block, "host", 6) == server, where
+                assert int(field(block, "port", 6) or server_port) == client_port, where
+
+    def test_flower_supernode_dials_the_edge_port(self):
+        compose = (REPO / "trust" / "deploy" / "compose_trust.production.flower.yml").read_text()
+        assert "${NLB_SUBDOMAIN}:${FL_EDGE_PORT:-${FL_SERVER_PORT}}" in compose
 
 
 if __name__ == "__main__":

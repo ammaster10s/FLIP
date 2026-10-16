@@ -67,6 +67,10 @@ def main() -> None:
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")
 
+    # FL_EDGE_PORT (the port trusts dial) defaults to FL_SERVER_PORT, as register_trust does.
+    if not os.environ.get("FL_EDGE_PORT") and os.environ.get("FL_SERVER_PORT"):
+        os.environ["FL_EDGE_PORT"] = os.environ["FL_SERVER_PORT"]
+
     # Require every hub-shared key: forgetting to source the env file leaves them unset.
     missing = [k for k in tkl.HUB_SHARED_KEYS if not os.environ.get(k)]
     if missing:

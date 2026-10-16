@@ -299,6 +299,7 @@ HUB_SHARED_KEYS = (
     "DOCKER_FL_TAG",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
+    "FL_EDGE_PORT",
 )
 
 
@@ -324,6 +325,7 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
         "DOCKER_FL_TAG": "stag",
         "NLB_SUBDOMAIN": "fl-server.example.internal",
         "FL_SERVER_PORT": "8002",
+        "FL_EDGE_PORT": "8003",
     }
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -331,6 +333,19 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
 
     assert kit["hub_shared"] == env
+
+
+def test_hub_shared_edge_port_defaults_to_the_server_port(monkeypatch, session):
+    """An env without FL_EDGE_PORT hands trusts FL_SERVER_PORT, so prod and dev kits are unchanged."""
+    monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
+    session.exec.return_value.first.return_value = None
+    for key in HUB_SHARED_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("FL_SERVER_PORT", "8002")
+
+    kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
+
+    assert kit["hub_shared"] == {"FL_SERVER_PORT": "8002", "FL_EDGE_PORT": "8002"}
 
 
 def test_kit_dict_hub_shared_omits_unset_env_vars(monkeypatch, session):
