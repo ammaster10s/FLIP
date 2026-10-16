@@ -258,7 +258,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             raise
 
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)
-        app_folder_names.add(app_folder_name)
+        if file_name != META:  # meta.json sits in the job root, not in an app folder
+            app_folder_names.add(app_folder_name)
 
         # relative_dir + file_name derive from the (untrusted) S3 URL path; contain both
         # under job_dir so a crafted URL can't escape the upload sandbox.
@@ -272,7 +273,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     logger.info("Successfully downloaded application, updating application config...")
 
     # FLIP deploys "app" to the server and every selected trust (configure_meta). A job cannot name the trusts'
-    # sites, so app_* variants alone leave nothing to deploy, and the job's GPU request would go unwritten.
+    # sites, so app_* variants alone leave nothing to deploy.
     if "app" not in app_folder_names:
         raise ValueError(
             f"The application has no app/ folder (found {sorted(app_folder_names)}). FLIP deploys app/ to the "

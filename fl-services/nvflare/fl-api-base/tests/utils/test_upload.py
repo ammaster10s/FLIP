@@ -556,9 +556,9 @@ def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monk
 
 
 def test_a_job_of_per_site_variants_alone_is_refused(tmp_path, monkeypatch):
-    """FLIP deploys app/ to every selected trust; without it the job's GPU request would never be written."""
+    """FLIP deploys app/ to every selected trust. The hub always ships meta.json, which is not an app folder."""
     with pytest.raises(ValueError, match="no app/ folder"):
-        _assemble(tmp_path, monkeypatch, resources=JobResources(num_gpus=1), app="app-trust1")
+        _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, app="app-trust1")
 
 
 def test_a_run_override_still_uploads_when_the_default_is_misconfigured(tmp_path, monkeypatch):
