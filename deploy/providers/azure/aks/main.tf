@@ -50,15 +50,17 @@ resource "azurerm_kubernetes_cluster" "this" {
   # checkov:skip=CKV_AZURE_172:The Key Vault secrets provider is not used; the kit arrives as a plain Secret
   # checkov:skip=CKV2_AZURE_29:Azure CNI overlay with Cilium; this check predates it
   # checkov:skip=CKV_AZURE_116:The Azure Policy add-on runs Gatekeeper pods that would compete with the trust stack on a one-node cluster
-  name                      = "${var.name_prefix}-aks"
-  location                  = var.location
-  resource_group_name       = azurerm_resource_group.aks.name
-  dns_prefix                = "${var.name_prefix}-aks"
-  kubernetes_version        = var.kubernetes_version != "" ? var.kubernetes_version : null
-  sku_tier                  = "Free"
-  local_account_disabled    = true
-  automatic_upgrade_channel = "patch"
-  tags                      = local.tags
+  # checkov:skip=CKV_AZURE_171:Upgrades are an operator action: on one node each surges a second node the trial quota cannot hold
+  # No automatic_upgrade_channel (CKV_AZURE_171 above), and the node OS patches in place rather than reimaging.
+  name                    = "${var.name_prefix}-aks"
+  location                = var.location
+  resource_group_name     = azurerm_resource_group.aks.name
+  dns_prefix              = "${var.name_prefix}-aks"
+  kubernetes_version      = var.kubernetes_version != "" ? var.kubernetes_version : null
+  sku_tier                = "Free"
+  local_account_disabled  = true
+  node_os_upgrade_channel = "Unmanaged"
+  tags                    = local.tags
 
   default_node_pool {
     name           = "system"
@@ -111,4 +113,5 @@ resource "azurerm_role_assignment" "operator_cluster_admin" {
   scope                = azurerm_kubernetes_cluster.this.id
   role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
   principal_id         = data.azurerm_client_config.current.object_id
+  principal_type       = "User" # applied by the operator's own az login
 }

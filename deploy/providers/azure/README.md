@@ -98,6 +98,10 @@ The API server admits one IP, and Azure refuses to change it while the cluster i
 is why `aks-start` does it after starting. If that step fails the cluster is still running, and
 billing: retry with `aks-allow-ip`, or `aks-stop`.
 
+Azure never upgrades the cluster on its own (no upgrade channel, and the node OS patches itself in
+place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
+`node_size` node first: 8 vCPUs at the default size, so raise the quota before it.
+
 The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
 
 ```bash

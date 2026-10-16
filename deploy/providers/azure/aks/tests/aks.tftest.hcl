@@ -51,6 +51,23 @@ run "users_sign_in_with_entra_only" {
     condition     = azurerm_role_assignment.operator_cluster_admin.role_definition_name == "Azure Kubernetes Service RBAC Cluster Admin"
     error_message = "The operator administers the cluster through Azure RBAC."
   }
+  assert {
+    condition     = azurerm_role_assignment.operator_cluster_admin.principal_type == "User"
+    error_message = "The operator's role assignment states its principal type rather than leaving Azure to look it up."
+  }
+}
+
+run "upgrades_are_the_operators" {
+  command = plan
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.automatic_upgrade_channel == null
+    error_message = "Azure must not upgrade the cluster unattended: on one node an upgrade surges a second node the trial quota cannot hold."
+  }
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.node_os_upgrade_channel == "Unmanaged"
+    error_message = "The node OS patches in place: a node-image channel reimages through the same surge."
+  }
 }
 
 run "network_policies_are_enforced" {
