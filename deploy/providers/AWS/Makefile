@@ -196,17 +196,14 @@ $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must b
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 endif
 
-# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
-# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
-# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+# The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
+# Default 0 in variables.tf, and keep it there: jobs declare their own in their
+# meta.json (FLIP#70), and a non-zero default keeps every job off a CPU-only trust.
 # Export only when set: an unconditional export turns a missing env key into
 # TF_VAR_…="" and Terraform rejects the empty string for a number variable
 # instead of falling back to the variables.tf default.
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
-endif
-ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
-export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
