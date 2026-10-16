@@ -418,6 +418,11 @@ def _results(body: str) -> list[dict]:
     return rows if isinstance(rows, list) else []
 
 
+def _row_id(row: object) -> str:
+    """A ResultSet row's ID, or empty when the row is not an object or has none."""
+    return str(row.get("ID") or "") if isinstance(row, dict) else ""
+
+
 def _project_xml(project: str) -> str:
     """The projectData document imaging-api posts to create a project (services/projects.py)."""
     root = ET.Element(f"{{{XNAT_URL}/data/projects}}projectData")
@@ -516,11 +521,15 @@ def _convert(
             f"XNAT answered the import of Orthanc series {series_id} ({body.strip()[:120]!r}) "
             f"but archived no session into {project}",
         )
-    experiment = experiments[0]["ID"]
+    experiment = _row_id(experiments[0])
+    if not experiment:
+        return Check(name, False, f"XNAT listed a session in {project} with no ID: {experiments[0]!r:.120}")
     scans = _results(xnat.request("GET", f"/data/experiments/{experiment}/scans?format=json")[1])
     if not scans:
         return Check(name, False, f"session {experiment} has no scan")
-    scan = scans[0]["ID"]
+    scan = _row_id(scans[0])
+    if not scan:
+        return Check(name, False, f"XNAT listed a scan of session {experiment} with no ID: {scans[0]!r:.120}")
 
     enable = f"/xapi/projects/{project}/commands/{command_id}/wrappers/{wrapper}/enabled"
     status, body = xnat.request("PUT", enable)

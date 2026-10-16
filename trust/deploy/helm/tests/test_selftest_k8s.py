@@ -548,6 +548,31 @@ def test_an_import_that_archives_nothing_fails_naming_the_project():
     assert xnat.calls[-1][0] == "DELETE"
 
 
+@pytest.mark.parametrize("row", [{"label": "no-id"}, "XNAT_E00042", None])
+def test_a_session_row_without_an_id_fails_the_check_instead_of_raising(row):
+    xnat = FakeXnat(experiment_answers=[[row]])
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "listed a session in FLIPSELFTEST with no ID" in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
+def test_a_scan_row_without_an_id_fails_the_check_instead_of_raising():
+    xnat = FakeXnat()
+    xnat.routes[("GET", "/data/experiments/XNAT_E00042/scans?format=json")] = (
+        200,
+        json.dumps({"ResultSet": {"Result": [{"type": "CT"}]}}),
+    )
+
+    check = _convert(xnat)
+
+    assert not check.ok
+    assert "listed a scan of session XNAT_E00042 with no ID" in check.detail
+    assert xnat.calls[-1][0] == "DELETE"
+
+
 def test_a_failed_import_fails_and_the_project_is_still_deleted():
     xnat = FakeXnat(import_answer=(0, "could not fetch the series from Orthanc"))
 
