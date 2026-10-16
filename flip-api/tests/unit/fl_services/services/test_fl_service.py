@@ -151,7 +151,10 @@ def test_upload_app_redacts_urls_from_the_reason(mock_post, model_id):
     assert "Bundle URL returned a redirect: '<url>'" in str(raised.value)
 
 
-@pytest.mark.parametrize(("status_code", "body"), [(500, {"detail": "Internal server error: boom"}), (400, ["x"])])
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [(500, {"detail": "Internal server error: boom"}), (400, ["x"]), (400, {"detail": "  "}), (400, {"detail": 42})],
+)
 @patch("flip_api.fl_services.services.fl_service.http_post")
 def test_upload_app_leaves_other_failures_as_they_were(mock_post, status_code, body, model_id):
     """A server error, or a refusal without a readable detail, keeps httpx's own error."""
@@ -2644,6 +2647,25 @@ def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_fr
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
+
+
+def test_start_training_logs_a_cpu_only_override(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=0)
+    reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "submission"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, reply)
+
+    assert ("GPU request per trust: no GPU (set for this run)", True) in logged
+
+
+@patch("flip_api.fl_services.services.fl_service.logger")
+def test_start_training_skips_the_log_for_an_unreadable_gpu_request(mock_logger, model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": "lots"}}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert logged == []
+    assert "Unreadable GPU request" in mock_logger.warning.call_args.args[0]
 
 
 def test_start_training_says_when_flower_records_but_does_not_enforce_the_request(model_id, fl_job_id, fake_session):
