@@ -463,13 +463,13 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 | `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
 | `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
 
-All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438. On an LZA estate the same module also renders the Ark+ demo-assets bucket (`module.flip_demo_assets_bucket`, `services.tf`), the one exception to the SSE-KMS rule above: it uses SSE-S3 (`sse_algorithm = "AES256"`) and grants the edge distribution's CloudFront OAC read access to `ark_demo/assets/*` through `extra_bucket_policy_statements_json`.
+All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.) On an LZA estate the same module also renders the Ark+ demo-assets bucket (`module.flip_demo_assets_bucket`, `services.tf`), the one exception to the SSE-KMS rule above: it uses SSE-S3 (`sse_algorithm = "AES256"`) and grants the edge distribution's CloudFront OAC read access to `ark_demo/assets/*` through `extra_bucket_policy_statements_json`.
 
 **Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
 
 #### Migrating off the legacy single-bucket layout
 
-For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. **Prod and dev were migrated as part of FLIP#24** (the bucket-split PR) — see that PR's description for the as-built details and verification logs. The only environment still pending a cutover at the time of writing is **stag**; the runbook below is the canonical reference for stag and for any future fresh prod/dev account that needs the same migration.
+For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. **Prod and the (since closed) dev account were migrated as part of FLIP#24** (the bucket-split PR) — see that PR's description for the as-built details and verification logs. The only environment still pending a cutover at the time of writing is **stag**; the runbook below is the canonical reference for stag and for any future fresh account that needs the same migration.
 
 The mechanism the runbook leans on:
 
@@ -529,7 +529,7 @@ Two stag-specific watch-outs:
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
 - **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag. These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
 
-For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
+For a **future fresh prod** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call.
 
 > **None of the legacy buckets has a keep-set** (re-verified 2026-09-02). Earlier revisions of this runbook warned against `aws s3 rb s3://flipdev` because its `test-data/` prefix (42 objects, ~280 MB) was read by CI in the `flip-fl-base` / `flip-fl-base-flower` repos. Both repos were **archived** in June 2026, and GitHub disables Actions on archived repositories, so that CI can no longer run; the surviving `make download-test-data` in them fetches from HuggingFace (`aicentreflip/flip-fl-base-test-data`), not S3. The objects were last written 2026-02-05 and were deleted on 2026-09-02. `flipstag` and `flipprod` never had a `test-data/` prefix. So all three legacy buckets can now be decommissioned by the flow above with no carve-out.
 >
@@ -645,7 +645,7 @@ the UI (same as `make deploy-ui`):
    (LZA ECR pull-through cache, FLIP#749).
 3. Per service: registers a new task-definition revision with only the app container's image tag
    swapped (containers are selected **by name**, never by index — the same convention as the
-   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md), robust to
+   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md), robust to
    sidecar/ordering changes) and repoints the service at the new revision. If the repoint fails,
    the just-registered revision is deregistered again so the `max()` tracking in
    `ecs_services.tf` cannot adopt a never-deployed revision, and any services already repointed
@@ -697,11 +697,10 @@ default dev stack authenticates against Keycloak and derives the same allowlist 
 client redirect URIs (`deploy/keycloak/flip-realm.json`, `IdentityProvider.allowed_origins()`), so a local
 UI port is registered there, not here.
 
-The value is set per Terraform root: `module "cognito"` in `services.tf` for stag/prod,
-`var.cognito_callback_urls` in `dev/variables.tf` for the dev account. **Deleting the argument does
+The value is set on `module "cognito"` in `services.tf`. **Deleting the argument does
 not empty the list** — `modules/cognito` defaults it to `["https://localhost:443"]`, so an omission
 puts a localhost origin into the production allowlist. `tests/test_cognito_callback_urls.py` guards
-both directions, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
+against both that and an added localhost origin, and runs in CI as the `AWS deploy tests` job of `validate_terraform.yml`.
 
 The stag/prod list holds one entry, and it is the expression `local.ui_origin` rather than a literal
 URL: the canonical UI origin differs between a DNS-managed environment (`https://<flip_alb_subdomain>`
@@ -710,16 +709,11 @@ domain. `cloudfront.tf` resolves it once, and the same local feeds the S3 bucket
 two allowlists cannot drift apart. Adding a *second* origin means adding a literal entry alongside it;
 the guard follows the reference into `cloudfront.tf`, so a localhost origin is caught either way.
 
-The dev root also pre-registers a list of localhost UI ports (`var.dev_ui_ports`, FLIP#1227), so a
-UI on one of them needs no apply — see "Browser-usable UI ports" in
-[`dev/README.md`](dev/README.md). The procedure below is for everything else.
-
 To change it:
 
 ```bash
 # 1. Edit the list for the environment's root:
-#      stag/prod → services.tf, module "cognito" → callback_urls
-#      dev       → dev/variables.tf, var.cognito_callback_urls
+#      services.tf, module "cognito" → callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
 #    this: it also applies whatever else is pending in the plan, FL task-definition
 #    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
@@ -833,7 +827,7 @@ The Makefile maps `PROD` onto `TF_VAR_environment` (`prod` when `PROD=true` or `
 
 #### AWS profile aliases
 
-The Makefile guards refuse to apply unless `AWS_PROFILE` matches the expected profile for the chosen environment. Defaults are the short logical names `prod`, `stag`, and `dev` — add these aliases to `~/.aws/config` so commands like `AWS_PROFILE=stag make plan` work without thinking about account numbers:
+The Makefile guards refuse to apply unless `AWS_PROFILE` matches the expected profile for the chosen environment. Defaults are the short logical names `prod` and `stag` — add these aliases to `~/.aws/config` so commands like `AWS_PROFILE=stag make plan` work without thinking about account numbers:
 
 ```ini
 [profile prod]
@@ -850,35 +844,13 @@ sso_role_name = <sso-role-name>
 region = <aws-region>
 output = json
 
-[profile dev]
-sso_session = FLIP
-sso_account_id = <dev-sso-account-id>
-sso_role_name = <sso-role-name>
-region = <aws-region>
-output = json
 ```
 
 Replace each `<…>` with the matching value from the FLIP AWS account directory (kept out of the public repo).
 
-If your local profile names differ, override the defaults via `PROD_AWS_PROFILE`, `STAG_AWS_PROFILE`, or `DEV_AWS_PROFILE` (in your env file or on the make command line).
+If your local profile names differ, override the defaults via `PROD_AWS_PROFILE` or `STAG_AWS_PROFILE` (in your env file or on the make command line).
 
-**Dev account (Cognito + S3 only):**
-
-The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, plus the three FLIP application S3 buckets). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/flip_s3_bucket` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
-
-Dev carries **no SES**: flip-api defaults to `EMAIL_BACKEND=console` in development and logs would-be emails instead of sending them (FLIP#919), so `make up` needs no SES identity, templates or verified address. Only prod/stag instantiate `modules/ses`.
-
-The dev stack has its own Makefile; drive it from the `dev/` directory:
-
-```bash
-cd deploy/providers/AWS/dev
-make create-backend  # one-time, if the backend bucket needs bootstrapping
-make init            # one-time, or after backend config changes
-make plan
-make apply
-```
-
-See [`dev/README.md`](./dev/README.md) for the first-time setup workflow (the dev resources are Terraform-managed from day one; there is no import step).
+FLIP uses no dev AWS account. Development runs entirely locally (Keycloak, the console email backend and a RustFS object store), so the dev-account Terraform root was removed and the account retired (FLIP#1371).
 
 ### Deploying onto an LZA estate (PROD=lza)
 
@@ -1184,10 +1156,20 @@ Getting that order wrong does not fail gently: the attach fails the whole run, t
 same configuration with it. Staging downtime between the two applies is expected and accepted.
 
 **Staging trusts need reissued kits; production trusts do not.** Both `fl.app.flip` and `fl.stag.flip` resolve to
-the *same* edge NLB — one address, two listeners — so the port in the trust kit is the only thing separating the
-environments: `:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was
-unambiguous when it pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit
-joins the production FL net, and it does so silently, by succeeding.
+the *same* edge NLB — one address, two listeners — so the port in the trust kit chooses which listener it reaches:
+`:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was unambiguous when it
+pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit reaches the production
+listener and fails the TLS handshake, because each estate's FL net has its own root CA: the client logs it and never
+registers, so it cannot train until its kit is reissued.
+
+Staging's FL server still listens on `:8002`, so `FL_SERVER_PORT` stays 8002 in `.env.lza-stag` and the port trusts
+dial is set separately (FLIP#1365):
+
+- **NVFLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
+  kit's `fed_client.json`.
+- **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.lza-stag`, which `sync-trust-kit` copies
+  into each kit (and refuses to default on `lza-stag`). It drives the Flower `--superlink`, the Kubernetes egress rule and the
+  Helm Flower superlink; unset, it falls back to `FL_SERVER_PORT`, so production needs nothing.
 
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
 rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront
@@ -1277,7 +1259,6 @@ deploy/providers/AWS/
 │   ├── secgroup/               # shared: security-group wrapper
 │   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
 │   └── trust_ec2/              # prod/stag only: Trust EC2 host
-└── dev/                        # dev-account root (calls cognito + flip_s3_bucket modules)
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
@@ -1417,13 +1398,10 @@ CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FL
   rationale; classes deliberately *not* promoted are recorded in the script.
 
 ```bash
-make checkov-lint                          # from the REPO ROOT (env-free)
+make checkov-lint                          # here or from the repo root; no env file needed
+make lint                                  # here: terraform fmt, tflint and checkov together
 bash scripts/checkov_lint.sh               # or directly, from this directory
 ```
-
-(The `checkov-lint` target in *this* directory's Makefile works too, but only with a populated deploy env
-file — the Makefile's parse-time `FL_KIT_DATE` guard fires before any target runs. The repo-root target and
-the direct script invocation need nothing.)
 
 Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
 globally — add inside the flagged resource/data block:
@@ -1456,7 +1434,7 @@ in the `TFLint` job of `validate_terraform.yml`; the configuration is [`.tflint.
 `terraform` ruleset with the recommended preset, plus the pinned AWS ruleset).
 
 ```bash
-make tflint-lint                           # from the REPO ROOT (env-free)
+make tflint-lint                           # here or from the repo root; no env file needed
 bash scripts/tflint_lint.sh                # or directly, from this directory
 ```
 

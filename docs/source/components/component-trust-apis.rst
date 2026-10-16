@@ -188,11 +188,23 @@ Disclosure threshold
 ====================
 
 ``COHORT_QUERY_THRESHOLD`` (default 10) is the Trust's own disclosure floor, set in its kit file. Aggregate
-statistics fold small categories below it, and both row-level routes refuse outright when the live cohort is
-smaller than it — with one fixed message, so a below-threshold cohort is indistinguishable from an empty one.
-The hub can pass a threshold, but only a higher one: the Trust's value is a floor the hub cannot lower.
-Because FLIP stores a cohort only as its SQL and re-runs it at every stage, a project that imported cleanly
-can start refusing later if the data changes.
+statistics fold small categories below it, and both row-level routes refuse outright when the approved
+cohort covers fewer distinct subjects than it — with one fixed message, so a below-threshold cohort is
+indistinguishable from an empty one. The hub can pass a threshold, but only a higher one: the Trust's value is
+a floor the hub cannot lower.
+
+The row-level routes serve only the cohort **frozen at project approval** (`FLIP#857
+<https://github.com/londonaicentre/FLIP/issues/857>`__): approval makes each Trust run the approved query once
+and record its membership — the query and the patient and study identifiers it returned, not their data.
+``/cohort/dataframe`` then re-runs that query and keeps only the approved patients and studies, and
+``/cohort/accession-ids`` serves the approved studies still present in OMOP; both ignore any SQL the caller
+sends. A cohort's membership can therefore shrink after approval — a patient removed from OMOP, for instance
+after an opt-out, drops out on the next fetch — but never grow: no new patient or imaging study can join it.
+What is frozen is the patients, not their records. Those are read live, so a record added after approval for
+an approved patient (a new measurement, visit or condition) is served. The national data opt-out is per
+patient, so it acts on membership, and the Trust keeps no copy of the records outside OMOP. The threshold is
+checked at approval and again on every serve, so a cohort that shrinks below the floor stops being served,
+and a Trust that raises its floor affects already-approved projects.
 
 Query cache
 ===========
