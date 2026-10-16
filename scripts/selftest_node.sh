@@ -165,10 +165,10 @@ fi
 # evidence: XNAT writes it only when something goes wrong, so a working store leaves it empty.
 ORTHANC_AUTH="$(grep -E '^ORTHANC_USERNAME=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-):$(grep -E '^ORTHANC_PASSWORD=' "${KIT_OUT}" 2>/dev/null | cut -d= -f2-)"
 # curl against Orthanc with the credentials in a config read from stdin, never in argv, where
-# any process on the node could read them.
+# any process on the node could read them. Base64 needs no quoting (as check_status.py does).
+ORTHANC_TOKEN="$(printf '%s' "${ORTHANC_AUTH}" | base64 | tr -d '\n')"
 orthanc_curl() {
-    local auth="${ORTHANC_AUTH//\\/\\\\}"
-    printf 'user = "%s"\n' "${auth//\"/\\\"}" | curl -fsS -K - "$@"
+    printf 'header = "Authorization: Basic %s"\n' "${ORTHANC_TOKEN}" | curl -fsS -K - "$@"
 }
 XNAT_CTR="$(docker ps --filter status=running --format '{{.Names}}' | grep -E 'xnat-web' | head -1)"
 RECEIVED_LOG=/data/xnat/home/logs/received.log

@@ -70,12 +70,12 @@ resource "azurerm_storage_container" "state" {
   container_access_type = "private"
 }
 
-# The operator running bootstrap reads and writes state through Entra ID (shared keys are off).
+# The operator running bootstrap (an az login user) reads and writes state through Entra ID (shared keys are off).
 resource "azurerm_role_assignment" "state_blob" {
   scope                = azurerm_storage_account.state.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
-  principal_type       = var.operator_principal_type
+  principal_type       = "User"
 }
 
 # The node's one outbound address. Lives here so destroying and recreating the node keeps it,

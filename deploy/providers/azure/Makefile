@@ -146,17 +146,18 @@ selftest: ## Start the hubless self-test on the node, on the kit selftest-kit de
 	$(require_subscription)
 	@$(call run_on_node,flip-node selftest $(FL_BACKEND))
 
+kit-upload: BLOB_NAME = $(or $(NAME),$(notdir $(TARBALL)))
 kit-upload: ## Put a kit tarball in the node's kit drop (TARBALL=<path> [NAME=<blob name>]); deleted within about 48 hours
-	$(require_subscription)
 	@[ -f "$(TARBALL)" ] || { echo "❌ TARBALL=<path to a kit tarball> is required."; exit 1; }
-	@$(call check_arg,NAME,$(or $(NAME),$(notdir $(TARBALL))),$(BLOB_PATTERN))
+	@$(call check_arg,NAME,$(BLOB_NAME),$(BLOB_PATTERN))
+	$(require_subscription)
 	@url=$$($(TF) -chdir=vm output -raw kit_drop_url 2>/dev/null); \
 	[ -n "$$url" ] || { echo "❌ No kit drop: apply the vm root with kit_drop_enabled=true first."; exit 1; }; \
 	az storage blob upload --subscription "$(SUB_ID)" --auth-mode login --overwrite --only-show-errors --no-progress \
-		--blob-url "$$url/$(or $(NAME),$(notdir $(TARBALL)))" --file "$(TARBALL)" -o none || { \
+		--blob-url "$$url/$(BLOB_NAME)" --file "$(TARBALL)" -o none || { \
 		echo "❌ Upload refused. A 403 usually means your IP ($(OPERATOR_IP)) is not the one the kit drop's firewall allows"; \
 		echo "   (re-run make plan && make apply to update it), or your role assignment is still propagating."; exit 1; }; \
-	echo "✅ Uploaded as $(or $(NAME),$(notdir $(TARBALL))); the blob is deleted within about 48 hours (a day, plus up to a day for Azure's daily lifecycle run)."
+	echo "✅ Uploaded as $(BLOB_NAME); the blob is deleted within about 48 hours."
 
 selftest-kit: ## Pack a self-test FL kit here and put it in the kit drop (FL_BACKEND=nvflare|flower)
 	@$(call check_arg,FL_BACKEND,$(FL_BACKEND),$(BACKEND_PATTERN))
