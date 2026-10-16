@@ -40,7 +40,7 @@ variable "subnet_prefix" {
 }
 
 variable "existing_subnet_id" {
-  description = "A subnet the site supplies. When set, the module creates no network resources."
+  description = "A subnet the site supplies. When set, the module creates no network resources, including the Microsoft.Storage service endpoint the kit drop's firewall needs: the site's subnet must carry it."
   type        = string
   default     = ""
 }

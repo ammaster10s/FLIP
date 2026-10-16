@@ -174,7 +174,9 @@ Troubleshooting
   UNIT=cloud-final`` its output; the portal's boot diagnostics show the serial console. Fix the
   cause in the repo, push, then ``make reprovision REF=<new sha>``.
 - **The node cannot fetch its kit.** It retries for about five minutes, then names the HTTP
-  status: 403 right after an apply is the node's read role still propagating; 404 means the kit
+  status: 403 right after an apply is the node's read role still propagating, and a 403 that
+  persists on a site-supplied subnet (``existing_subnet_id``) means that subnet lacks the
+  ``Microsoft.Storage`` service endpoint the kit drop's firewall needs; 404 means the kit
   was never uploaded or has expired (kits last a day).
 - **kit-upload is refused (403).** Your public IP has changed since ``plan``: plan and apply
   again (or pass ``OPERATOR_IP=<ip>``).

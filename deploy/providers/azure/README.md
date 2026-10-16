@@ -114,7 +114,8 @@ then pass the same `LOCATION=<region>` to `bootstrap` (to move the IP) and to `p
   reprovision; do not edit the node by hand.
 - **The node cannot fetch its kit.** `fetch-kit` retries for about five minutes and then
   names the status: 403 right after an apply is the node's read role still propagating (run it
-  again); 404 means the blob was never uploaded or has expired (kits last a day: upload again).
+  again); a 403 that persists on a site-supplied subnet (`existing_subnet_id`) means the subnet
+  lacks the `Microsoft.Storage` service endpoint the kit drop's firewall needs; 404 means the blob was never uploaded or has expired (kits last a day: upload again).
 
 ## Checks without Azure
 

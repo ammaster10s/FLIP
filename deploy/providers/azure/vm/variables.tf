@@ -51,7 +51,7 @@ variable "egress_mode" {
 }
 
 variable "existing_subnet_id" {
-  description = "A subnet the site supplies; empty creates the network."
+  description = "A subnet the site supplies; empty creates the network. With the kit drop on, it needs the Microsoft.Storage service endpoint, or the storage firewall refuses the node (403)."
   type        = string
   default     = ""
 }
