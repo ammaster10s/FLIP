@@ -111,8 +111,8 @@ placeholders:
    * - Variable
      - What to set
    * - ``UI_PORT``
-     - A free port, e.g. ``44350``. The default ``443`` does **not** work:
-       the dev UI serves plain HTTP.
+     - The host port for the UI. The default ``443`` works; set another free
+       port (e.g. ``44350``) if 443 is taken or you run a second stack.
    * - ``POSTGRES_PASSWORD``
      - Any password for the local hub database.
    * - ``ADMIN_USER_PASSWORD``
