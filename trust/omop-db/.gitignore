@@ -19,5 +19,3 @@ volumes/*/.seeded
 data/
 .env.build
 
-# Exported pgdata tarballs (publish artefacts)
-dist/

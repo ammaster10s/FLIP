@@ -207,15 +207,6 @@ class TestLoadProject:
 
         assert not [sql for sql, _ in engine.conn.executed if sql.startswith("DELETE")]
 
-    def test_legacy_alias_still_loads(self, tmp_path, monkeypatch):
-        required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
-        _write_project(tmp_path, "cxr_project", required)
-        loaded = self._record_to_sql(monkeypatch)
-
-        load_project(_FakeEngine(), tmp_path, "cxr_project", num_trusts=1, trust_index=1, partition="legacy")
-
-        assert [name for name, _, _ in loaded] == required
-
     def test_headers_only_required_table_rejected(self, tmp_path, monkeypatch):
         required = [table for table in CANONICAL_TABLES if table not in {"measurement", "observation"}]
         project_dir = _write_project(tmp_path, "cxr_project", required)

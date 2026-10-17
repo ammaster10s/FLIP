@@ -66,9 +66,8 @@ tolerate the DICOM vocab the seed has already loaded):
   value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
   HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it belongs to, decided by
-  the dataset's generator. Partition modes: `source_trust` (default; `legacy` is an accepted alias —
-  the old name from when the mode existed only to match the two-trust cut frozen in the Orthanc
-  tarballs) and `modulo` (`person_id % N`, only for a dataset with no partition column). The
+  the dataset's generator. Partition modes: `source_trust` (default) and `modulo` (`person_id % N`, only for
+  a dataset with no partition column). The
   partition is *data*, and the per-project DICOM sets are keyed on the same column, so OMOP and PACS
   agree by construction (#1100). All tables carry `person_id`, so person-level partitioning preserves
   referential integrity. `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed —

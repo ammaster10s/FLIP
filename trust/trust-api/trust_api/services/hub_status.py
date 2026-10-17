@@ -23,8 +23,8 @@ The hub embeds two things in every heartbeat reply beside the identity block:
   every task failing to decrypt. The hub's digest is kept as well, so the readiness checklist
   can tell a stale kit from a refreshed kit that trust-api has not been recreated on yet.
 
-Both are optional on the wire — a pre-FLIP#1204 hub sends neither, which is recorded
-as "unknown", never as a mismatch. The status is only as fresh as the last heartbeat the
+Both are optional on the wire — a reply without them is recorded as "unknown", never
+as a mismatch. The status is only as fresh as the last heartbeat the
 hub accepted: a rejected or failed heartbeat forgets it, so a hub that has since rotated
 its key is never reported as a match. The poller records; ``/health`` reports.
 """

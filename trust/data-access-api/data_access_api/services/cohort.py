@@ -73,7 +73,7 @@ _VOCABULARY_PROBE = text("SELECT 1 FROM omop.concept_ancestor LIMIT 1")
 def _warn_if_vocabulary_missing() -> None:
     """Log an ERROR when a zero-row cohort is explained by an unloaded OMOP vocabulary.
 
-    The published OMOP pgdata tarballs are vocabulary-free; loading it is a separate,
+    A seeded OMOP database is vocabulary-free; loading it is a separate,
     credentialed, ~25-minute step. Until it runs, ``concept_ancestor`` is empty and every
     cohort query matches nothing while the imaging tables look perfectly healthy — so the
     failure reads as a bad query or a broken import rather than a missing seed step.

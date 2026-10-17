@@ -94,8 +94,6 @@ def canonical_table_url(revision: str, project: str, table: str, repo: str = HF_
 
 
 PARTITION_MODES = ["source_trust", "modulo"]
-# The name this mode had before FLIP#1100; still accepted everywhere a mode is.
-LEGACY_MODE_ALIAS = "legacy"
 
 
 def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: str = "source_trust") -> pd.DataFrame:
@@ -105,8 +103,8 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
         df (pd.DataFrame): One canonical table (may carry the source_trust column).
         num_trusts (int): Total number of trusts being stood up.
         trust_index (int): 1-based index of the trust to extract.
-        mode (str): "source_trust" (partition by that column; "legacy" is an
-            accepted alias) or "modulo" (partition by person_id % num_trusts).
+        mode (str): "source_trust" (partition by that column) or "modulo"
+            (partition by person_id % num_trusts).
 
     Returns:
         pd.DataFrame: The trust's rows, with the provenance column dropped.
@@ -119,8 +117,6 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
         raise ValueError(f"num_trusts must be >= 1, got {num_trusts}")
     if not 1 <= trust_index <= num_trusts:
         raise ValueError(f"trust_index must be in [1, {num_trusts}], got {trust_index}")
-    if mode == LEGACY_MODE_ALIAS:
-        mode = "source_trust"
     if mode not in PARTITION_MODES:
         raise ValueError(f"Unknown partition mode {mode!r}; expected one of {PARTITION_MODES}")
 
