@@ -78,8 +78,8 @@
                         </AiButton>
                         <!-- Public Ark+ demo: the viewer identity has no permissions, but the
                              real page shows the actions menu to the model owner — surface it so
-                             the recorded run's results stay downloadable (Stop Training renders
-                             disabled at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
+                             the recorded run's results stay downloadable (Stop Training is hidden
+                             at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
                              keep the viewer gate unchanged.
                              This menu is safe to expose in the demo only because every item in
                              it today is also status-gated, not just permission-gated — the
