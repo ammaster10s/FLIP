@@ -997,9 +997,9 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
   copies the AWS README embeds.
 - It needs **network access to huggingface.co** (and `*.hf.co`). The user-guide GIFs are not tracked in git
-  (FLIP#1236): `conf.py` fetches the version pinned in `docs/.gifs_version` from the public dataset
-  `aicentreflip/docs-gifs` into the gitignored `docs/source/assets/generated/gifs/`, verifying every file
-  against the published manifest, and fails loudly if it cannot. A repeat build makes no network request.
+  (FLIP#1236): `conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` into the gitignored
+  `docs/source/assets/generated/gifs/`, verifying every file against the published manifest, and fails loudly
+  if it cannot. A repeat build downloads only what changed.
   `FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs` builds text-only offline (the user-guide pages then warn
   about their missing images). See "Documentation GIFs" below.
 
@@ -1014,22 +1014,24 @@ run was 95% of a clone). Instead:
 - `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
   the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
   `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
-  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
-  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
-  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
-  directory to the public Hugging Face dataset
-  [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
-  tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
-  anonymously, and opens a PR whose only diff is the pin, `docs/.gifs_version`. A later run opens a fresh PR
-  and closes the superseded one.
-- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
-  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
-- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
-  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
-  timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
-  the genuinely-changed clips look right, otherwise close.
-- **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the
-  tag they were built with. A re-recording is always a new tag.
+  the version `YYYYMMDDTHHMMSSZ-<sha7>`, records the demo specs under
+  `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and converts each video to
+  `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its `publish` job — **`develop`
+  only**; a dispatch from a branch records without publishing — publishes that directory to the public Hugging
+  Face dataset [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one
+  commit on its `main`** (`docs/scripts/publish_docs_gifs.py`) and checks it resolves anonymously. Nothing
+  comes back to git and nothing needs approving (FLIP#1547).
+- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches at build time
+  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`, see "Building the documentation"):
+  `latest`, PR previews and local builds get the newest recording; a release version gets the set it shipped.
+- **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
+  contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
+  that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
+- **GIFs CI cannot record** (one that needs a live trust, say) are recorded by hand and published to the
+  dataset branch of the PR that documents them, which that PR's ReadTheDocs preview then shows:
+  `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"` (needs
+  `hf auth login` with write access to the dataset), then rebuild the preview. Only CI writes the dataset's
+  `main`; delete `pr-<N>` once the PR closes.
 
 ### Adding a new GIF
 
@@ -1041,8 +1043,8 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
    figure `.. figure:: ../assets/generated/gifs/<category>/<name>.gif` in the rst. `make -C docs test` checks
    the two agree. Until the GIF is published, the docs build warns "image file not readable" for that one
    figure — expected, and deliberately not fatal.
-2. Once the PR merges to `develop`, the workflow records and publishes everything and opens the pin PR;
-   merging that makes the new figure render.
+2. Once the PR merges to `develop`, the workflow records and publishes everything, and the next `latest`
+   build renders the new figure.
 
 ### Previewing locally
 
