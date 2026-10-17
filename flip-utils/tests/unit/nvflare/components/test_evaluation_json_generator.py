@@ -400,7 +400,7 @@ class TestEvaluationJsonGenerator:
         assert self.generator.hub_metrics() == {"Trust_1": {"DICE/DICE": 0.9, "B/DICE": 0.8}}
 
     def test_hub_metrics_take_a_reply_already_keyed_by_its_model_as_it_is(self):
-        """Ark+ baseline: ``{model_name: {auroc_<lesion>: ...}}`` under owner ``SRV_<model_name>``."""
+        """Ark+ multimodel: ``{model_name: {auroc_<lesion>: ...}}`` under owner ``SRV_<model_name>``."""
         self._receive("Trust_1", self._metrics(arkplus={"auroc_Effusion": 0.81}), model_owner="SRV_arkplus")
 
         assert self.generator.hub_metrics() == {"Trust_1": {"ARKPLUS/AUROC_EFFUSION": 0.81}}

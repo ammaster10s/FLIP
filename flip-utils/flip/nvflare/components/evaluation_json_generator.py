@@ -119,8 +119,8 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         Nested keys join with ``/``; the label is upper-cased, as on Flower. When the run evaluated more
         than one model, each label is prefixed with the model name (the ``config.json`` key, without the
         ``SRV_`` prefix ``GlobalModelEval`` adds), the same at every client even where a task failed. A
-        reply that already keys its metrics by that model name, as the Ark+ evaluators do, is taken as it
-        is. Where labels repeat, the later model's value wins, so cumulative replies are sent once.
+        reply that already keys its metrics by that model name, as the Ark+ multimodel evaluator does, is
+        taken as it is. Where labels repeat, the later model's value wins, so cumulative replies are sent once.
 
         Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
         lists, which is where per-sample values would live, are never sent.
