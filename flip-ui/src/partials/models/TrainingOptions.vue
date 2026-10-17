@@ -65,14 +65,15 @@
                     />
                 </div>
             </div>
-            <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
-                <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
+            <!-- Fifths rather than thirds, so the hint fits on one line beside the Trust list. -->
+            <div class="sm:grid sm:grid-cols-5 sm:gap-4 sm:items-start sm:pt-5">
+                <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     Participating Trusts
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         A minimum of 1 Trust must be selected for training
                     </div>
                 </label>
-                <div class="sm:col-span-2">
+                <div class="sm:col-span-3">
                     <div class="flow-root">
                         <div>
                             <dl class="divide-y divide-gray-200 dark:divide-dark-border">
