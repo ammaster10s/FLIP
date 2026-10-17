@@ -39,14 +39,10 @@ ports, bind dirs) always survive a re-run.
   (`EXPECTED_TRUST_ID` / `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER`) and the Hub-shared block are
   upserted unconditionally, the latter under a sentinel header added once on first write. Writes
   every kit file `0600`.
-- **`distribute_trust_kits.py`** — writes trust kit files from `register_trust`'s JSON output.
-  `--target PATH` mode writes a single kit (object or one-element array) to an explicit path; it
-  is what every caller uses — the dev `register-trust` Makefile pipe
-  (`--target trust/.env.<CODE>.<env>`) and `deploy/providers/AWS/scripts/register-trusts.sh` for
-  stag/prod alike. Array mode (the
-  default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
-  slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
-  `.example` on first write; nothing in the repo invokes it any more.
+- **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output:
+  one kit (object or one-element array) on stdin to the required `--target PATH` — the dev
+  `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`) and
+  `deploy/providers/AWS/scripts/register-trusts.sh` for stag/prod alike.
 - **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
