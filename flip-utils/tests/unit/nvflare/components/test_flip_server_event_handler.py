@@ -661,6 +661,16 @@ class TestEvaluationMetricsForwarding:
         assert flip.send_metrics.call_count == 2
         assert handler.final_status == ModelStatus.RESULTS_UPLOADED
 
+    def test_unreadable_metrics_do_not_stop_end_run(self):
+        flip = MagicMock()
+        generator = self._evaluation_generator({})
+        generator.hub_metrics.side_effect = TypeError("bad reply")
+
+        handler = self._end_run(generator, flip)
+
+        flip.send_metrics.assert_not_called()
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+
     def test_training_jobs_forward_nothing(self):
         """The training validate phase streams its metrics from the clients; nothing extra here."""
         flip = MagicMock()
