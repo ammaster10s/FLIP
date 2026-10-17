@@ -409,10 +409,10 @@ def main() -> None:
             all_targets[name] = targets
             logger.info("Scored model %s (%d/%d models done).", name, len(all_predictions), len(model_names))
 
-        # Reply with every model scored so far. The server keeps one metrics dict per client (last
-        # reply wins) and a client executes its tasks sequentially, so the reply to the final validate
-        # task — every model's AUROC plus the pairwise DeLong map — is what lands in
-        # evaluation_results.json. The DeLong maps ride in meta: they are for that file, not hub plots.
+        # Reply with every model scored so far. The server stores each reply under its validate task
+        # (SRV_<model>) and a client executes its tasks sequentially, so the entry for the site's final
+        # task holds every model's AUROC plus the pairwise DeLong map in evaluation_results.json. The
+        # DeLong maps ride in meta: they are for that file, not hub plots.
         scored_names = [n for n in model_names if n in all_predictions]
         metrics, supplementary = compute_metrics(scored_names, all_predictions, all_targets, lesion_items)
         flare.send(flare.FLModel(metrics=metrics, meta={FlipMetaKey.SUPPLEMENTARY_RESULTS.value: supplementary}))
