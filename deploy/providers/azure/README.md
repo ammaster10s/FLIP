@@ -140,13 +140,14 @@ The node only makes outbound connections, and nothing listens on it. The hub adm
 API key and its FL kit's mTLS certificates, never by its source address, so no target here keeps
 a fixed IP for it.
 
-- **A site's own subnet (`SUBNET_ID=<subnet resource id>` on `plan`, `apply` and `destroy`).**
-  The node uses the site's routes, normally through its firewall, and this tree creates no
-  network, no NAT gateway and no public IP. This is how a trust deploys. The subnet needs the
-  `Microsoft.Storage` service endpoint for the kit drop, and the site's firewall must allow the
-  hub's URL on 443, the hub's FL endpoint (8002, or 8003 on staging), and what first boot fetches:
-  GitHub (the FLIP clone), GHCR (the images) and the OS, Docker and uv package sources. The FL
-  endpoint must be exempt from TLS inspection: its mTLS fails through a proxy that re-signs it.
+- **A site's own subnet (`SUBNET_ID=<subnet resource id>` on `plan` and `destroy`).** The node
+  uses the site's routes, normally through its firewall, and this tree creates no network, no NAT
+  gateway and no public IP. This is how a trust deploys. The subnet needs the `Microsoft.Storage`
+  service endpoint for the kit drop, and the site's firewall must allow the hub's URL on 443, the
+  hub's FL endpoint (8002, or 8003 on staging), and what first boot and first install fetch:
+  GitHub (the FLIP clone), GHCR (the images), Hugging Face (the published mock trust data) and
+  the OS, Docker and uv package sources. The FL endpoint must be exempt from TLS inspection: a
+  proxy that re-signs it breaks its certificate check.
 - **No `SUBNET_ID`.** For a standalone or trial node: the tree creates a VNet whose subnet
   leaves through its own NAT gateway. The gateway's IP is created and destroyed with the node.
 
