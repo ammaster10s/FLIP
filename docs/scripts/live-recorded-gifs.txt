@@ -5,7 +5,8 @@
 #
 # Re-cut them on a trust with MONAI Label (trust/monailabel-demo/README.md):
 #     make -C trust/monailabel-demo demo-video demo-gifs KIT=<CODE> XNAT_EXPERIMENT=<session>
-# A CI publish cannot record them, so it carries them forward unchanged from the pinned version.
+# and publish them to dataset branch pr-<N> of the PR that carries them (its preview shows them). A CI publish
+# cannot record them, so it carries them forward: from the merged PR's pr-<N>, else unchanged from main.
 monailabel/monailabel-enable.gif
 monailabel/monailabel-sam-clicks.gif
 monailabel/monailabel-export.gif

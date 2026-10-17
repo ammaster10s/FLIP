@@ -49,10 +49,11 @@ Then cut the documentation GIFs (one per chapter: `enable`, `sam-clicks`, `expor
 make -C trust/monailabel-demo demo-gifs   # -> out/gifs/monailabel/monailabel-<chapter>.gif
 ```
 
-To publish them, copy `out/gifs/monailabel/` into `docs/source/assets/generated/gifs/`, fetch the other
-GIFs at the current pin (`uv run docs/scripts/fetch_docs_gifs.py`; every version carries the full set),
-then `uv run docs/scripts/publish_docs_gifs.py --source-commit <sha>` (an HF write token) and set
-`docs/.gifs_version` to the new tag.
+To publish them, fetch the other GIFs (`uv run docs/scripts/fetch_docs_gifs.py`; every recording carries
+the full set), copy `out/gifs/monailabel/` into `docs/source/assets/generated/gifs/`, then publish to the
+dataset branch of the PR they belong to: `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N>
+--source-commit <sha>` (an HF write token), and rebuild that PR's preview. Once the PR merges, CI carries
+them into the dataset's `main` (CONTRIBUTING.md, "Documentation GIFs").
 
 It signs in as the kit's `XNAT_ADMIN_USER`. On failure `out/failure.png` shows what the recorder
 was looking at.
