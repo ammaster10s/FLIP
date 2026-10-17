@@ -27,9 +27,7 @@ Standing up N trusts is a deterministic split of that single dataset:
   the studies in its PACS agree by construction. A dataset may carry more
   sources than the stack has trusts (one center per trust, the surplus waiting
   for a trust that does not exist yet); every trust being stood up must have
-  rows, and any trust count the column can supply is supported. ``legacy`` is an
-  accepted alias from when this mode existed only to reproduce the original
-  two-trust cut baked into the published Orthanc tarballs.
+  rows, and any trust count the column can supply is supported.
 - ``modulo``: partition by ``person_id % num_trusts``. For a dataset that carries
   no partition column, and only then — it ignores whatever the generator decided.
 

@@ -17,8 +17,8 @@ small below-threshold count produce byte-identical responses, so nothing on the 
 can reveal that >=1 patient matched (issue #519). That property is load-bearing and
 these tests assert it stays intact.
 
-The cost is that a *misconfigured* trust is equally opaque. The published OMOP
-tarballs ship without the vocabulary, and until the separate ~25-minute load runs,
+The cost is that a *misconfigured* trust is equally opaque. A seeded OMOP database
+has no vocabulary, and until the separate ~25-minute load runs,
 ``concept_ancestor`` is empty and every cohort query matches nothing — while
 ``person`` / ``image_occurrence`` / ``image_feature`` all look healthy. The operator
 sees only "no cohort records" from the hub and goes looking at their query or their

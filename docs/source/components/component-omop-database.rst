@@ -327,7 +327,7 @@ Access API's SQL validation defence-in-depth.
 
 The paths differ only in when the file runs. Compose runs it once, at first initialisation. The
 Kubernetes Trust chart runs the copy the ``omop-db`` image ships (``/flip/omop/``) from a
-``postStart`` hook on every pod start, because a volume restored from a pgdata snapshot skips
+``postStart`` hook on every pod start, because a volume that already holds a database skips
 initialisation altogether; the file is idempotent and converges an existing role on the same
 grants. Before `FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`_ the chart carried
 an inline copy that granted ``pg_read_all_data`` — ``SELECT`` on every table in every schema — with
@@ -403,7 +403,7 @@ Trust on Kubernetes publishes no host port: port-forward ``svc/omop-db`` and pas
 Seeding the vocabulary
 ======================
 
-The published image and the data volumes are deliberately **vocabulary-free**. SNOMED CT, LOINC,
+The published image and the seeded databases are deliberately **vocabulary-free**. SNOMED CT, LOINC,
 Read v2 and dm+d are licensed material, so they are kept out of every published artifact and each
 environment loads the bundle it is licensed to use into its own running database, once:
 

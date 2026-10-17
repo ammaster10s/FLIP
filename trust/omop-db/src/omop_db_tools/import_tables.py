@@ -221,8 +221,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=PARTITION_MODES,
         default="source_trust",
         help="Split mode: 'source_trust' partitions by the dataset's own column, which the per-project DICOM "
-        "sets are keyed on too; 'modulo' partitions person_id %% num-trusts "
-        "for a dataset that carries no such column.",
+        "sets are keyed on too; 'modulo' partitions person_id %% num-trusts for a dataset that carries no such column.",
     )
     parser.add_argument(
         "--clean",

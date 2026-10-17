@@ -65,13 +65,13 @@ tolerate the DICOM vocab the seed has already loaded):
   in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
   value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
-  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it belongs to, decided by
-  the dataset's generator. Partition modes: `source_trust` (default) and `modulo` (`person_id % N`, only for
-  a dataset with no partition column). The
-  partition is *data*, and the per-project DICOM sets are keyed on the same column, so OMOP and PACS
-  agree by construction (#1100). All tables carry `person_id`, so person-level partitioning preserves
-  referential integrity. `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed —
-  because the seed path targets a constrained, vocab-loaded running trust.
+  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it
+  belongs to, decided by the dataset's generator. Partition modes: `source_trust` (default) and `modulo`
+  (`person_id % N`, only for a dataset with no partition column). The partition is *data*, and the
+  per-project DICOM sets are keyed on the same column, so OMOP and PACS agree by construction (#1100).
+  All tables carry `person_id`, so person-level partitioning preserves referential integrity.
+  `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed — because the seed path
+  targets a constrained, vocab-loaded running trust.
 - **Seeding a running trust** (#1100): `make -C trust seed KIT=<CODE> PROJECTS="…"` loads the listed
   projects' rows (`import_tables --clean projects`, by the projects' own `person_id`s — Synthea rows
   and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
@@ -136,5 +136,5 @@ make local_test                     # ruff + mypy + pytest tests/unit (no DB nee
   and the `uv-lock` pre-commit hooks. Tests live in `tests/unit/` only — anything touching a real
   Postgres belongs in `tests/integration/` (none yet).
 - SQL identifiers interpolated into statements must pass `import_tables.validate_identifier`.
-- The vocab/dataset bundles under `data/`, exported tarballs under `dist/`, and the build env
-  (`.env.build`) are gitignored — keep it that way.
+- The vocab/dataset bundles under `data/` and the build env (`.env.build`) are gitignored — keep it
+  that way.

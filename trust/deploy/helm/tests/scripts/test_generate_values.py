@@ -112,11 +112,7 @@ def test_the_fl_client_follows_docker_fl_tag_only_when_it_names_an_immutable_ima
         assert "image" not in overrides["flClient"], tag
 
 
-# ── Trust data version ───────────────────────────────────────────────
-
-
-def test_the_trust_data_version_maps_through(capsys):
+def test_the_trust_data_version_maps_through():
     overrides, _ = generate_values.build_values({"TRUST_DATA_VERSION": "20260901"})
 
     assert overrides["trustData"]["version"] == "20260901"
-    assert capsys.readouterr().err == ""

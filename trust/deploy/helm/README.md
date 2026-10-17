@@ -420,9 +420,7 @@ upgrading**:
 | `orthanc.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` (same value — one pin covers both) |
 
 Pinning a version that predates the single-copy dataset layout is not supported: from `20260729`
-onwards every artefact is fetched at an unversioned path resolved at the tag. `archiveName` is
-unaffected — it names an **S3** object, and S3 has no revisions, so a version still lives in that
-filename.
+onwards every artefact is fetched at an unversioned path resolved at the tag.
 
 The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
 template time instead of 404-ing inside the seed hook.

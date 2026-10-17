@@ -202,8 +202,8 @@ NUM_TRUSTS = 2
 # The dataset's own partition column. `modulo` only for a dataset that carries
 # no such column.
 PARTITION = source_trust
-# CORE_VOCAB=0 skips the licensed core-vocabulary load during populate — for a
-# build database without the licensed bundle (constraints must then also be
+# CORE_VOCAB=0 skips the licensed core-vocabulary load during populate — for
+# when the licensed bundle is not available (constraints must then also be
 # skipped: they reference the vocab tables).
 CORE_VOCAB = 1
 

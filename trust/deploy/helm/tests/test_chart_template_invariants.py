@@ -99,8 +99,7 @@ def _init_container_script() -> str:
 def _omop_db_post_start_script() -> str:
     """Return the omop-db StatefulSet's ``postStart`` hook body with comment lines dropped.
 
-    Bounded by the ``volumeMounts:`` that follows the lifecycle block, so no
-    initContainer script further up is ever in the slice.
+    Bounded by the ``volumeMounts:`` that follows the lifecycle block.
 
     Returns:
         str: The postStart hook script, comments removed.

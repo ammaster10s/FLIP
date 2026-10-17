@@ -21,7 +21,7 @@ schema with the MI-CDM imaging extension — `image_occurrence`,
 slice of the published tables into a running database (`make seed-omop`).
 
 **Every published artifact is licence-clean (FLIP#842/#843)**: the image and
-the seeded data are *vocab-free* — the licensed core vocabulary is
+the published tables are *vocab-free* — the licensed core vocabulary is
 streamed into each running database as a one-time seeding step
 (`files/load_core_vocab.sh`), from a source each environment is licensed to
 use.
