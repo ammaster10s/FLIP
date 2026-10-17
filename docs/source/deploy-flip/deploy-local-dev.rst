@@ -125,8 +125,9 @@ placeholders:
      - Leave the placeholder. Only staging/production kit uploads use it; the
        local kits are provisioned in-tree (Step 5).
    * - ``NLB_SUBDOMAIN``
-     - Leave the placeholder. A local stack never uses it, but the variable
-       must exist.
+     - Leave the placeholder. A local stack never dials it, but ``make up``
+       copies it into the dev trust kits with the other hub-shared values and
+       stops if it is empty.
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
