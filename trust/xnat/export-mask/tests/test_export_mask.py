@@ -186,6 +186,16 @@ def test_main_converts_and_uploads_each_seg(dicom_seg: Path, tmp_path: Path) -> 
     assert (output / "SEG_1.nii.gz").is_file()
 
 
+def test_main_refuses_segs_whose_masks_would_share_a_name(tmp_path: Path) -> None:
+    for sub in ("a", "b"):
+        (tmp_path / sub).mkdir()
+        (tmp_path / sub / "SEG_1.dcm").write_bytes(b"")
+    with mock.patch.object(export_mask, "connect") as connect:
+        status = export_mask.main(["-i", str(tmp_path), "-o", str(tmp_path), "--experiment", "E", "--assessor", "A"])
+    assert status == 1
+    connect.assert_not_called()
+
+
 def test_main_fails_when_the_assessor_has_no_dicom_seg(tmp_path: Path) -> None:
     with mock.patch.object(export_mask, "connect") as connect:
         status = export_mask.main(["-i", str(tmp_path), "-o", str(tmp_path), "--experiment", "E", "--assessor", "A"])

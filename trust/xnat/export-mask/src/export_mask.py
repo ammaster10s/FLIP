@@ -144,6 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     if not seg_files:
         print(f"No DICOM-SEG (*.dcm) under {args.input}.", file=sys.stderr)
         return 1
+    # The output is named by basename and upload() never overwrites, so a second SEG of the same
+    # name in another subdirectory would be dropped with only a log line. Refuse instead.
+    by_name: dict[str, list[Path]] = {}
+    for seg in seg_files:
+        by_name.setdefault(seg.name, []).append(seg)
+    clashes = [paths for paths in by_name.values() if len(paths) > 1]
+    if clashes:
+        for paths in clashes:
+            print(f"DICOM-SEGs share a name, so their masks would collide: {[str(p) for p in paths]}", file=sys.stderr)
+        return 1
 
     xnat = connect()
     with tempfile.TemporaryDirectory() as workdir:
