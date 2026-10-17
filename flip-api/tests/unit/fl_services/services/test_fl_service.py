@@ -1328,11 +1328,7 @@ def test_abort_model_training_success(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
     # the abort path must release it itself once the abort has been delivered.
@@ -1362,12 +1358,8 @@ def test_abort_model_training_idempotent_when_no_running_job(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = None
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
-
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_not_called()
     mock_release.assert_called_once_with(model_id, fake_session)
 
@@ -1397,11 +1389,7 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
     mock_fetch_server_status.return_value = {"status": "started"}
     mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     mock_release.assert_called_once_with(model_id, fake_session)
@@ -2059,10 +2047,7 @@ def test_abort_model_training_pre_submit_frees_net(
     # fl-server, so fl_backend_job_id is still NULL and the backend-job-id lookup raises.
     mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
 
-    request = MagicMock()
-    request.path_params = {}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     # The job is dequeued and the BUSY net released immediately — not left for the watchdog.
     mock_remove.assert_called_once_with(model_id, fake_session)
@@ -2096,10 +2081,7 @@ def test_abort_model_training_pre_pickup_net_not_found_frees_net(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job-1"
     mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
 
-    request = MagicMock()
-    request.path_params = {}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     mock_remove.assert_called_once_with(model_id, fake_session)
     mock_release.assert_called_once_with(model_id, fake_session)
@@ -2131,11 +2113,8 @@ def test_abort_model_training_db_error_propagates(
     # the job is still queued).
     mock_remove.side_effect = DatabaseError("Error removing job from queue")
 
-    request = MagicMock()
-    request.path_params = {}
-
     with pytest.raises(DatabaseError, match="Error removing job from queue"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     mock_release.assert_not_called()
     mock_fetch_server_status.assert_not_called()
@@ -2164,47 +2143,14 @@ def test_abort_model_training_raises_when_server_not_running(
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = None  # FL server is down
 
-    request = MagicMock()
-    request.path_params = {"target": "server", "clients": None}
-
     with pytest.raises(ValueError, match="FL Server not running"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
     mock_abort.assert_not_called()
     # The abort was never delivered, so the net must NOT be released — the job may still be live.
     mock_release.assert_not_called()
-
-
-@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
-@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
-@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
-@patch("flip_api.fl_services.services.fl_service.abort_job")
-@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
-@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
-def test_abort_model_training_raises_on_invalid_target(
-    mock_remove,
-    mock_get_net,
-    mock_abort,
-    mock_fetch_server_status,
-    mock_get_fl_backend_job_id_by_model_id,
-    mock_extract_current_job_data,
-    model_id,
-    fake_session,
-):
-    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
-    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
-    mock_fetch_server_status.return_value = {"status": "started"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
-
-    request = MagicMock()
-    request.path_params = {"target": "bogus-target", "clients": None}
-
-    with pytest.raises(ValueError, match="Invalid target: bogus-target"):
-        fl_service.abort_model_training(request, model_id, fake_session)
-
-    mock_abort.assert_not_called()
 
 
 # --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
@@ -2844,6 +2790,14 @@ def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_fr
     assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
 
 
+def test_start_training_logs_the_platform_default_gpu_request(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "default"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert ("GPU request per trust: no GPU (the platform default)", True) in logged
+
+
 def test_start_training_logs_a_cpu_only_override(model_id, fl_job_id, fake_session):
     job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=0)
     reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "submission"}
@@ -2884,9 +2838,8 @@ def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_j
     assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
 
 
-def test_start_training_logs_nothing_about_gpus_for_an_older_fl_api_when_none_was_asked(
-    model_id, fl_job_id, fake_session
-):
-    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
+def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": None, "resources_enforced": False}
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert logged == []
