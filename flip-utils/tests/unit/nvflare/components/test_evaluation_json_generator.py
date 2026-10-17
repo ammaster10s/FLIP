@@ -385,6 +385,20 @@ class TestEvaluationJsonGenerator:
 
         assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.9, "MODEL_B/DICE": 0.8}}
 
+    def test_hub_metrics_label_a_model_the_same_at_every_client_when_one_task_failed(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_model_a")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_model_b")
+        self._receive("Trust_2", self._metrics(dice=0.7), model_owner="SRV_model_a")
+        self._receive("Trust_2", make_reply(ReturnCode.TASK_ABORTED), model_owner="SRV_model_b")
+
+        assert self.generator.hub_metrics()["Trust_2"] == {"MODEL_A/DICE": 0.7}
+
+    def test_hub_metrics_prefix_a_metric_that_shares_its_models_name(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_dice")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_b")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"DICE/DICE": 0.9, "B/DICE": 0.8}}
+
     def test_hub_metrics_take_a_reply_already_keyed_by_its_model_as_it_is(self):
         """Ark+ baseline: ``{model_name: {auroc_<lesion>: ...}}`` under owner ``SRV_<model_name>``."""
         self._receive("Trust_1", self._metrics(arkplus={"auroc_Effusion": 0.81}), model_owner="SRV_arkplus")

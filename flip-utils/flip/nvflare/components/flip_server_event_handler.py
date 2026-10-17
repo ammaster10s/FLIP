@@ -264,9 +264,6 @@ class ServerEventHandler(FLComponent):
         elif event_type == EventType.END_RUN:
             self.log_info(fl_ctx, "End run event received")
 
-            if isinstance(validation_json_generator, EvaluationJsonGenerator):
-                self._forward_evaluation_metrics(fl_ctx, validation_json_generator)
-
             try:
                 # The results are uploaded even when the evaluation wholly failed: the zip carries
                 # the error_log.txt and evaluation_failures.json that explain why.
@@ -276,6 +273,10 @@ class ServerEventHandler(FLComponent):
                 final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
             except Exception:
                 final_status = ModelStatus.ERROR
+
+            # After the upload, so a slow hub delays only the plots, and before the terminal status.
+            if isinstance(validation_json_generator, EvaluationJsonGenerator):
+                self._forward_evaluation_metrics(fl_ctx, validation_json_generator)
 
             self.final_status = final_status
             self._update_status(fl_ctx, final_status)

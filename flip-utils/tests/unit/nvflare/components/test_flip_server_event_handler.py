@@ -651,6 +651,25 @@ class TestEvaluationMetricsForwarding:
         names = [c[0] for c in flip.method_calls]
         assert names.index("send_metrics") < names.index("update_status")
 
+    def test_results_are_uploaded_before_metrics_are_sent(self):
+        """A slow hub must not hold up the results upload."""
+        order = []
+        flip = MagicMock()
+        flip.send_metrics.side_effect = lambda **_: order.append("send_metrics")
+        generator = self._evaluation_generator({"Trust_1": {"MEAN_DICE": 0.9}})
+        handler = ServerEventHandler(model_id=self.MODEL_ID, flip=flip)
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = lambda _: order.append("upload")
+        fl_ctx.get_engine.return_value.get_component.side_effect = lambda comp_id: (
+            generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert order == ["upload", "send_metrics"]
+
     def test_a_failing_metric_does_not_stop_the_others_or_end_run(self):
         flip = MagicMock()
         flip.send_metrics.side_effect = [ValueError("schema"), None]

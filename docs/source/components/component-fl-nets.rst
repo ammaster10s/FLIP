@@ -158,8 +158,9 @@ ones, then took over the plain names when those were retired).
 The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 On both backends an evaluation sends each trust's returned metrics to the hub from the FL server,
 so they appear on the model page as one point per trust, at round 0 on NVFLARE and round 1 on
-Flower. Evaluation code needs nothing extra: whatever aggregate metrics it returns are forwarded
-(nested keys joined with ``/``, upper-cased; undefined values such as NaN are left out). An NVFLARE
+Flower. Whatever aggregate metrics the evaluation returns are forwarded, upper-cased, with undefined
+values such as NaN left out. NVFLARE evaluation code needs nothing extra and nested keys are joined
+with ``/``; a Flower client must name itself with ``client_name`` (or ``site``) in its reply config. An NVFLARE
 evaluator can keep results out of the plots and in the results file only: see the evaluation template's README.
 More job types will be added in the future, adjusting to the community's needs.
 

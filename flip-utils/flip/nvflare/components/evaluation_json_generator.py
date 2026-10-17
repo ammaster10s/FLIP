@@ -116,11 +116,11 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     def hub_metrics(self) -> dict[str, dict[str, float]]:
         """Flatten each client's evaluation metrics (not its supplementary results) into the hub's labels.
 
-        Nested keys join with ``/`` and the label is upper-cased, as Flower does. When a client
-        evaluated more than one model, each label is prefixed with the model name (the ``config.json``
-        key, without the ``SRV_`` prefix ``GlobalModelEval`` adds). A reply that already keys its
-        metrics by that model name, as the Ark+ evaluators do, is taken as it is. A later reply
-        overwrites an earlier one with the same label, so cumulative replies are sent once.
+        Nested keys join with ``/``; the label is upper-cased, as on Flower. When the run evaluated more
+        than one model, each label is prefixed with the model name (the ``config.json`` key, without the
+        ``SRV_`` prefix ``GlobalModelEval`` adds), the same at every client even where a task failed. A
+        reply that already keys its metrics by that model name, as the Ark+ evaluators do, is taken as it
+        is. Where labels repeat, the later model's value wins, so cumulative replies are sent once.
 
         Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
         lists, which is where per-sample values would live, are never sent.
@@ -128,13 +128,16 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         Returns:
             dict[str, dict[str, float]]: ``{client: {label: value}}``.
         """
+        owners = {owner for replies in self._replies.values() for owner in replies}
+        owners |= {failure["model"] for failure in self._eval_failures}
+        multi_model = len(owners - {None}) > 1
         hub: dict[str, dict[str, float]] = {}
         for client, replies in self._replies.items():
             labels: dict[str, float] = {}
             for owner, reply in replies.items():
                 name = owner.removeprefix("SRV_") if owner else None
-                self_keyed = isinstance(reply, Mapping) and name in reply
-                prefix = (name,) if name and len(replies) > 1 and not self_keyed else ()
+                self_keyed = isinstance(reply, Mapping) and isinstance(reply.get(name), Mapping)
+                prefix = (name,) if name and multi_model and not self_keyed else ()
                 _flatten_metrics(reply, prefix, labels)
             if labels:
                 hub[client] = labels
