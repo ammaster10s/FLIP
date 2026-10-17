@@ -179,7 +179,8 @@ jobs:
         run: |
           helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set monailabel.enabled=true \
-            --set monailabel.publicUrl=http://node.example.com:30030 > /tmp/monailabel.yaml
+            --set monailabel.publicUrl=http://node.example.com:30030 \
+            --set 'monailabel.allowedIngressCIDRs[0]=10.0.0.0/8' > /tmp/monailabel.yaml
           if ! grep -q "flip-trust.*-monailabel" /tmp/monailabel.yaml; then
             echo "::error::monailabel resources did not render with monailabel.enabled=true"
             exit 1

@@ -571,6 +571,7 @@ monailabel:
   enabled: true
   publicUrl: "http://<node-ip>:30030"   # REQUIRED: the clinician's BROWSER calls this —
                                         # XNAT stores it and never proxies it
+  allowedIngressCIDRs: ["10.0.0.0/8"]   # REQUIRED with networkPolicies.enabled: who may reach it
 ```
 
 Chart-specific notes (the full operational guide, including the stock-viewer quirks, is
@@ -584,13 +585,12 @@ Chart-specific notes (the full operational guide, including the stock-viewer qui
   the **pod** port (`monailabel.port`, default `8030`) through the namespace's default-deny
   ingress — NodePort traffic is DNAT'd to the pod port before policy evaluation, so that is
   the port the rule names, not `30030`.
-- **Scope that policy with `monailabel.allowedIngressCIDRs`.** Left empty (the default) the
-  ingress rule has no `from:`, and a NetworkPolicy rule without `from:` matches **every**
-  source, in and out of cluster. That is the fallback because the chart cannot know where
-  clinicians browse from, but the API behind it is unauthenticated (`monailabel.authEnable`
-  is upstream's own switch and needs an OAuth realm FLIP does not run) and holds the XNAT
-  service-account credentials. Set the subnets your clinicians use, e.g.
-  `allowedIngressCIDRs: ["10.0.0.0/8"]`.
+- **`monailabel.allowedIngressCIDRs` scopes that policy, and the render fails while it is
+  empty.** The API behind it is unauthenticated (`monailabel.authEnable` is upstream's own
+  switch and needs an OAuth realm FLIP does not run) and holds the XNAT service-account
+  credentials, so the chart does not open it to every source by default. List the subnets
+  your clinicians browse from, e.g. `["10.0.0.0/8"]`; `["0.0.0.0/0"]` opens it to every
+  source as a written decision.
 - Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
   `<release>-monailabel-models` PVC; first start on a cold volume takes minutes (the startup
   probe allows 30).

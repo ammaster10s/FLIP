@@ -228,12 +228,14 @@ spec:
     requests:
       storage: {{ .Values.monailabel.persistence.size }}
 {{- if and .Values.networkPolicies.enabled .Values.monailabel.service.allowExternalIngress }}
+{{- if not .Values.monailabel.allowedIngressCIDRs }}
+{{- fail "monailabel.allowedIngressCIDRs is empty: list the subnets clinicians browse from (e.g. [\"10.0.0.0/8\"]), or [\"0.0.0.0/0\"] to open the port to every source on purpose. The MONAI Label API is unauthenticated and holds the XNAT service-account credentials." }}
+{{- end }}
 ---
 # The namespace default-denies ingress; the MONAI Label API must be reachable from the
-# clinician's browser (outside the cluster), so open exactly its port on exactly its pod.
-# The API is unauthenticated and holds the XNAT service-account credentials — matching the
-# compose deployment's posture, where the port is host-published; restrict who can reach
-# the node port at the network layer.
+# clinician's browser (outside the cluster), so open exactly its port on exactly its pod, to
+# exactly allowedIngressCIDRs. The API is unauthenticated and holds the XNAT service-account
+# credentials, so an empty list fails the render above instead of opening it to every source.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -250,21 +252,11 @@ spec:
     - ports:
         - port: {{ .Values.monailabel.port }}
           protocol: TCP
-      {{- /*
-        An ingress rule with no `from:` allows EVERY source, in and out of cluster. That is
-        the fallback when allowedIngressCIDRs is empty, because the clinician's browser calls
-        this pod directly and the chart cannot know where from. Set allowedIngressCIDRs to the
-        subnets your clinicians actually browse from and the rule scopes to them instead —
-        strongly recommended, since the API behind it is unauthenticated and holds the XNAT
-        service-account credentials.
-      */}}
-      {{- with .Values.monailabel.allowedIngressCIDRs }}
       from:
-        {{- range . }}
+        {{- range .Values.monailabel.allowedIngressCIDRs }}
         - ipBlock:
             cidr: {{ . | quote }}
         {{- end }}
-      {{- end }}
   policyTypes:
     - Ingress
 {{- end }}
