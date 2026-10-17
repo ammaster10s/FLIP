@@ -465,11 +465,12 @@ Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harne
 `flip-ui/test/cypress/docs/**`, `flip-ui/cypress.docs.config.ts`, `flip-ui/scripts/videos-to-gifs.sh` — or
 manual dispatch; the GIFs are not in git (FLIP#1236): a secret-free `record` job hands them to
 a `publish` job in the `flip` environment, gated to `develop` (the environment is the shared CI one
-and adds no isolation — the ref gate is the control), that publishes one immutable tag on the HF dataset
-`aicentreflip/docs-gifs` and opens a one-line `docs/.gifs_version` pin PR, reviewed through its RTD
-preview), `test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher suites under
-`docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and a static guard over the regenerate
-workflow's token scope, `develop` gate and tag minting).
+and adds no isolation — the ref gate is the control), that publishes the recording as one commit on
+`main` of the HF dataset `aicentreflip/docs-gifs` and writes nothing back to git — docs builds fetch the
+newest recording, and `release.yml`'s `docs-gifs` job tags the one each release ships as `vX.Y.Z`, FLIP#1547),
+`test_docs_scripts.yml` (`make -C docs test`: the fetcher/publisher/release-tagger suites under
+`docs/tests/`, the rst-figure ↔ demo-spec wiring guard, and static guards over the regenerate and
+release workflows' token scope, the `develop` gate and version minting).
 
 ### PR path gate: service suites run only for the paths they cover (PRs into develop)
 

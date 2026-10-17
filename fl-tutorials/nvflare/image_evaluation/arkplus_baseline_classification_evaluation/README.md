@@ -168,7 +168,9 @@ Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `ma
 ## Output metrics
 
 The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
-`evaluation_results.json` keyed by site then model (NVFLARE prefixes server-side models with `SRV_`):
+`evaluation_results.json` keyed by site, then the server's validate task (`SRV_<model>`). The FL server also
+sends them to the hub, where they show on the model page per trust as `AUROC_<LESION>`; a NaN AUROC (one class
+only) is left out:
 
 ```json
 {
