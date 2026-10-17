@@ -1328,10 +1328,7 @@ def test_abort_model_training_success(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
     # the abort path must release it itself once the abort has been delivered.
@@ -1361,11 +1358,8 @@ def test_abort_model_training_idempotent_when_no_running_job(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = None
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_not_called()
     mock_release.assert_called_once_with(model_id, fake_session)
 
@@ -1395,10 +1389,7 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
     mock_fetch_server_status.return_value = {"status": "started"}
     mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     mock_release.assert_called_once_with(model_id, fake_session)
@@ -2056,9 +2047,7 @@ def test_abort_model_training_pre_submit_frees_net(
     # fl-server, so fl_backend_job_id is still NULL and the backend-job-id lookup raises.
     mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
 
-    request = MagicMock()
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     # The job is dequeued and the BUSY net released immediately — not left for the watchdog.
     mock_remove.assert_called_once_with(model_id, fake_session)
@@ -2092,9 +2081,7 @@ def test_abort_model_training_pre_pickup_net_not_found_frees_net(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job-1"
     mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
 
-    request = MagicMock()
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     mock_remove.assert_called_once_with(model_id, fake_session)
     mock_release.assert_called_once_with(model_id, fake_session)
@@ -2126,10 +2113,8 @@ def test_abort_model_training_db_error_propagates(
     # the job is still queued).
     mock_remove.side_effect = DatabaseError("Error removing job from queue")
 
-    request = MagicMock()
-
     with pytest.raises(DatabaseError, match="Error removing job from queue"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     mock_release.assert_not_called()
     mock_fetch_server_status.assert_not_called()
@@ -2158,10 +2143,8 @@ def test_abort_model_training_raises_when_server_not_running(
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = None  # FL server is down
 
-    request = MagicMock()
-
     with pytest.raises(ValueError, match="FL Server not running"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
