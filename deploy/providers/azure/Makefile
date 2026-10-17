@@ -133,7 +133,7 @@ apply: ## Show the saved plan and the target subscription, then apply it only af
 	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
 	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
 	$(TF) -chdir=vm apply vm.tfplan
-	@ip="$$($(TF) -chdir=vm output -raw outbound_ip)"; echo "Outbound IP: $${ip:-the site's egress (SUBNET_ID)}"
+	@ip="$$($(TF) -chdir=vm output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
 
 destroy: ## Destroy the node and its network, keep bootstrap (asks first)
 	$(require_subscription)
@@ -239,7 +239,7 @@ aks-apply: ## Show the saved AKS plan and the subscription, then apply it only a
 	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
 	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
 	$(TF) -chdir=aks apply aks.tfplan
-	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-the site's egress (SUBNET_ID)}"
+	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
 
 aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
 	$(require_subscription)
