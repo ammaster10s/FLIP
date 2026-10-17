@@ -200,6 +200,9 @@ locals {
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      # Inert: the fl-api no longer reads it (#1479). Kept so this release plans as moves only;
+      # it goes with the moved/removed cleanup once that has applied on both estates.
+      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.prod.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
@@ -228,8 +231,9 @@ locals {
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
-      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905).
+      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905), and the same inert old name.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
+      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }
   }
 }
