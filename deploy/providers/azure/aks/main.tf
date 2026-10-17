@@ -27,14 +27,14 @@ resource "azurerm_resource_group" "aks" {
   tags     = local.tags
 }
 
-# The same network as the VM node; egress is the cluster load balancer's, so the module makes
-# no NAT and puts no IP on a NIC.
+# The same network as the VM node: a site's subnet with the site's egress, or a created one that
+# leaves through its own NAT gateway. The cluster creates no outbound IP of its own either way.
 module "network" {
   source              = "../modules/network"
   name_prefix         = "${var.name_prefix}-aks"
   location            = var.location
   resource_group_name = azurerm_resource_group.aks.name
-  egress_mode         = "none"
+  existing_subnet_id  = var.existing_subnet_id
 }
 
 resource "azurerm_kubernetes_cluster" "this" {
@@ -61,6 +61,9 @@ resource "azurerm_kubernetes_cluster" "this" {
   local_account_disabled  = true
   node_os_upgrade_channel = "Unmanaged"
   tags                    = local.tags
+
+  # The NAT gateway must be on the subnet before the cluster checks its outbound path.
+  depends_on = [module.network]
 
   default_node_pool {
     name           = "system"
@@ -93,17 +96,16 @@ resource "azurerm_kubernetes_cluster" "this" {
     network_plugin_mode = "overlay"
     network_data_plane  = "cilium"
     network_policy      = "cilium"
-    outbound_type       = "loadBalancer"
-    load_balancer_sku   = "standard"
-    load_balancer_profile {
-      outbound_ip_address_ids = [var.egress_public_ip_id]
-    }
+    # A site subnet routes outbound through the site's firewall (its route table); a created
+    # one through the module's NAT gateway. Neither gives the cluster a public outbound IP.
+    outbound_type     = var.existing_subnet_id != "" ? "userDefinedRouting" : "userAssignedNATGateway"
+    load_balancer_sku = "standard"
   }
 }
 
-# The cluster's load balancer must be allowed to use the bootstrap IP, and nothing broader.
-resource "azurerm_role_assignment" "cluster_uses_egress_ip" {
-  scope                = var.egress_public_ip_id
+# The cluster identity manages its own resources in the node subnet, and nothing broader.
+resource "azurerm_role_assignment" "cluster_uses_subnet" {
+  scope                = module.network.subnet_id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_kubernetes_cluster.this.identity[0].principal_id
   principal_type       = "ServicePrincipal"

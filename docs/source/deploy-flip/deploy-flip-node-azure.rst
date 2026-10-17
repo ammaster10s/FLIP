@@ -25,32 +25,85 @@ Architecture
 
         Operator's machine                       Azure subscription
    ┌─────────────────────────┐        ┌──────────────────────────────────────────┐
-   │ make plan / apply       │──ARM──▶│ VNet (inbound denied) ── VM ── data disk   │
+   │ make plan / apply       │──ARM──▶│ subnet (inbound denied) ── VM ── data disk │
    │ make kit-upload         │──Entra▶│ kit drop (private container, 1-day blobs) │
    │ make selftest / join    │──Run──▶│   ▲ read with the VM's managed identity   │
    └─────────────────────────┘ Command└──┼───────────────────────────────────────┘
-                                         │ outbound only, from a static IP
+                                         │ outbound only: the site's firewall, or the
+                                         │ node's own NAT gateway on a standalone node
                                          ▼
                            Central Hub API (HTTPS) and FL server (mTLS)
-
-The VM's outbound address is a static public IP held in a long-lived *bootstrap* layer, so it
-survives the node being destroyed and rebuilt.
 
 +---------------------------+--------------------------------------------------------------+
 | Layer                     | What it holds                                                |
 +===========================+==============================================================+
-| Bootstrap (once)          | Terraform state storage (Entra access only), a budget alert, |
-|                           | the static outbound IP                                       |
+| Bootstrap (once)          | Terraform state storage (Entra access only), a budget alert  |
 +---------------------------+--------------------------------------------------------------+
-| Node (per session)        | VNet and subnet, all inbound denied at the VM's NIC, an      |
-|                           | Ubuntu 24.04 VM (Trusted Launch), a data disk for            |
-|                           | ``/opt/flip``, a daily auto-shutdown                         |
+| Node (per session)        | All inbound denied at the VM's NIC, no public IP on the VM,  |
+|                           | an Ubuntu 24.04 VM (Trusted Launch), a data disk for         |
+|                           | ``/opt/flip``, a daily auto-shutdown. On a standalone node   |
+|                           | also a VNet and subnet leaving through a NAT gateway with    |
+|                           | its own IP; on a site subnet, none of these                  |
 +---------------------------+--------------------------------------------------------------+
 | Kit drop (with the node)  | A storage account with shared keys off and a private         |
 |                           | container. Its firewall admits only the node subnet and the  |
 |                           | operator's IP; a daily lifecycle run deletes each blob a     |
 |                           | day after upload, so within about 48 hours                   |
 +---------------------------+--------------------------------------------------------------+
+
+********************
+Network and security
+********************
+
+This section is for the Trust's network and security teams.
+
+**The node never accepts a connection.** Its NIC carries its own network security group, which
+denies all inbound traffic, so a permissive site subnet cannot open it. The VM has no public IP,
+and nothing listens for SSH from outside. Operators reach it only through Azure Run Command,
+which travels over the VM agent's own outbound channel.
+
+**The hub admits the node by its credentials, never by its address.** Hub API calls carry the
+Trust's API key over HTTPS. FL traffic is TLS authenticated with the credentials in the Trust's FL
+kit (mutual TLS on NVFLARE).
+The hub does not allowlist Trust IP addresses, so the node needs no fixed public IP. FLIP once
+gave its AWS trust one for allowlisting and removed it, because it protected nothing.
+
+**Outbound traffic takes one of two paths.**
+
+- **The Trust's own subnet** (``SUBNET_ID``): the recommended deployment. The node follows the
+  Trust's routes, normally through its firewall, and FLIP creates no network, no NAT gateway and
+  no public IP. The subnet needs the ``Microsoft.Storage`` service endpoint for the kit drop.
+- **A standalone node** (no ``SUBNET_ID``): for trials. FLIP creates a VNet whose subnet leaves
+  through a NAT gateway. The gateway's IP is created and destroyed with the node, and no address
+  outlives it.
+
+**What the Trust's firewall must allow, outbound only:**
+
++--------------------------------------+-----------------------------------------------------+
+| Destination                          | Why                                                 |
++======================================+=====================================================+
+| The hub's URL, port 443              | Task polling, heartbeats, results (HTTPS, API key)  |
++--------------------------------------+-----------------------------------------------------+
+| The hub's FL endpoint, port 8002     | Federated training. **Exempt it from TLS            |
+| (8003 on staging)                    | inspection**: a proxy that re-signs the traffic     |
+|                                      | breaks its certificate check                        |
++--------------------------------------+-----------------------------------------------------+
+| ``ghcr.io``                          | FLIP's container images                             |
++--------------------------------------+-----------------------------------------------------+
+| ``github.com``                       | First boot clones FLIP at a pinned commit           |
++--------------------------------------+-----------------------------------------------------+
+| The OS, Docker and uv package        | First-boot installs                                 |
+| sources                              |                                                     |
++--------------------------------------+-----------------------------------------------------+
+
+**What leaves the site.** Model updates during training, and aggregate results. Patient records,
+images and OMOP rows stay on the node.
+
+**Where the secrets live.** The Trust's API key and its trust-internal service key are in its
+kit file, installed owner-only on the node; the hub never sees the trust-internal key. The kit
+reaches the node through the kit drop, a storage account with shared keys off, a firewall that
+admits only the node's subnet and the operator's IP, and a rule that deletes every kit within
+about 48 hours. The node reads it with its own managed identity.
 
 *************
 Prerequisites
@@ -75,11 +128,12 @@ Build the node and test it
 
    cd deploy/providers/azure
    SUB="<subscription name>"
-   REGION=<region>   # the node's region; bootstrap creates the outbound IP there, so pass it to both
+   REGION=<region>   # the node's region
+   SUBNET=<subnet resource id>   # the site's subnet; leave empty for a standalone node (see below)
 
-   make bootstrap AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
    make init      AZ_SUBSCRIPTION="$SUB"
-   make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION
+   make plan      AZ_SUBSCRIPTION="$SUB" LOCATION=$REGION SUBNET_ID=$SUBNET
    make apply     AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make status    AZ_SUBSCRIPTION="$SUB"      # repeat until "provisioned: <time>"
 
@@ -164,9 +218,10 @@ Operate and remove
 ******************
 
 - ``make reprovision REF=<sha or vX.Y.Z>`` moves the node's code without rebuilding it.
-- ``make stop`` / ``make start`` deallocate and start the VM (a stopped VM costs only its disks
-  and the IP). The VM also shuts itself down at 19:00 UK time by default.
-- ``make destroy`` removes the node and the kit drop and keeps the bootstrap layer;
+- ``make stop`` / ``make start`` deallocate and start the VM (a stopped VM costs only its disks,
+  plus the NAT gateway on a standalone node). The VM also shuts itself down at 19:00 UK time by default.
+- ``make destroy`` (with the same ``SUBNET_ID``) removes the node, its network and the kit drop,
+  and keeps the bootstrap layer;
   ``make destroy-bootstrap`` removes the rest and refuses while a node exists.
 
 ***************
@@ -178,7 +233,7 @@ Troubleshooting
   cause in the repo, push, then ``make reprovision REF=<new sha>``.
 - **The node cannot fetch its kit.** It retries for about five minutes, then names the HTTP
   status: 403 right after an apply is the node's read role still propagating, and a 403 that
-  persists on a site-supplied subnet (``existing_subnet_id``) means that subnet lacks the
+  persists on a site-supplied subnet (``SUBNET_ID``) means that subnet lacks the
   ``Microsoft.Storage`` service endpoint the kit drop's firewall needs; 404 means the kit
   was never uploaded or has expired (kits are deleted within about 48 hours).
 - **kit-upload is refused (403).** Your public IP has changed since ``plan``: plan and apply

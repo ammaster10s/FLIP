@@ -19,3 +19,8 @@ output "cluster_name" {
 output "resource_group_name" {
   value = azurerm_resource_group.aks.name
 }
+
+output "outbound_ip" {
+  description = "The NAT gateway's address on a created network; empty on a site subnet, whose egress the site owns."
+  value       = module.network.nat_public_ip_address
+}

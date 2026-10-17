@@ -17,7 +17,6 @@ mock_provider "azurerm" {}
 # A real, throwaway public key (its private half was deleted): the provider validates key data even when mocked.
 variables {
   subscription_id      = "00000000-0000-0000-0000-000000000000"
-  egress_public_ip_id  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-bootstrap-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-egress-ip"
   admin_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAT8RdfFQymZ+0z9XcvL1GYWdmlY8Ci6MB9I5PXKhOKU flip-azure-terraform-test-only"
   flip_ref             = "0123456789abcdef0123456789abcdef01234567" # pragma: allowlist secret
   operator_ip          = "203.0.113.7"
@@ -44,25 +43,12 @@ run "vm_is_hardened" {
   }
 }
 
-run "public_ip_mode_puts_the_bootstrap_ip_on_the_nic" {
+run "nic_has_no_public_ip" {
   command = plan
-
-  assert {
-    condition     = azurerm_network_interface.node.ip_configuration[0].public_ip_address_id == var.egress_public_ip_id
-    error_message = "public_ip mode attaches the bootstrap IP to the NIC."
-  }
-}
-
-run "nat_and_none_modes_put_no_ip_on_the_nic" {
-  command = plan
-
-  variables {
-    egress_mode = "none"
-  }
 
   assert {
     condition     = azurerm_network_interface.node.ip_configuration[0].public_ip_address_id == null
-    error_message = "Only public_ip mode puts a public IP on the NIC."
+    error_message = "The node's NIC never carries a public IP: outbound goes through the NAT gateway or the site's egress."
   }
 }
 

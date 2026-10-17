@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Long-lived pieces that outlive any node: Terraform state storage, the budget alert and
-# the static outbound IP. Bootstrap keeps its own state locally (gitignored); the vm root
-# keeps its state in the storage account made here.
+# Long-lived pieces that outlive any node: Terraform state storage and the budget alert. No
+# outbound IP lives here: the node's network owns its egress, so no address outlives the node.
+# Bootstrap keeps its own state locally (gitignored); the vm root keeps its state in the storage
+# account made here.
 
 locals {
   tags = {
@@ -76,17 +77,6 @@ resource "azurerm_role_assignment" "state_blob" {
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
   principal_type       = "User"
-}
-
-# The node's one outbound address. Lives here so destroying and recreating the node keeps it,
-# and so it can move between the VM's NIC (egress_mode=public_ip) and a NAT gateway (nat).
-resource "azurerm_public_ip" "egress" {
-  name                = "${var.name_prefix}-egress-ip"
-  resource_group_name = azurerm_resource_group.bootstrap.name
-  location            = var.egress_location != "" ? var.egress_location : azurerm_resource_group.bootstrap.location
-  allocation_method   = "Static"
-  sku                 = "Standard"
-  tags                = local.tags
 }
 
 resource "azurerm_consumption_budget_subscription" "trial" {

@@ -17,11 +17,13 @@
 SHELL := /bin/bash
 TF := terraform
 NAME_PREFIX ?= flipaz
-# The node's region. The outbound IP follows it; the bootstrap's state storage stays in
-# BOOTSTRAP_LOCATION, so moving the node replaces only the IP.
+# The node's region; the bootstrap's state storage stays in BOOTSTRAP_LOCATION.
 LOCATION ?= uksouth
 BOOTSTRAP_LOCATION ?= uksouth
 FL_BACKEND ?= nvflare
+# A subnet the site supplies (its resource id). Empty creates a network that leaves through its own
+# NAT gateway; set, the node uses the site's routes and firewall and this tree creates no public IP.
+SUBNET_ID ?=
 SSH_PUBLIC_KEY_FILE ?= $(HOME)/.ssh/id_ed25519.pub
 FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
@@ -94,12 +96,12 @@ help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-bootstrap: ## One-off: state storage, budget alert, static outbound IP (STATE_SA=<unique name> ALERT_EMAIL=<you>)
+bootstrap: ## One-off: state storage and budget alert (STATE_SA=<unique name> ALERT_EMAIL=<you>)
 	$(require_subscription)
 	@[ -n "$(STATE_SA)" ] || { echo "❌ STATE_SA=<3-24 lowercase letters/digits, globally unique> is required."; exit 1; }
 	$(TF) -chdir=bootstrap init -input=false
 	$(TF) -chdir=bootstrap apply \
-		-var "subscription_id=$(SUB_ID)" -var "location=$(BOOTSTRAP_LOCATION)" -var "egress_location=$(LOCATION)" \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(BOOTSTRAP_LOCATION)" \
 		-var "name_prefix=$(NAME_PREFIX)" -var "state_storage_account_name=$(STATE_SA)" \
 		-var "budget_start_date=$(shell date -u +%Y-%m-01T00:00:00Z)" \
 		$(if $(ALERT_EMAIL),-var 'alert_emails=["$(ALERT_EMAIL)"]',-var create_budget=false)
@@ -120,7 +122,7 @@ plan: ## Plan the node (FLIP_REF must be pushed to GitHub)
 	@git branch -r --contains "$(FLIP_REF)" | grep -q . || { echo "❌ $(FLIP_REF) is not on any pushed branch; the node clones from GitHub."; exit 1; }
 	$(TF) -chdir=vm plan -out=vm.tfplan \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
+		-var "existing_subnet_id=$(SUBNET_ID)" \
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" \
 		-var "flip_ref=$(FLIP_REF)" -var "fl_backend=$(FL_BACKEND)" -var "operator_ip=$(OPERATOR_IP)"
 
@@ -131,13 +133,13 @@ apply: ## Show the saved plan and the target subscription, then apply it only af
 	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
 	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
 	$(TF) -chdir=vm apply vm.tfplan
-	@echo "Outbound IP: $$($(BOOT) egress_public_ip_address)"
+	@ip="$$($(TF) -chdir=vm output -raw outbound_ip)"; echo "Outbound IP: $${ip:-the site's egress (SUBNET_ID)}"
 
-destroy: ## Destroy the node, keep bootstrap and the outbound IP (asks first)
+destroy: ## Destroy the node and its network, keep bootstrap (asks first)
 	$(require_subscription)
 	$(TF) -chdir=vm destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" \
+		-var "existing_subnet_id=$(SUBNET_ID)" \
 		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
 		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
@@ -201,7 +203,7 @@ report: ## Print the latest self-test report (FL_BACKEND=nvflare|flower)
 	$(require_subscription)
 	@$(call run_on_node,flip-node report $(FL_BACKEND))
 
-stop: ## Deallocate the VM (compute stops billing; disks and IP stay)
+stop: ## Deallocate the VM (compute stops billing; disks and any NAT gateway stay)
 	$(require_subscription)
 	az vm deallocate --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 
@@ -210,8 +212,8 @@ start: ## Start a deallocated VM
 	az vm start --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 
 # ── AKS: the same trust on a one-node managed cluster (the flip-trust chart) ─────────────────
-# The cluster's load balancer egresses from the bootstrap IP, which the VM's NIC holds in
-# public_ip mode, and the trial quota fits one 4-vCPU node: never run the two together.
+# The trial quota fits one 4-vCPU node: never run the cluster and the VM together. SUBNET_ID
+# works as for the VM: the site's subnet and egress, or empty for a network with its own NAT.
 
 aks-init: ## Point the aks root at the bootstrap's state storage
 	$(require_subscription)
@@ -227,23 +229,24 @@ aks-plan: ## Plan the AKS cluster (its API server admits only your IP)
 	$(require_subscription)
 	$(TF) -chdir=aks plan -out=aks.tfplan \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" -var "operator_ip=$(OPERATOR_IP)"
 
 aks-apply: ## Show the saved AKS plan and the subscription, then apply it only after a typed yes
 	$(require_subscription)
 	@if [ "$$(az group exists --subscription "$(SUB_ID)" -n $(NODE_RG))" = "true" ]; then \
-		echo "❌ $(NODE_RG) exists: the VM holds the outbound IP and the trial's vCPUs. make destroy first."; exit 1; fi
+		echo "❌ $(NODE_RG) exists: the VM holds the trial's vCPUs. make destroy first."; exit 1; fi
 	$(TF) -chdir=aks show aks.tfplan
 	@echo ""
 	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
 	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
 	$(TF) -chdir=aks apply aks.tfplan
+	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-the site's egress (SUBNET_ID)}"
 
-aks-destroy: ## Destroy the AKS cluster, keep bootstrap and the outbound IP (asks first)
+aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
 	$(require_subscription)
 	$(TF) -chdir=aks destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "egress_public_ip_id=$$($(BOOT) egress_public_ip_id)" -var "operator_ip=$(DESTROY_OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" -var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	$(require_subscription)
@@ -251,7 +254,7 @@ aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	az aks get-credentials --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
 	kubelogin convert-kubeconfig -l azurecli
 
-aks-stop: ## Stop the cluster (its node stops billing; disks and the IP stay)
+aks-stop: ## Stop the cluster (its node stops billing; disks and any NAT gateway stay)
 	$(require_subscription)
 	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
 

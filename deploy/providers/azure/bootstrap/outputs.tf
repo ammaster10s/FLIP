@@ -27,11 +27,3 @@ output "state_storage_account_name" {
 output "state_container_name" {
   value = azurerm_storage_container.state.name
 }
-
-output "egress_public_ip_id" {
-  value = azurerm_public_ip.egress.id
-}
-
-output "egress_public_ip_address" {
-  value = azurerm_public_ip.egress.ip_address
-}

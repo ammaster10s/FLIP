@@ -22,9 +22,8 @@ mock_provider "azurerm" {
 }
 
 variables {
-  subscription_id     = "00000000-0000-0000-0000-000000000000"
-  egress_public_ip_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-bootstrap-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-egress-ip"
-  operator_ip         = "203.0.113.7"
+  subscription_id = "00000000-0000-0000-0000-000000000000"
+  operator_ip     = "203.0.113.7"
 }
 
 run "api_server_admits_only_the_operator" {
@@ -79,24 +78,37 @@ run "network_policies_are_enforced" {
   }
 }
 
-run "egress_leaves_from_the_bootstrap_ip" {
+run "created_network_egress_is_its_own_nat_gateway" {
   command = plan
 
   assert {
-    condition     = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type == "loadBalancer"
-    error_message = "Egress goes through the cluster load balancer."
+    condition     = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type == "userAssignedNATGateway"
+    error_message = "On a created network the cluster leaves through the module's NAT gateway, not a load-balancer IP."
   }
   assert {
-    condition     = azurerm_kubernetes_cluster.this.network_profile[0].load_balancer_profile[0].outbound_ip_address_ids == toset([var.egress_public_ip_id])
-    error_message = "The load balancer's only outbound IP is the bootstrap's static one."
+    condition     = length(module.network.nat_gateway_ids) == 1
+    error_message = "The created network carries the NAT gateway."
+  }
+}
+
+run "site_subnet_egress_is_the_sites" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.network_profile[0].outbound_type == "userDefinedRouting"
+    error_message = "On a site subnet the cluster follows the site's routes and creates no outbound IP."
   }
   assert {
-    condition     = azurerm_role_assignment.cluster_uses_egress_ip.role_definition_name == "Network Contributor" && azurerm_role_assignment.cluster_uses_egress_ip.scope == var.egress_public_ip_id
-    error_message = "The cluster identity may use the bootstrap IP and nothing broader."
+    condition     = length(module.network.nat_gateway_ids) == 0
+    error_message = "Nothing outbound is created on a site subnet."
   }
   assert {
-    condition     = module.network.attach_public_ip_to_nic == false
-    error_message = "The network module puts no IP on a NIC (egress_mode none): the load balancer carries egress."
+    condition     = azurerm_role_assignment.cluster_uses_subnet.scope == var.existing_subnet_id && azurerm_role_assignment.cluster_uses_subnet.role_definition_name == "Network Contributor"
+    error_message = "The cluster identity's network role is scoped to the node subnet."
   }
 }
 

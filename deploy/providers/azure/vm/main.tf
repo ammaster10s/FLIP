@@ -47,8 +47,6 @@ module "network" {
   location            = var.location
   resource_group_name = azurerm_resource_group.node.name
   existing_subnet_id  = var.existing_subnet_id
-  egress_mode         = var.egress_mode
-  egress_public_ip_id = var.egress_public_ip_id
 }
 
 resource "azurerm_network_interface" "node" {
@@ -61,7 +59,6 @@ resource "azurerm_network_interface" "node" {
     name                          = "primary"
     subnet_id                     = module.network.subnet_id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = module.network.attach_public_ip_to_nic ? var.egress_public_ip_id : null
   }
 }
 

@@ -40,28 +40,7 @@ variable "subnet_prefix" {
 }
 
 variable "existing_subnet_id" {
-  description = "A subnet the site supplies. When set, the module creates no network resources, including the Microsoft.Storage service endpoint the kit drop's firewall needs: the site's subnet must carry it."
+  description = "A subnet the site supplies. When set, the module creates no network resources: outbound traffic follows the site's own routes, and the subnet must carry the Microsoft.Storage service endpoint the kit drop's firewall needs."
   type        = string
   default     = ""
-}
-
-variable "egress_public_ip_id" {
-  description = "The bootstrap's static public IP. Used by nat mode (public_ip mode attaches it to the NIC in the root)."
-  type        = string
-  default     = ""
-}
-
-variable "egress_mode" {
-  description = "public_ip: the static IP on the VM's NIC. nat: a NAT gateway with that IP. none: the site's own egress."
-  type        = string
-  default     = "public_ip"
-
-  validation {
-    condition     = contains(["public_ip", "nat", "none"], var.egress_mode)
-    error_message = "egress_mode must be public_ip, nat or none."
-  }
-  validation {
-    condition     = !(var.egress_mode == "nat" && var.existing_subnet_id != "")
-    error_message = "nat mode needs a subnet this module creates; with existing_subnet_id use none (the site's egress) or public_ip."
-  }
 }
