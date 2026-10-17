@@ -39,7 +39,7 @@ run "state_account_is_entra_only" {
   }
   assert {
     condition     = azurerm_role_assignment.state_blob.principal_type == "User"
-    error_message = "The operator's state role states its principal type (an az login user by default)."
+    error_message = "The operator's state role states its principal type (an az login user)."
   }
 }
 

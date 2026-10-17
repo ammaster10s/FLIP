@@ -92,5 +92,5 @@ resource "azurerm_role_assignment" "uploader" {
   scope                = azurerm_storage_container.kits.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = var.uploader_principal_id
-  principal_type       = var.operator_principal_type
+  principal_type       = "User" # the operator's az login
 }

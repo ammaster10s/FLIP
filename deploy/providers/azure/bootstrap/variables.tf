@@ -83,14 +83,3 @@ variable "alert_emails" {
     error_message = "alert_emails needs at least one address while create_budget is true."
   }
 }
-
-variable "operator_principal_type" {
-  description = "What kind of principal runs Terraform here: User for an `az login` operator, ServicePrincipal for a pipeline. Stated on its role assignment rather than left for Azure to look up."
-  type        = string
-  default     = "User"
-
-  validation {
-    condition     = contains(["User", "ServicePrincipal", "Group"], var.operator_principal_type)
-    error_message = "operator_principal_type must be User, ServicePrincipal or Group."
-  }
-}
