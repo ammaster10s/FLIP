@@ -18,15 +18,15 @@ flip-api endpoints the UI does, so it covers the API + trust + FL integration
 paths without the fragility of UI selectors.
 
 Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
-and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
+and the FL framework (Flower vs FLARE) is decided server-side by `FL_BACKEND`
 in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
 that matches FL_BACKEND — both tutorials are now in-tree under
-fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, NVFLARE at
+fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, FLARE at
 fl-tutorials/nvflare/). Both reuse the same `query.sql` against the trust mock
 OMOP data. Override either path with `--model-files-dir` and `--query-file`.
 
 Usage (preferred):
-    make e2e_smoke                    # NVFLARE tutorial (default backend)
+    make e2e_smoke                    # FLARE tutorial (default backend)
     make e2e_smoke FL_BACKEND=flower  # Flower tutorial
 
 Direct invocation:
@@ -804,7 +804,7 @@ def wait_for_model_advanced(client: requests.Session, headers: dict[str, str], m
     raise SmokeFailure(
         f"Model did not advance past INITIATED within {timeout_s}s (last status: {last_status or 'unknown'}). "
         "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job. "
-        "If the job WAS submitted and the server-side job process hung at start-up (on NVFLARE the client log "
+        "If the job WAS submitted and the server-side job process hung at start-up (on FLARE the client log "
         "says 'cannot sync with server Runner'; on Flower the run never issues a round), the usual cause is an "
         "app that downloads weights at run time (pretrained=True, torch.hub, from_pretrained) — which an FL app "
         "must not do, and on a platform-managed estate cannot (FLIP#1206); the net stays BUSY until "
@@ -955,7 +955,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
         "../fl-tutorials/flower/xray_classification/app. "
-        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
+        "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )
     parser.add_argument(

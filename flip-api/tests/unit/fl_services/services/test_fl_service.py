@@ -277,7 +277,7 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """NVFLARE backend: empty client statuses still raises ValueError."""
+    """FLARE backend: empty client statuses still raises ValueError."""
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
@@ -484,7 +484,7 @@ def test_bundle_nvflare_application_multi_site_template(
 ):
     """A per-site ``app_site-N/`` folder beside ``app/`` is bundled and populated like ``app/``.
 
-    The allowlist walk keeps NVFLARE's multi-site layout (FLIP#1008 review): both folders are
+    The allowlist walk keeps FLARE's multi-site layout (FLIP#1008 review): both folders are
     mirrored from the local tree, and the researcher's files land in each folder's ``custom/``.
     """
     base_dir = mocked_settings.FL_APP_BASE_DIR
@@ -535,7 +535,7 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
     mock_s3, mock_required, mock_verify, mock_is_valid, job_type, model_id, mocked_settings
 ):
     """Evaluation checkpoints (plain and pre-rename-alias job types) are copied once to a
-    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's
+    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so FLARE's
     deploy_map never ships them to clients."""
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -1218,7 +1218,7 @@ def test_extract_current_job_data_not_found_returns_none(mock_http_get):
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_returns_a_job_still_waiting_to_start(mock_http_get):
-    # A job the backend has not started yet (NVFLARE waiting for a trust's resources) is aborted too. Left
+    # A job the backend has not started yet (FLARE waiting for a trust's resources) is aborted too. Left
     # queued, it could still start later, or report to a model the user has since queued again (#1390).
     mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
 
@@ -1382,7 +1382,7 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
     model_id,
     fake_session,
 ):
-    # NVFLARE holds a job no trust has the resources for; Abort job must take it out of NVFLARE's queue, or
+    # FLARE holds a job no trust has the resources for; Abort job must take it out of FLARE's queue, or
     # its reporter can still set the model to ERROR after the user queues the model again (#1390).
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
@@ -1488,7 +1488,7 @@ def _fl_api_unreachable() -> httpx.HTTPError:
 
 
 def _fl_api_answers_500() -> httpx.HTTPError:
-    # NVFLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
+    # FLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
     request = httpx.Request("GET", "http://fl-api/check_server_status")
     return httpx.HTTPStatusError("500 Internal Server Error", request=request, response=httpx.Response(500))
 
@@ -1610,7 +1610,7 @@ def test_bundle_nvflare_application_missing_root_file(mock_s3, mock_is_valid, mo
     """A template with ``app/`` files but no ``meta.json`` is rejected at bundle time.
 
     Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
-    cause — NVFLARE has no job definition to deploy.
+    cause — FLARE has no job definition to deploy.
     """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -1736,7 +1736,7 @@ def test_bundle_nvflare_application_clears_existing_dest(
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
-    """config.json is a required NVFLARE file, so a submission without one never reaches a Trust.
+    """config.json is a required FLARE file, so a submission without one never reaches a Trust.
 
     The bundler refuses at the guard — before clearing the destination bucket — instead of logging
     a doomed ``job_type=standard`` guess that the required-files check would reject moments later.
@@ -2457,7 +2457,7 @@ def test_every_backend_has_bundling_rules(fl_backend):
 
 
 def test_list_local_base_files_root_file_is_per_backend(tmp_path):
-    # Each backend keeps exactly one root file: NVFLARE's job definition, Flower's FAB definition.
+    # Each backend keeps exactly one root file: FLARE's job definition, Flower's FAB definition.
     # The other backend's is not deployable here and must not ride along.
     base = tmp_path / "base"
     (base / "app").mkdir(parents=True)
@@ -2470,9 +2470,9 @@ def test_list_local_base_files_root_file_is_per_backend(tmp_path):
 
 
 def _multi_site_template(tmp_path: Path) -> Path:
-    """An NVFLARE-style template with per-site app variants beside ``app/``.
+    """A FLARE-style template with per-site app variants beside ``app/``.
 
-    ``meta.json``'s ``deploy_map`` names each folder and NVFLARE deploys it to the sites listed —
+    ``meta.json``'s ``deploy_map`` names each folder and FLARE deploys it to the sites listed —
     the layout ``bundle_nvflare_application`` scans for and fl-api-base's job assembly documents.
     """
     base = tmp_path / "base"
@@ -2488,7 +2488,7 @@ def _multi_site_template(tmp_path: Path) -> Path:
 
 
 def test_list_local_base_files_keeps_nvflare_per_site_app_folders(tmp_path):
-    # NVFLARE's multi-site layout is a documented capability (app_site-N folders named in
+    # FLARE's multi-site layout is a documented capability (app_site-N folders named in
     # meta.json's deploy_map), so the allowlist must keep app_* beside app/ — the positional rule
     # is "an app folder", not "a directory literally named app".
     base = _multi_site_template(tmp_path)

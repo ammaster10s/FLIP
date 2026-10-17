@@ -88,14 +88,14 @@ def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
 
 
 # The app directory of a base template — the only directory that is ever deployed. Everything a
-# job actually needs at a trust lives under it: the NVFLARE ``app/config/*.json`` pair, or the
+# job actually needs at a trust lives under it: the FLARE ``app/config/*.json`` pair, or the
 # Flower ``app/*.py`` modules named by ``[tool.flwr.app.components]``. The researcher's own files
-# are added by the bundler afterwards (into ``app*/custom/`` for NVFLARE, or alongside for Flower)
+# are added by the bundler afterwards (into ``app*/custom/`` for FLARE, or alongside for Flower)
 # and never pass through this walk.
 BUNDLED_APP_DIR_NAME = "app"
 
 # Per-backend name prefixes that make a top-level directory an *additional* app folder beside
-# ``app/``. An NVFLARE job may carry per-site variants — ``app_site1/``, ``app_site-1/``,
+# ``app/``. A FLARE job may carry per-site variants — ``app_site1/``, ``app_site-1/``,
 # ``app_server/`` — each named in ``meta.json``'s ``deploy_map`` and deployed to the sites it
 # lists; ``bundle_nvflare_application`` and fl-api-base's job assembly both handle that layout.
 # A Flower App Bundle has exactly one app package, so nothing but ``app/`` qualifies there.
@@ -105,7 +105,7 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 }
 
 # The single root file each backend needs beside the app folder(s):
-#   NVFLARE  meta.json      — the job definition NVFLARE reads to deploy the app.
+#   FLARE  meta.json      — the job definition FLARE reads to deploy the app.
 #   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
 #                             ``app.server_app:app`` relative to it, so it must sit at the run root.
 #
@@ -156,9 +156,9 @@ _assert_backends_have_bundling_rules()
 def is_bundled_app_dir(name: str, fl_backend: FLBackend) -> bool:
     """Whether a top-level template directory is an app folder that this backend deploys.
 
-    One rule shared by the allowlist walk and the NVFLARE bundler's app-folder scan, so the two
+    One rule shared by the allowlist walk and the FLARE bundler's app-folder scan, so the two
     cannot drift: ``app/`` on every backend, plus any :data:`BUNDLED_APP_DIR_PREFIXES` match
-    (``app_*`` on NVFLARE only). Anything else that merely starts with ``app`` — ``apps/``,
+    (``app_*`` on FLARE only). Anything else that merely starts with ``app`` — ``apps/``,
     ``application/`` — is not an app folder.
 
     Args:
@@ -241,7 +241,7 @@ def list_local_base_files(base_dir: Path, fl_backend: FLBackend) -> list[str]:
 
     Selection is a positive allowlist, not a denylist of known junk (FLIP#1008): everything under
     the backend's app folder(s) plus its single root file, and nothing else. The app folders are
-    ``app/`` on both backends, plus NVFLARE's per-site ``app_*/`` variants (see
+    ``app/`` on both backends, plus FLARE's per-site ``app_*/`` variants (see
     :func:`is_bundled_app_dir`). A template directory is also a live uv project root — it is where
     ``pyproject.toml`` sits — so it is exactly where ``uv sync``, ``ruff``, ``pytest`` and friends
     write their caches. In dev that tree is bind-mounted into flip-api, so a denylist would have to
@@ -309,7 +309,7 @@ def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str
     """Collect deployable files under one of a template's app directories.
 
     Args:
-        app_dir (Path): The app directory (``app/`` or an NVFLARE ``app_*/`` variant).
+        app_dir (Path): The app directory (``app/`` or a FLARE ``app_*/`` variant).
         base_dir (Path): Template root, so returned paths stay relative to it.
         skipped (list[str]): Accumulator for excluded paths, for the caller's debug log.
 
@@ -340,7 +340,7 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     """Reject a malformed base template before anything is written, naming what it must carry.
 
     Three shapes of malformed template, one wording. Each would otherwise bundle cleanly and only
-    fail at the FL server, far from the cause — NVFLARE has no ``meta.json`` job definition to
+    fail at the FL server, far from the cause — FLARE has no ``meta.json`` job definition to
     deploy, fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``, and neither
     can run a job with no app package. The debug log from the walk lists exactly what was excluded,
     so a visibly non-empty template directory reporting "missing" stays diagnosable.
@@ -351,7 +351,7 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
         fl_backend (FLBackend): The backend whose layout applies.
 
     Returns:
-        set[str]: The app folders the walk kept — ``app`` plus NVFLARE's ``app_*`` variants — which
+        set[str]: The app folders the walk kept — ``app`` plus FLARE's ``app_*`` variants — which
         is where the researcher's files are mirrored to.
 
     Raises:
@@ -540,7 +540,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         response = http_get(url, timeout=30)
     except httpx.HTTPError as e:
         # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
         # Either way there is no status to report, so the caller shows the net offline. http_get has
         # already logged a RequestError, so only an error response is logged here.
         if isinstance(e, httpx.HTTPStatusError):
@@ -574,7 +574,7 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         response = http_get(url, timeout=30)
     except httpx.HTTPError as e:
         # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
-        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
         # Either way there is no status to report, so the caller shows the net offline. http_get has
         # already logged a RequestError, so only an error response is logged here.
         if isinstance(e, httpx.HTTPStatusError):
@@ -646,7 +646,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
-    For NVFLARE, raises ValueError if any client is unavailable.
+    For FLARE, raises ValueError if any client is unavailable.
     For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
 
     Args:
@@ -658,7 +658,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         None
 
     Raises:
-        ValueError: If any client is unavailable (NVFLARE backend only).
+        ValueError: If any client is unavailable (FLARE backend only).
     """
     is_flower = fl_backend == FLBackend.FLOWER
 
@@ -746,7 +746,7 @@ def _log_applied_gpu_request(
 ) -> None:
     """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
 
-    The NVFLARE fl-api reports the request it wrote into the job and where it came from; the Flower
+    The FLARE fl-api reports the request it wrote into the job and where it came from; the Flower
     fl-api reports it recorded but did not enforce it, and reports nothing when no override was sent.
     An fl-api older than per-job requests reports nothing either, which only matters when an override
     was sent and silently dropped.
@@ -1011,7 +1011,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
     # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
     # fl-server (via the shared checkpoint volume) instead of being bundled into every
-    # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
+    # app*/custom/ and shipped to every client by FLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
     # job_type is already alias-normalised (_normalise_job_type), so the plain name is exhaustive.
@@ -1040,7 +1040,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             continue
 
         if rel in server_checkpoints:
-            # Copied once to a non-app prefix; never placed in app*/custom/, so NVFLARE's
+            # Copied once to a non-app prefix; never placed in app*/custom/, so FLARE's
             # deploy_map never ships it to clients. The fl-server reads it off the shared volume.
             dst_key = f"{dest_bucket_s3_path}/server_checkpoints/{rel}"
             logger.debug(f"Copying server-side checkpoint {src_key} -> {dst_key}")
@@ -1376,7 +1376,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     """
     Extract the FL job matching ``fl_backend_job_id`` while it is running or still waiting to start.
 
-    A waiting job counts: the backend can hold a submitted job for a long time (NVFLARE retries it while a
+    A waiting job counts: the backend can hold a submitted job for a long time (FLARE retries it while a
     trust lacks the resources it asks for), and an abort that left it queued would let it start later, or
     report to a model the user has since queued again (FLIP#1390).
 
@@ -1552,7 +1552,7 @@ def keep_fl_api_session_alive() -> None:
     A periodic function to keep the FL API session alive by making a simple request.
     This is useful to prevent the session from going idle or being shut down by the server.
 
-    TODO This was developed for the NVFLARE backend and might need to be revisited for the Flower backend.
+    TODO This was developed for the FLARE backend and might need to be revisited for the Flower backend.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
     from flip_api.fl_services.get_status import fetch_server_status
