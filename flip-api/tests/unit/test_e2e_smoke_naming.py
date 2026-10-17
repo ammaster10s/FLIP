@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 """The e2e smoke names its project and model for the tutorial it actually runs, not a hardcoded 'Xrays',
-and reads ``has_imaging`` back off the hub rather than trusting its own flag."""
+and, on ``--project-id`` reuse, reads ``has_imaging`` back off the hub."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch

@@ -28,7 +28,7 @@ def mock_session():
 
 @pytest.fixture
 def mock_fl_net():
-    """Create a mock FLNets instance with a backend already set."""
+    """Create a mock FLNets row on the Flower backend."""
     net = Mock(spec=FLNets)
     net.name = "existing_net"
     net.endpoint = "http://existing.com"

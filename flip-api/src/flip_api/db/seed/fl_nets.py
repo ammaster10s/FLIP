@@ -22,11 +22,9 @@ from flip_api.db.seed.seed_logger import logger
 def seed_fl_nets(session: Session) -> list[FLNets]:
     """Upsert FL nets in the database from ``NET_ENDPOINTS`` and ``FL_BACKEND``.
 
-    Rows are matched by ``name`` and their ``endpoint`` reconciled to the value
-    in ``NET_ENDPOINTS`` on every startup, so a stale endpoint never survives a
-    change to the env. NET_ENDPOINTS is the canonical source — operator changes to
-    the row's endpoint via SQL would also be overwritten on the next start,
-    which is the intended behaviour.
+    Rows are matched by ``name`` and their ``endpoint`` reset to ``NET_ENDPOINTS``
+    on every startup: the env is canonical, so an endpoint edited via SQL is
+    overwritten on the next start.
 
     ``fl_backend`` is likewise canonical: every row is set to the current
     ``FL_BACKEND`` on every startup. There is no runtime reconciliation — the

@@ -2057,7 +2057,6 @@ def test_abort_model_training_pre_submit_frees_net(
     mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
 
     request = MagicMock()
-    request.path_params = {}
 
     fl_service.abort_model_training(request, model_id, fake_session)
 
@@ -2094,7 +2093,6 @@ def test_abort_model_training_pre_pickup_net_not_found_frees_net(
     mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
 
     request = MagicMock()
-    request.path_params = {}
 
     fl_service.abort_model_training(request, model_id, fake_session)
 
@@ -2129,7 +2127,6 @@ def test_abort_model_training_db_error_propagates(
     mock_remove.side_effect = DatabaseError("Error removing job from queue")
 
     request = MagicMock()
-    request.path_params = {}
 
     with pytest.raises(DatabaseError, match="Error removing job from queue"):
         fl_service.abort_model_training(request, model_id, fake_session)
@@ -2841,7 +2838,8 @@ def test_start_training_says_when_flower_records_but_does_not_enforce_the_reques
     ) in logged
 
 
-def test_start_training_logs_nothing_about_gpus_when_none_was_asked(model_id, fl_job_id, fake_session):
-    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
+def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": None, "resources_enforced": False}
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert logged == []

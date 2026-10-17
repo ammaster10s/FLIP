@@ -37,7 +37,6 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
     are unrecoverable unless cleaned up here. This prevents a single crash
     from permanently starving a net of new training jobs.
     """
-    # Raw column names: the FLScheduler field names (`job_id`) are the DB columns.
     stmt = text(
         """
         UPDATE fl_scheduler

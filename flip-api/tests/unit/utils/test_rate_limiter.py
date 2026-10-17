@@ -14,20 +14,20 @@ import hashlib
 from unittest.mock import MagicMock
 
 from flip_api.config import get_settings
-from flip_api.utils.rate_limiter import _trust_name_key
+from flip_api.utils.rate_limiter import _trust_key
 
 
 # `request.headers` must be a real dict on these mocks: MagicMock's `.get(...)` returns
 # another MagicMock (truthy), which would force every test through the API-key branch
 # and try to hash a non-bytes object.
-class TestTrustNameKey:
+class TestTrustKey:
     def test_hashes_trust_api_key_when_header_present(self):
         """Primary path: rate-limit per-trust by hashing the trust API key header."""
         api_key = "trust-1-secret"  # pragma: allowlist secret
         request = MagicMock()
         request.headers = {get_settings().TRUST_API_KEY_HEADER: api_key}
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         expected = "trust:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
         assert result == expected
@@ -38,7 +38,7 @@ class TestTrustNameKey:
         request.headers = {}
         request.client.host = "10.0.0.42"
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         assert result == "10.0.0.42"
 
@@ -48,6 +48,6 @@ class TestTrustNameKey:
         request.headers = {}
         request.client = None
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         assert result == "unknown"

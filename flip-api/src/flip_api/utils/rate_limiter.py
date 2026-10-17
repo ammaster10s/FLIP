@@ -20,7 +20,7 @@ from slowapi import Limiter
 from flip_api.config import get_settings
 
 
-def _trust_name_key(request: Request) -> str:
+def _trust_key(request: Request) -> str:
     """Per-trust rate-limit key for trust-facing endpoints.
 
     The trust-poll endpoints (``/tasks/pending``, ``/trust/heartbeat``) sit behind
@@ -50,4 +50,4 @@ def _trust_name_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-limiter = Limiter(key_func=_trust_name_key)
+limiter = Limiter(key_func=_trust_key)

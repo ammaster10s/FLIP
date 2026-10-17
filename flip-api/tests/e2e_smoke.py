@@ -1156,7 +1156,6 @@ def main(argv: list[str] | None = None) -> int:
                 has_imaging=not args.no_imaging,
                 description=project_description,
             )
-            # What we asked for.
             has_imaging = not args.no_imaging
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
