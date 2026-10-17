@@ -201,13 +201,15 @@ Dates, times and patient characteristics are not needed in the images: OMOP hold
 
 The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``. A copy of the table lives in ``trust/xnat/tests/ps315_table_e1_1.csv``, and a test fails when the script does not handle a row of it.
 
+XNAT names each archived file from the header as it arrived, before the script runs, and its default name starts with the original Study Instance UID. Those names reach the FL client, which unpacks its downloads as they are. ``configure-xnat.sh`` therefore sets the site's ``dicomFileNameTemplate`` to the series number, the instance number and a hash of the SOP Class and Instance UIDs, so ``<original Study Instance UID>-602172-1-1a8m7ai.dcm`` is archived as ``602172-1-1a8m7ai.dcm``. Files archived before the setting keep their old names.
+
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
 The script is not a conformant PS3.15 profile. Five boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
 - **It removes where the profile empties.** Some attributes the table empties, such as Study Date and Patient's Sex, are ones a DICOM object must carry. Without them a strict validator reports the object as non-conformant; XNAT, viewers and dcm2niix accept it.
-- **Nested UIDs are removed, not replaced.** A reference held inside a sequence, such as a segmentation's link to the image it was drawn on, no longer resolves. ``hashUID`` is also unkeyed, so anyone holding an original UID can recompute its hash.
+- **Nested UIDs are removed, not replaced.** A reference held inside a sequence, such as a segmentation's link to the image it was drawn on, no longer resolves. ``hashUID`` is also unkeyed, so anyone holding an original UID can recompute its hash, and the hash in each archived file's name.
 - **The accession number is still the XNAT session label**, and the name of the folder FL code receives each study in. The headers no longer carry it. Replacing it with a per-project pseudonym is tracked in `FLIP#1541 <https://github.com/londonaicentre/FLIP/issues/1541>`__.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
 - **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
