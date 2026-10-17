@@ -131,7 +131,8 @@ placeholders:
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
-production only), the object-store keys (defaults are in the Makefile) and
+production only), the object-store keys (defaults are in
+``deploy/compose.development.yml``) and
 ``DEMO_*_PASSWORD`` (read only by ``make demo-users``, the demo-video recorder's
 setup; set them to passwords your identity provider's policy accepts if you
 record one).
@@ -339,7 +340,8 @@ Day-to-day use
    * - ``make down``
      - Stop everything (data is kept)
    * - ``make restart-no-trust``
-     - Restart the hub API
+     - Restart the hub API. Runs in the foreground, and removes the running
+       FL API and FL server containers; ``make up-no-trust`` brings them back.
    * - ``make up BUILD=true``
      - Rebuild images after a dependency or Dockerfile change. Ordinary
        source edits are bind-mounted and reload live (see
