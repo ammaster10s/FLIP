@@ -26,8 +26,8 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     on every startup: the env is canonical, so an endpoint edited via SQL is
     overwritten on the next start.
 
-    ``fl_backend`` is likewise canonical: every row is set to the current
-    ``FL_BACKEND`` on every startup. There is no runtime reconciliation — the
+    ``fl_backend`` is likewise canonical: every row named in ``NET_ENDPOINTS`` is
+    set to the current ``FL_BACKEND`` on every startup. There is no runtime reconciliation — the
     way to switch frameworks is ``make restart-fl FL_BACKEND=...``, which
     recreates flip-api so this seeding re-runs and overwrites the backend.
 

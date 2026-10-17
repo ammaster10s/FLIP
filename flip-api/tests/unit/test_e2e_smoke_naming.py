@@ -141,6 +141,12 @@ def test_project_has_imaging_fails_loudly_on_an_error_response():
             project_has_imaging(MagicMock(), {}, "proj-1")
 
 
+def test_project_has_imaging_fails_loudly_without_the_field():
+    with patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1"})):
+        with pytest.raises(SmokeFailure, match="proj-1"):
+            project_has_imaging(MagicMock(), {}, "proj-1")
+
+
 def test_create_project_posts_no_imaging():
     # create project → save cohort query → submit it to the trusts
     posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"}), _response(202, {})]

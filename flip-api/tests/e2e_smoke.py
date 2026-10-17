@@ -535,9 +535,14 @@ def project_has_imaging(client: requests.Session, headers: dict[str, str], proje
 
     Returns:
         bool: True when the project has an imaging stage.
+
+    Raises:
+        SmokeFailure: If the hub's reply carries no ``has_imaging`` field.
     """
-    resp = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project")
-    return bool(resp.json()["has_imaging"])
+    project = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project").json()
+    if "has_imaging" not in project:
+        raise SmokeFailure(f"Project {project_id} has no has_imaging field in the hub's reply")
+    return bool(project["has_imaging"])
 
 
 def wait_for_image_pull(

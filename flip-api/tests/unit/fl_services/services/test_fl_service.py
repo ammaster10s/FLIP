@@ -2807,6 +2807,14 @@ def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_fr
     assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
 
 
+def test_start_training_logs_the_platform_default_gpu_request(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "default"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert ("GPU request per trust: no GPU (the platform default)", True) in logged
+
+
 def test_start_training_logs_a_cpu_only_override(model_id, fl_job_id, fake_session):
     job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=0)
     reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "submission"}
@@ -2836,6 +2844,15 @@ def test_start_training_says_when_flower_records_but_does_not_enforce_the_reques
         "GPU request per trust: 1 GPU, recorded but not enforced: Flower does not schedule jobs by GPU",
         False,
     ) in logged
+
+
+def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_job_id, fake_session):
+    """An fl-api that predates per-job requests drops the field silently; say so instead of implying it applied."""
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, {"message": "ok"})
+
+    assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
 
 
 def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(model_id, fl_job_id, fake_session):

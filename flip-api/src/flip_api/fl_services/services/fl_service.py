@@ -742,14 +742,19 @@ _RESOURCE_SOURCES = {
 }
 
 
-def _log_applied_gpu_request(model_id: UUID, upload_reply: Any, session: Session) -> None:
+def _log_applied_gpu_request(
+    model_id: UUID, override: IJobResources | None, upload_reply: Any, session: Session
+) -> None:
     """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
 
     The NVFLARE fl-api reports the request it wrote into the job and where it came from; the Flower
     fl-api reports it recorded but did not enforce it, and reports nothing when no override was sent.
+    An fl-api older than per-job requests reports nothing either, which only matters when an override
+    was sent and silently dropped.
 
     Args:
         model_id (UUID): The model being trained.
+        override (IJobResources | None): what was sent as the run's override.
         upload_reply (Any): the FL API's reply to upload_app.
         session (Session): SQLModel session.
     """
@@ -757,6 +762,14 @@ def _log_applied_gpu_request(model_id: UUID, upload_reply: Any, session: Session
 
     reported = upload_reply.get("resources") if isinstance(upload_reply, dict) else None
     if reported is None:
+        if override is not None:
+            add_log(
+                model_id,
+                f"The FL API did not report applying the GPU request set for this run ({override.describe()}); "
+                "it may predate per-job GPU requests.",
+                session,
+                success=False,
+            )
         return
     try:
         described = IJobResources.model_validate(reported).describe()
@@ -818,7 +831,7 @@ def start_training(
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
     upload_reply = upload_app(model_id, training_details, endpoint)
-    _log_applied_gpu_request(model_id, upload_reply, session)
+    _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
@@ -1432,7 +1445,8 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         session (Session): SQLModel session object
 
     Raises:
-        ValueError: If the FL server is not running.
+        ValueError: If the FL server is not running, or if its job list is malformed or shows
+            the job more than once.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
     """

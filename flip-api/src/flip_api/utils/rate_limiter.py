@@ -23,12 +23,12 @@ from flip_api.config import get_settings
 def _trust_key(request: Request) -> str:
     """Per-trust rate-limit key for trust-facing endpoints.
 
-    The trust-poll endpoints (``/tasks/pending``, ``/trust/heartbeat``) sit behind
-    a TLS-terminating proxy (CloudFront → ALB → flip-api), so ``request.client.host``
-    is the proxy address — the same for every trust. Keying on it collapses each
-    endpoint's per-trust limit into a single global one shared by all trusts. Key
-    on a hash of the trust API key header instead, so every trust is rate-limited
-    independently. Fall back to the client host.
+    The trust-facing endpoints (``/tasks/pending``, ``/tasks/{task_id}/result``,
+    ``/trust/heartbeat``) sit behind a TLS-terminating proxy (CloudFront → ALB →
+    flip-api), so ``request.client.host`` is the proxy address — the same for every
+    trust. Keying on it collapses each endpoint's per-trust limit into a single global
+    one shared by all trusts. Key on a hash of the trust API key header instead, so
+    every trust is rate-limited independently. Fall back to the client host.
 
     Args:
         request (Request): The incoming FastAPI request.
