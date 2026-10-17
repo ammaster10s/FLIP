@@ -15,12 +15,41 @@
     <div class="px-6 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
         <div>
             <p class="max-w-2xl mt-1 text-sm text-gray-500 dark:text-gray-300">
-                Complete the following fields to initiate training.
+                Complete the following to initiate training.
             </p>
         </div>
         <div class="mt-6 space-y-6 divide-y sm:mt-5 sm:space-y-5 divide dark:divide-dark-border">
+            <div
+                v-if="requiredFiles.length"
+                data-test="required-files-row"
+                class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5"
+            >
+                <div class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
+                    Required files
+                    <div
+                        data-test="required-files-summary"
+                        class="mr-2 text-sm"
+                        :class="missingFiles.length ? 'text-amber-800 dark:text-amber-300' : 'text-gray-400 dark:text-gray-300'"
+                    >
+                        {{ missingFiles.length ? `Missing ${missingFiles.join(", ")}` : "All required files uploaded" }}
+                    </div>
+                </div>
+                <div class="mt-1 text-right sm:mt-0 sm:col-span-1">
+                    <span
+                        data-test="required-files-status"
+                        class="inline-flex px-2.5 py-1 text-[13px] font-semibold rounded-full"
+                        :class="missingFiles.length
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                            : 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'"
+                    >
+                        {{ missingFiles.length
+                            ? `${requiredFiles.length - missingFiles.length} of ${requiredFiles.length}`
+                            : "Complete" }}
+                    </span>
+                </div>
+            </div>
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5">
-                <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
+                <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     Dataset enriched
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         {{ hasImaging
@@ -28,7 +57,7 @@
                             : "This project has no imaging to enrich. Confirm your data is ready before training" }}
                     </div>
                 </label>
-                <div class="mt-1 text-right sm:mt-0 sm:col-span-2">
+                <div class="mt-1 text-right sm:mt-0 sm:col-span-1">
                     <AiSwitch
                         name="enriched"
                         value="true"
@@ -40,9 +69,9 @@
             </div>
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
-                    Participating trusts
+                    Participating Trusts
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
-                        A minimum of 1 trust must be selected for training
+                        A minimum of 1 Trust must be selected for training
                     </div>
                 </label>
                 <div class="sm:col-span-2">
@@ -52,7 +81,7 @@
                                 <div
                                     v-for="(trust, i) in trustsToSelect"
                                     :key="trust.trustId"
-                                    class="flex items-center justify-between py-2 text-sm font-medium"
+                                    class="flex items-center justify-end gap-4 py-2 text-sm font-medium"
                                 >
                                     <dt class="flex items-center font-semibold text-gray-500 dark:text-primary-200">
                                         <div class="flex items-center">
@@ -68,7 +97,7 @@
                                             :value="trust.trustId"
                                             :disabled="disabled"
                                             hide-error
-                                            :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
+                                            :aria-label="trust.trustLabel"
                                         />
                                     </dd>
                                 </div>
@@ -84,7 +113,7 @@
                 </div>
             </div>
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
-                <label for="gpu_override" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
+                <label for="gpu_override" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:col-span-2 sm:mt-px sm:pt-2">
                     GPUs per trust
                     <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         Off, the GPUs in the job's <code>meta.json</code> apply, or the platform default. On, this run
@@ -96,7 +125,7 @@
                         </template>
                     </div>
                 </label>
-                <div class="mt-1 space-y-3 sm:mt-0 sm:col-span-2">
+                <div class="mt-1 space-y-3 sm:mt-0 sm:col-span-1">
                     <div class="text-right">
                         <AiSwitch
                             name="gpu_override"
@@ -106,7 +135,7 @@
                             :label="{ enabled: 'Override for this run', disabled: 'Job default' }"
                         />
                     </div>
-                    <div v-if="overrideOn" class="grid grid-cols-2 gap-4">
+                    <div v-if="overrideOn" class="w-28 ml-auto">
                         <AiInput
                             name="num_gpus"
                             type="number"
@@ -139,6 +168,10 @@ interface ITrainingOptionsProps {
     disabled?: boolean
     // "NVFlare" or "Flower", when known: Flower records a GPU request without enforcing it.
     flBackendLabel?: string
+    // The files this model's backend + job type require, and the subset not yet uploaded. Empty
+    // while the job types are unknown, which hides the row.
+    requiredFiles?: string[]
+    missingFiles?: string[]
     // A dispatched run's GPU override. AiInput seeds its own field and would overwrite the Form's
     // initialValues with "", so the inputs take the run's values directly.
     runResources?: IJobResources | null
@@ -158,6 +191,8 @@ interface ITrustsToTrain {
 const props = withDefaults(defineProps<ITrainingOptionsProps>(), {
     disabled: false,
     flBackendLabel: undefined,
+    requiredFiles: () => [],
+    missingFiles: () => [],
     runResources: null
 });
 

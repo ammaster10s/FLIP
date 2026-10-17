@@ -114,7 +114,7 @@
 
                     <div class="flex flex-col flex-1 min-h-0 gap-4 lg:flex-row lg:gap-4">
                         <aside
-                            class="flex flex-col flex-1 lg:flex-none lg:w-80 2xl:min-w-[30rem] shrink-0
+                            class="flex flex-col flex-1 lg:flex-none lg:w-[26rem] 2xl:min-w-[30rem] shrink-0
                                    min-h-[20rem] lg:min-h-0"
                         >
                             <ModelUpload
@@ -124,6 +124,7 @@
                                 :model-id="modelData.modelId"
                                 :required-files="requiredFiles"
                                 :job-type="currentJobType"
+                                :fl-backend-label="flBackendLabel"
                                 :job-types-error="jobTypesError"
                                 @uploaded="update"
                                 @deleted-file="onFileDeleted"
@@ -138,10 +139,8 @@
                                 :run-resources="modelData?.resources ?? null"
                                 :can-train="readyToTrain"
                                 :status="modelData?.status"
-                                :all-files-uploaded="allFilesUploaded"
                                 :required-files="requiredFiles"
                                 :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                                :job-type="currentJobType"
                                 :fl-backend-label="flBackendLabel"
                                 :job-types-error="jobTypesError"
                                 :job-types-loading="jobTypesLoading"
@@ -158,10 +157,8 @@
                     view="run"
                     :can-train="readyToTrain"
                     :status="modelData?.status"
-                    :all-files-uploaded="allFilesUploaded"
                     :required-files="requiredFiles"
                     :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                    :job-type="currentJobType"
                     :fl-backend-label="flBackendLabel"
                 />
             </div>

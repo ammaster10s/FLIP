@@ -148,8 +148,10 @@ const baseProps = {
     loading: false,
     canUpload: true,
     modelId: "model-under-test",
-    requiredFiles: [],
-    jobType: "standard"
+    requiredFiles: [] as string[],
+    jobType: "standard",
+    flBackendLabel: undefined as string | undefined,
+    jobTypesError: false
 };
 
 function mountModelUpload(
@@ -258,6 +260,69 @@ describe("ModelUpload", () => {
         test("shows skeleton placeholders while loading", () => {
             const wrapper = mountModelUpload({ loading: true });
             expect(wrapper.findAll("[data-test='ai-skeleton']").length).toBeGreaterThan(0);
+        });
+    });
+
+    describe("required files", () => {
+        const done = (name: string, size = 4300): FileInfo => ({
+            id: `id-${name}`,
+            name,
+            size,
+            status: FileUploadStatus.COMPLETED
+        });
+        const required = ["client_app.py", "config.json", "models.py"];
+
+        test("lists required files first, as placeholders until uploaded, then the other files", async () => {
+            const wrapper = mountModelUpload({
+                requiredFiles: required,
+                files: [done("model.pt", 18_410_000), done("config.json")]
+            });
+            await flushPromises();
+
+            const rows = wrapper.findAll("li");
+            expect(rows.map(r => r.find("p").text())).toEqual([...required, "model.pt"]);
+            expect(rows.map(r => r.attributes("data-test"))).toEqual([
+                "required-file-placeholder",
+                "model-file-row",
+                "required-file-placeholder",
+                "model-file-row"
+            ]);
+            expect(rows[0].text()).toContain("Required · missing");
+            expect(rows[1].text()).toContain("Required ·");
+            expect(rows[3].text()).not.toContain("Required");
+            // A placeholder has nothing to download or delete.
+            expect(rows[0].find("button").exists()).toBe(false);
+            expect(rows[1].find("[aria-label='Delete config.json']").exists()).toBe(true);
+        });
+
+        test("counts the uploaded required files", async () => {
+            const wrapper = mountModelUpload({
+                requiredFiles: required,
+                files: [done("config.json")]
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test='required-files-counter']").text()).toBe("1 / 3");
+        });
+
+        test("shows the backend and job type as chips", async () => {
+            const wrapper = mountModelUpload({
+                requiredFiles: required,
+                jobType: "evaluation",
+                flBackendLabel: "Flower"
+            });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test='fl-backend-chip']").text()).toBe("Flower");
+            expect(wrapper.find("[data-test='job-type-chip']").text()).toBe("job_type: evaluation");
+            expect(wrapper.text()).not.toContain("Your current job type is");
+        });
+
+        test("hides the required-files header while the job types are unknown", async () => {
+            const wrapper = mountModelUpload({ jobTypesError: true });
+            await flushPromises();
+
+            expect(wrapper.find("[data-test='required-files-header']").exists()).toBe(false);
         });
     });
 
