@@ -18,10 +18,12 @@ command JSON behind keeps registering the old image — silently, since that tag
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 XNAT_DIR = Path(__file__).resolve().parents[1]
 DOCKERFILE = XNAT_DIR / "export-mask" / "Dockerfile"
+PYPROJECT = XNAT_DIR / "export-mask" / "pyproject.toml"
 COMMAND = XNAT_DIR / "xnat" / "config" / "export_mask_command.json"
 
 
@@ -34,6 +36,11 @@ def _version() -> str:
 def test_the_command_runs_the_published_image_at_the_dockerfile_version() -> None:
     image = json.loads(COMMAND.read_text())["image"]
     assert image == f"ghcr.io/londonaicentre/xnat-export-mask:{_version()}"
+
+
+def test_the_project_metadata_carries_the_dockerfile_version() -> None:
+    # uv requires [project].version even with package = false, so it cannot simply be dropped.
+    assert tomllib.loads(PYPROJECT.read_text())["project"]["version"] == _version()
 
 
 def test_the_command_line_calls_the_script_the_image_ships() -> None:

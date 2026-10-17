@@ -13,11 +13,12 @@
 # assessor -> NIfTI, uploaded back to the assessor. Registered only on MONAI Label trusts
 # (configure-export-mask.sh).
 #
-# EXPORT_MASK_VERSION is the single source of truth for the image tag: the publish workflow
+# EXPORT_MASK_VERSION is the image tag the other copies must match: the publish workflow
 # (.github/workflows/docker_build_xnat_export_mask.yml) pushes
 # ghcr.io/londonaicentre/xnat-export-mask:<version>, and export_mask_command.json must name that
 # exact string — XNAT finds the command by it, so a bumped image with a stale command is never
-# triggered (trust/xnat/tests/test_export_mask_image_pin.py). Bump it with any change here.
+# triggered — and pyproject.toml's version must match too (both pinned by
+# trust/xnat/tests/test_export_mask_image_pin.py). Bump all three with any change here.
 # The package must be **public**: the Container Service pulls with no credentials.
 
 FROM python:3.12-slim-bookworm
