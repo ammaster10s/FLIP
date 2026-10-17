@@ -16,6 +16,7 @@ import tempfile
 from unittest.mock import MagicMock, Mock
 
 import numpy as np
+import pytest
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
@@ -436,3 +437,22 @@ class TestEvaluationJsonGenerator:
         self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
 
         assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.7}}
+
+    def test_hub_metrics_drop_excluded_keys_with_everything_under_them(self):
+        """``exclude`` patterns match reply keys at any depth, case-insensitively."""
+        reply = {"m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_b": 0.04}}, "Delong_Q": {"x": 1}}}
+        self._receive("Trust_1", self._metrics(**reply), model_owner="SRV_m_a")
+
+        assert self.generator.hub_metrics(exclude=["delong_*"]) == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8}}
+        assert "M_A/DELONG_P_VALUES/EFFUSION/M_B" in self.generator.hub_metrics()["Trust_1"]
+
+    def test_hub_metrics_leave_out_a_client_whose_every_metric_is_excluded(self):
+        self._receive("Trust_1", self._metrics(note_count=3), model_owner="SRV_model")
+
+        assert self.generator.hub_metrics(exclude=["NOTE_*"]) == {}
+
+    @pytest.mark.parametrize("bad", ["delong_*", [1], None])
+    def test_hub_metrics_refuse_an_exclude_that_is_not_a_list_of_strings(self, bad):
+        """A bare string would otherwise be matched one character at a time."""
+        with pytest.raises(TypeError, match="HUB_METRICS_EXCLUDE"):
+            self.generator.hub_metrics(exclude=bad)

@@ -47,7 +47,10 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 5. At the end of the run `ServerEventHandler` sends each site's metrics to the Central Hub, so they
    show on the model page against that site (one point at round 0). Nested keys join with `/` and
    are upper-cased; when a site evaluated more than one model, each label starts with the model's
-   name. Only finite numbers are sent: a NaN metric is left out, and lists are never sent.
+   name. Only finite numbers are sent: a NaN metric is left out, and lists are never sent. To keep
+   some metrics in `evaluation_results.json` only, list `fnmatch` patterns under
+   `HUB_METRICS_EXCLUDE` in `config.json` (e.g. `["delong_*"]`): a reply key matching one, at any
+   depth and ignoring case, is not sent, nor is anything under it.
 
 There is **no `validator.py`** and no client model submission — the evaluator only scores the
 server-provided model.

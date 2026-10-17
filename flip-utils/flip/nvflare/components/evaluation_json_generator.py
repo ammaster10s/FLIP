@@ -10,11 +10,12 @@
 # limitations under the License.
 #
 
+import fnmatch
 import json
 import math
 import numbers
 import os.path
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from nvflare.apis.dxo import DataKind, from_shareable
@@ -28,6 +29,9 @@ from nvflare.app_common.widgets.validation_json_generator import to_serializable
 
 from flip.constants import PTConstants
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
+
+# The app config.json key listing reply-key patterns kept off the hub (they stay in the results file).
+HUB_METRICS_EXCLUDE_KEY = "HUB_METRICS_EXCLUDE"
 
 
 class EvaluationJsonGenerator(ValidationJsonGenerator):
@@ -108,7 +112,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._eval_results[data_client] = metrics
         self._replies.setdefault(data_client, {})[model_owner] = metrics
 
-    def hub_metrics(self) -> dict[str, dict[str, float]]:
+    def hub_metrics(self, exclude: Sequence[str] = ()) -> dict[str, dict[str, float]]:
         """Flatten each client's evaluation results into the metric labels sent to the Central Hub.
 
         Nested keys join with ``/`` and the label is upper-cased, as Flower does. When a client
@@ -120,9 +124,20 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
         lists, which is where per-sample values would live, are never sent.
 
+        Args:
+            exclude (Sequence[str]): ``fnmatch`` patterns, from the app's ``config.json``
+                ``HUB_METRICS_EXCLUDE``. A reply key matching one, at any depth and ignoring case, is
+                left out with everything under it. Defaults to sending every metric.
+
         Returns:
             dict[str, dict[str, float]]: ``{client: {label: value}}``.
+
+        Raises:
+            TypeError: If ``exclude`` is not a list of strings.
         """
+        if not isinstance(exclude, list | tuple) or not all(isinstance(p, str) for p in exclude):
+            raise TypeError(f"{HUB_METRICS_EXCLUDE_KEY} must be a list of strings, got {exclude!r}")
+        patterns = [p.lower() for p in exclude]
         hub: dict[str, dict[str, float]] = {}
         for client, replies in self._replies.items():
             labels: dict[str, float] = {}
@@ -130,7 +145,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
                 name = owner.removeprefix("SRV_") if owner else None
                 self_keyed = isinstance(reply, Mapping) and name in reply
                 prefix = (name,) if name and len(replies) > 1 and not self_keyed else ()
-                _flatten_metrics(reply, prefix, labels)
+                _flatten_metrics(reply, prefix, labels, patterns)
             if labels:
                 hub[client] = labels
         return hub
@@ -197,10 +212,14 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._write_json(fl_ctx, run_dir, self._failures_file_name, self._eval_failures, "evaluation failures path")
 
 
-def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float]) -> None:
-    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path."""
+def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float], exclude: list[str]) -> None:
+    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path.
+
+    A key matching one of the lower-cased ``exclude`` patterns is skipped with everything under it.
+    """
     if isinstance(value, Mapping):
         for key, child in value.items():
-            _flatten_metrics(child, (*path, str(key)), out)
+            if not any(fnmatch.fnmatchcase(str(key).lower(), pattern) for pattern in exclude):
+                _flatten_metrics(child, (*path, str(key)), out, exclude)
     elif path and isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
         out["/".join(path).upper()] = float(value)
