@@ -169,10 +169,8 @@ def resolve_models_config(config: dict) -> tuple[list[dict], list[tuple[int, str
     return model_specs, lesion_items, lesion_dict
 
 
-# Meta key the server-side EvaluationModelLocator stamps on every evaluation broadcast
-# (flip.constants.FlipMetaKey.EVAL_MODEL_NAME). Kept as a literal so this app never imports flip
-# symbols that may not exist on older client images — the value is produced on the fl-server.
-EVAL_MODEL_NAME_META_KEY = "flip_eval_model_name"
+# Meta key the server-side EvaluationModelLocator stamps on every evaluation broadcast.
+EVAL_MODEL_NAME_META_KEY = FlipMetaKey.EVAL_MODEL_NAME.value
 
 
 def received_model_name(input_model: flare.FLModel, model_names: list[str]) -> str:
