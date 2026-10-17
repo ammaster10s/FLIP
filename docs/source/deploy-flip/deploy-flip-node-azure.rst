@@ -75,26 +75,35 @@ gave its AWS trust one for allowlisting and removed it, because it protected not
   through a NAT gateway. The gateway's IP is created and destroyed with the node, and no address
   outlives it.
 
-**What the Trust's firewall must allow, outbound only:**
+**What the Trust's firewall must allow, outbound only.** Measured behind a deny-all Azure
+Firewall: each registry serves its image layers from a second host, so allowing the registry
+name alone makes every pull fail.
 
-+--------------------------------------+-----------------------------------------------------+
-| Destination                          | Why                                                 |
-+======================================+=====================================================+
-| The hub's URL, port 443              | Task polling, heartbeats, results (HTTPS, API key)  |
-+--------------------------------------+-----------------------------------------------------+
-| The hub's FL endpoint, port 8002     | Federated training. **Exempt it from TLS            |
-| (8003 on staging)                    | inspection**: a proxy that re-signs the traffic     |
-|                                      | breaks its certificate check                        |
-+--------------------------------------+-----------------------------------------------------+
-| ``ghcr.io``                          | FLIP's container images                             |
-+--------------------------------------+-----------------------------------------------------+
-| ``github.com``                       | First boot clones FLIP at a pinned commit           |
-+--------------------------------------+-----------------------------------------------------+
-| ``huggingface.co``                   | First install loads the published mock trust data   |
-+--------------------------------------+-----------------------------------------------------+
-| The OS, Docker and uv package        | First-boot installs                                 |
-| sources                              |                                                     |
-+--------------------------------------+-----------------------------------------------------+
++------------------------------------------+---------------------------------------------------+
+| Destination                              | Why                                               |
++==========================================+===================================================+
+| The hub's URL, port 443                  | Task polling, heartbeats, results (HTTPS, API     |
+|                                          | key)                                              |
++------------------------------------------+---------------------------------------------------+
+| The hub's FL endpoint, port 8002 (8003   | Federated training. It has a fixed IP, so a       |
+| on staging)                              | firewall without FQDN network rules (Azure        |
+|                                          | Firewall Basic) can allow it by address. **Exempt |
+|                                          | it from TLS inspection**: a proxy that re-signs   |
+|                                          | the traffic breaks its certificate check          |
++------------------------------------------+---------------------------------------------------+
+| ``ghcr.io``,                             | FLIP's container images and their layers          |
+| ``pkg-containers.githubusercontent.com`` |                                                   |
++------------------------------------------+---------------------------------------------------+
+| ``registry-1.docker.io``,                | The observability images (Grafana, Loki, Alloy)   |
+| ``auth.docker.io``,                      | and XNAT's Docker socket proxy, from Docker Hub   |
+| ``production.cloudfront.docker.com``     |                                                   |
++------------------------------------------+---------------------------------------------------+
+| ``github.com``                           | First boot clones FLIP at a pinned commit         |
++------------------------------------------+---------------------------------------------------+
+| ``huggingface.co``                       | First install loads the published mock trust data |
++------------------------------------------+---------------------------------------------------+
+| The OS, Docker and uv package sources    | First-boot installs                               |
++------------------------------------------+---------------------------------------------------+
 
 **What leaves the site.** Model updates during training, and aggregate results. Patient records,
 images and OMOP rows stay on the node.
