@@ -18,6 +18,7 @@ and the node's NIC always behind its own NSG.
 from __future__ import annotations
 
 import re
+import subprocess
 
 import pytest
 from conftest import AZURE_DIR
@@ -216,3 +217,14 @@ def test_selftest_kit_packs_here_and_uploads_under_the_name_the_node_fetches():
 
 def test_packed_kits_are_never_committed():
     assert "build/" in (AZURE_DIR / ".gitignore").read_text().splitlines()
+
+
+def test_outbound_ip_reports_parse_in_bash():
+    # A quote inside ${ip:-...} in a double-quoted echo is a bash syntax error that only shows
+    # after a real apply, when the line finally runs.
+    lines = [line.strip().lstrip("@") for line in MAKEFILE.read_text().splitlines() if "Outbound IP" in line]
+    assert lines, "the apply targets print the outbound IP"
+    for line in lines:
+        script = line.replace("$$", "$").replace("$(TF)", "terraform")
+        result = subprocess.run(["bash", "-n", "-c", script], capture_output=True, text=True)
+        assert result.returncode == 0, f"{line}\n{result.stderr}"
