@@ -37,6 +37,15 @@ module "network" {
   existing_subnet_id  = var.existing_subnet_id
 }
 
+# The API server admits the operator and the nodes' own egress. AKS adds a load balancer's outbound
+# IP by itself, but not a NAT gateway's or a site firewall's, and a node that cannot reach its API
+# server never joins (the reimage fails with CSE exit 51).
+locals {
+  node_egress_ips  = var.existing_subnet_id != "" ? var.node_egress_ips : [module.network.nat_public_ip_address]
+  node_api_ranges  = [for ip in local.node_egress_ips : "${ip}/32"]
+  api_server_admit = distinct(concat(["${var.operator_ip}/32"], local.node_api_ranges))
+}
+
 resource "azurerm_kubernetes_cluster" "this" {
   # checkov:skip=CKV_AZURE_115:A private cluster needs a jump host (standing cost); the API server admits only the operator's IP instead
   # checkov:skip=CKV_AZURE_117:Platform-managed disk encryption; a disk encryption set needs Key Vault, which a trial cluster does not justify
@@ -87,7 +96,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   api_server_access_profile {
-    authorized_ip_ranges = ["${var.operator_ip}/32"]
+    authorized_ip_ranges = local.api_server_admit
   }
 
   # The chart's NetworkPolicies are its isolation; Cilium enforces them.

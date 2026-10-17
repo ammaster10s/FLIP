@@ -24,3 +24,8 @@ output "outbound_ip" {
   description = "The NAT gateway's address on a created network; empty on a site subnet, whose egress the site owns."
   value       = module.network.nat_public_ip_address
 }
+
+output "api_server_node_ranges" {
+  description = "The nodes' egress as API server ranges, comma-separated: make aks-allow-ip keeps them beside the operator's IP."
+  value       = join(",", local.node_api_ranges)
+}

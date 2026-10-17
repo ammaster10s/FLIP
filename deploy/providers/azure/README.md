@@ -85,7 +85,10 @@ layer. It shares the trial's 4 vCPUs with the VM, so `aks-apply` refuses while t
 resource group exists: `make destroy` first. `SUBNET_ID` works as for the VM (see
 [Network and outbound traffic](#network-and-outbound-traffic)); a site subnet also needs a route
 table sending outbound traffic to the site's firewall, which AKS checks before it creates the
-cluster.
+cluster, and `NODE_EGRESS_IPS=<ip>[,<ip>]` naming that firewall's public IPs on `aks-plan` and
+`aks-destroy`. The API server admits your IP and the nodes' egress (the NAT gateway's IP, or
+those addresses): AKS adds only a load balancer's outbound IP by itself, and a node that cannot
+reach its API server never joins.
 
 ```bash
 make aks-init        AZ_SUBSCRIPTION="$SUB"   # after bootstrap
