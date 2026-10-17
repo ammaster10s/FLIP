@@ -247,9 +247,13 @@ Run it on AKS instead
 
 The ``aks`` root builds a one-node AKS cluster (``Standard_D4s_v5``, Free control-plane tier) on
 the same bootstrap layer, and the trust runs on it as the ``flip-trust`` Helm chart. Sign-in is
-through Entra, the API server admits only your IP, and the cluster egresses from the bootstrap's
-static IP. That IP and the trial's 4 vCPUs are the VM's too, so ``aks-apply`` refuses while the
-VM exists: ``make destroy`` first. A running cluster costs roughly $0.25 an hour.
+through Entra, and the API server admits only your IP. Outbound traffic follows the same two
+paths as the VM (`Network and security`_): on the Trust's subnet (``SUBNET_ID``) the cluster uses
+the Trust's routes and creates no outbound IP, and that subnet needs a route table sending
+outbound traffic to the Trust's firewall, which AKS checks before it creates the cluster; without
+``SUBNET_ID`` it leaves through its own NAT gateway. The trial's 4 vCPUs are the VM's too, so
+``aks-apply`` refuses while the VM exists: ``make destroy`` first. A running cluster costs roughly
+$0.25 an hour, plus the NAT gateway on a standalone cluster.
 
 On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq`` and
 ``python3``.
@@ -259,9 +263,9 @@ On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``
    cd deploy/providers/azure
    SUB="<subscription name>"
 
-   make bootstrap       AZ_SUBSCRIPTION="$SUB" LOCATION=<region> STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
+   make bootstrap       AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
    make aks-init        AZ_SUBSCRIPTION="$SUB"
-   make aks-plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region>
+   make aks-plan        AZ_SUBSCRIPTION="$SUB" LOCATION=<region> SUBNET_ID=<subnet resource id, or empty>
    make aks-apply       AZ_SUBSCRIPTION="$SUB"      # shows the plan and the subscription, asks for yes
    make aks-credentials AZ_SUBSCRIPTION="$SUB"      # kube context flipaz-aks, signed in through Entra
 
@@ -300,7 +304,8 @@ Operate and remove:
 - ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
   IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
 - ``make aks-deploy KIT=<slot> PROD=<env>`` redeploys or upgrades from the installed kit.
-- ``make aks-destroy`` removes the cluster and keeps the bootstrap layer;
+- ``make aks-destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
+  the bootstrap layer;
   ``make destroy-bootstrap`` refuses while the cluster or a VM exists.
 
 Troubleshooting:
