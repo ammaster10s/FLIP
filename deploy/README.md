@@ -309,8 +309,7 @@ Cloud Map + public FL hostnames).
 > deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
 > `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
 > (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
-> Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6).
+> Terraform first and update the compose files only as far as the local harness needs.
 
 ### Trusts
 
