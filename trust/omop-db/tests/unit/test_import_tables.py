@@ -274,11 +274,22 @@ class TestMain:
             ["--trust-index", "2", "--projects", "cxr_project", "spleen_project", "--data-dir", str(tmp_path)]
         )
 
-        assert [(a[2], a[4], k["clean"]) for a, k in loaded] == [
-            ("cxr_project", 2, "projects"),
-            ("spleen_project", 2, "projects"),
+        assert [(a[2], a[4], a[5], k["clean"]) for a, k in loaded] == [
+            ("cxr_project", 2, "source_trust", "projects"),
+            ("spleen_project", 2, "source_trust", "projects"),
         ]
         assert fake_engine.begun == 1, "the sanity count opens one transaction after the loads"
+
+    def test_partition_modulo_reaches_every_load(self, tmp_path, monkeypatch, fake_engine):
+        _write_project(tmp_path, "cxr_project", self.REQUIRED)
+        loaded = []
+        monkeypatch.setattr(import_tables_module, "load_project", lambda *a, **k: loaded.append(a))
+
+        import_tables_module.main(
+            ["--trust-index", "1", "--partition", "modulo", "--projects", "cxr_project", "--data-dir", str(tmp_path)]
+        )
+
+        assert [a[5] for a in loaded] == ["modulo"]
 
     def test_clean_all_empties_every_table_before_loading(self, tmp_path, monkeypatch, fake_engine):
         _write_project(tmp_path, "cxr_project", self.REQUIRED)

@@ -587,7 +587,7 @@ omopDb:
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and the seeded data are vocab-free —
+  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d

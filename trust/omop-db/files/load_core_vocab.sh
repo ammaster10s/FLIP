@@ -15,7 +15,7 @@
 # an ordinary client connection (COPY FROM STDIN — no server-side file access,
 # no image layer, no volume mount), then optionally applies the FK constraints.
 # This is the one credentialed seeding step: published images and seeded data
-# are vocab-free (FLIP#842/#843), so every environment loads the
+# carry no licensed vocabulary (FLIP#842/#843), so every environment loads the
 # bundle it is licensed to hold. Idempotent: tables that already hold rows are
 # skipped, and the constraints file guards itself with IF NOT EXISTS checks.
 # The bundle is read only for the tables that actually need loading, so a run

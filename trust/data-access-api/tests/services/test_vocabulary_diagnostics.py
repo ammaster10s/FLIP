@@ -18,8 +18,8 @@ can reveal that >=1 patient matched (issue #519). That property is load-bearing 
 these tests assert it stays intact.
 
 The cost is that a *misconfigured* trust is equally opaque. A seeded OMOP database
-has no vocabulary, and until the separate ~25-minute load runs,
-``concept_ancestor`` is empty and every cohort query matches nothing — while
+holds only the DICOM vocabulary, and until the separate ~25-minute core-vocabulary
+load runs, ``concept_ancestor`` is empty and every cohort query matches nothing — while
 ``person`` / ``image_occurrence`` / ``image_feature`` all look healthy. The operator
 sees only "no cohort records" from the hub and goes looking at their query or their
 imaging import.

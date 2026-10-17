@@ -46,7 +46,7 @@ make -C trust up-trust KIT=GSTT    # GSTT only
 make -C trust up-trust KIT=KCH     # KCH only
 ```
 
-The seeded databases are **vocab-free**: after the stack is
+The seeded databases carry **no licensed vocabulary**: after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
 `psql` on the host). Unlike the stack commands above, these run from this

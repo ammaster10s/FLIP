@@ -62,8 +62,8 @@ tolerate the DICOM vocab the seed has already loaded):
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst
   password is NOT in the image — it is set at first init from `DATA_ACCESS_POSTGRES_PASSWORD` and lives
-  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
-  value (see CONTRIBUTING.md).
+  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or re-initialise the trust's data dir (and
+  its `.seeded` marker) with the new kit value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
   HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it
   belongs to, decided by the dataset's generator. Partition modes: `source_trust` (default) and `modulo`
@@ -123,7 +123,7 @@ make build                          # plain docker build — no data inputs, no 
 make up-build / down-build          # the standalone per-trust build DBs
 make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
                                                # stack is two-trust; N>2 needs a compose service + port)
-make populate CORE_VOCAB=0          # vocab-free flavour (skip apply-constraints!)
+make populate CORE_VOCAB=0          # skip the licensed core vocab (then skip apply-constraints!)
 make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
