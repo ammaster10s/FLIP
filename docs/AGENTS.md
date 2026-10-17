@@ -16,6 +16,7 @@
 | `source/glossary.rst` | Terminology definitions |
 | `source/security.rst` | How FLIP addresses security at each layer (network, cloud estate, identity, clinical-data boundary, the FL process itself, storage/transport, supply chain) — written for partner trusts and information governance leads |
 | `source/governance-and-compliance.rst` | Who decides what in FLIP and how the platform maps onto NHS assurance frameworks — written for information governance/Caldicott functions and research ethics committees; companion to `security.rst` |
+| `source/paper.rst` | The FLIP paper (arXiv 2609.36001): citation, plus the guides reproducing its experiments under `source/paper/` (Ark+ fine-tuning, platform overhead) — last section of the Documentation toctree |
 
 ## Sub-docs
 

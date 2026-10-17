@@ -2,13 +2,12 @@
 Logging Stack
 ###############
 
-FLIP uses a structured logging stack at each Trust site to collect, store and
-visualise application logs. The stack consists of three layers:
+Every Trust runs a logging stack that collects, stores and displays the Trust APIs' logs. It never leaves the
+Trust. It has three layers:
 
-1. **log_config** -- a shared Python library that emits structured JSON logs.
-2. **Grafana Alloy + Loki** -- Docker-native log collection and storage with
-   30-day retention.
-3. **Grafana** -- a web dashboard for querying and visualising logs.
+1. **Structured logs** — each Trust API writes one JSON object per log line.
+2. **Grafana Alloy + Loki** — Alloy collects the logs from Docker and Loki stores them for 30 days.
+3. **Grafana** — a web dashboard for querying and viewing the logs.
 
 .. contents:: On this page
    :local:
@@ -43,82 +42,16 @@ Architecture
               │  (port 3000)  │
               └───────────────┘
 
-Each FLIP API service writes single-line JSON to stdout. Docker captures this
-output. Grafana Alloy discovers containers via the Docker socket, parses the
-JSON and forwards the logs to Loki. Grafana queries Loki through a
-pre-provisioned datasource.
+Each API writes its logs to standard output, where Docker captures them. Alloy finds the containers through the
+Docker socket, parses the JSON and sends the logs to Loki. Grafana reads from Loki through a pre-configured data
+source.
 
 *******************
 Application Logging
 *******************
 
-Shared library: ``log_config``
-================================
-
-All trust-side APIs use the ``log_config`` library located at
-``trust/observability/log_config/``. The library provides:
-
-- **JSONFormatter** -- serialises every log record as a single-line JSON object
-  containing ``timestamp``, ``level``, ``api``, ``logger``,
-  ``message`` and any extra fields.
-- **LoggingMiddleware** -- FastAPI/Starlette middleware that generates a
-  ``request_id`` (from the ``X-Request-ID`` header or a UUID), logs
-  ``request.started`` / ``request.completed`` / ``request.failed`` events and
-  records ``method``, ``path``, ``status_code`` and ``duration_ms``.
-- **request_context** -- a ``contextvars.ContextVar`` that carries per-request
-  fields (e.g. ``request_id``) into every log emitted during that request.
-
-Initialisation
---------------
-
-Each API initialises logging in its ``utils/logger.py`` module using values
-from the service's Pydantic ``Settings`` class:
-
-.. code-block:: python
-
-   from log_config import configure_logging, get_logger
-   from trust_api.config import get_settings
-
-   _settings = get_settings()
-
-   configure_logging(
-       api_name="trust-api",
-       level=_settings.LOG_LEVEL,
-   )
-
-   logger = get_logger(__name__)
-
-The relevant setting is:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Setting
-     - Default
-     - Description
-   * - ``LOG_LEVEL``
-     - ``INFO``
-     - Python log level applied uniformly to all trust services. The Pydantic
-       ``Settings`` default is ``INFO``; the example ``.env.development``
-       overrides this to ``DEBUG`` for local development.
-
-This is set via environment variables or ``.env.*`` files and read through
-each service's Pydantic ``Settings`` class.
-
-Structured events
------------------
-
-Use the ``event`` extra field with dotted string names for consistent log
-tagging across services. The ``LoggingMiddleware`` automatically tags request
-lifecycle events (``request.started``, ``request.completed``,
-``request.failed``).
-
-.. code-block:: python
-
-   logger.info("Project approved", extra={"event": "project.approved", "project_id": pid})
-
 Log output format
------------------
+=================
 
 Every log line is a JSON object:
 
@@ -135,6 +68,29 @@ Every log line is a JSON object:
      "request_id": "d4e5f6a7-..."
    }
 
+Every HTTP request is logged automatically:
+
+- a ``request_id`` is taken from the ``X-Request-ID`` header, or generated, and added to every log line written
+  while handling that request;
+- start, completion and failure are logged as the events ``request.started``, ``request.completed`` and
+  ``request.failed``, with the method, path, status code and duration.
+
+Structured events
+=================
+
+Tag a log line with an ``event`` field, using a dotted name, so that it can be filtered the same way in every
+service:
+
+.. code-block:: python
+
+   logger.info("Project approved", extra={"event": "project.approved", "project_id": pid})
+
+.. note::
+
+   **For maintainers:** the three APIs share the ``log_config`` library in ``trust/observability/log_config/``.
+   Each service sets it up once at start-up with its own name and its ``LOG_LEVEL`` setting. See the
+   `observability README <https://github.com/londonaicentre/FLIP/blob/develop/trust/observability/README.md>`_.
+
 *************************
 Infrastructure Components
 *************************
@@ -142,27 +98,19 @@ Infrastructure Components
 Grafana Alloy
 =============
 
-Grafana Alloy discovers containers via the Docker socket and scrapes their
-stdout logs. Configuration is at ``trust/observability/alloy/config.alloy`` (River syntax).
-Alloy replaces the now end-of-life Promtail collector.
+Alloy collects container logs through the Docker socket. It replaces Promtail, which is end-of-life. It:
 
-Key behaviours:
+- looks for new containers every 5 seconds;
+- labels each log with its Docker ``container``, ``service`` and ``project``;
+- parses JSON log lines and turns ``level``, ``api`` and ``event`` into Loki labels, so queries on them are
+  fast. ``request_id`` stays in the log body and is not a label.
 
-- Discovers containers every 5 seconds via ``discovery.docker``.
-- Extracts Docker labels as log labels: ``container``, ``service``,
-  ``project`` (via ``discovery.relabel``).
-- Parses JSON log lines and promotes ``level``, ``api`` and ``event``
-  to Loki labels for efficient querying (via ``loki.process`` with
-  ``stage.json`` and ``stage.labels``). ``request_id`` is extracted
-  from the JSON but not promoted to a label.
+Its configuration is ``trust/observability/alloy/config.alloy``.
 
 Loki
 ====
 
-Loki is the log storage backend. Configuration is at
-``trust/observability/loki/loki-config.yml``.
-
-Key settings:
+Loki stores the logs on the local filesystem. Its configuration is ``trust/observability/loki/loki-config.yml``.
 
 .. list-table::
    :header-rows: 1
@@ -183,38 +131,24 @@ Key settings:
 Grafana
 =======
 
-Grafana provides the web UI for log exploration. It is pre-provisioned with a
-Loki datasource and a **Trust APIs** dashboard so no manual configuration is
-required on first start.
-
-Provisioning files are located at
-``trust/observability/grafana/provisioning/``:
-
-- ``datasources/loki.yml`` -- Loki datasource (uid: ``loki``)
-- ``dashboards/dashboards.yml`` -- dashboard provider configuration
-- ``dashboards/trust-apis.json`` -- Trust APIs overview dashboard
-
-Default credentials and port:
-
-- **URL**: ``http://<trust-host>:3000``
-- **Admin password**: set via ``GRAFANA_ADMIN_PASSWORD`` environment variable
+Grafana is the web UI for exploring logs. It starts with a Loki data source and a **Trust APIs** dashboard
+already set up, so no manual configuration is needed. It is at ``http://<trust-host>:3000``; the admin password
+is ``GRAFANA_ADMIN_PASSWORD`` from the Trust's kit file.
 
 Trust APIs dashboard
 --------------------
 
-The provisioned **Trust APIs** dashboard (under the **Observability** folder)
-provides an overview of all three trust API services. It includes:
+The **Trust APIs** dashboard, in the **Observability** folder, gives an overview of the three Trust APIs:
 
-- **Stat panels** -- request rate, error count, p95 latency, active APIs
-- **Time series** -- request rate and error rate by API over time
-- **p95 request duration** -- latency trends by API
-- **Status code distribution** -- breakdown of HTTP response codes
-- **Slowest requests** -- table of completed requests sorted by duration
-- **Recent errors** -- filtered log view of ``ERROR``-level entries
-- **All logs** -- full log stream with label filtering
+- **Stat panels** — request rate, error count, p95 latency, active APIs
+- **Time series** — request rate and error rate by API over time
+- **p95 request duration** — latency trends by API
+- **Status code distribution** — breakdown of HTTP response codes
+- **Slowest requests** — completed requests sorted by duration
+- **Recent errors** — ``ERROR``-level log entries
+- **All logs** — the full log stream, filterable by label
 
-An **API** dropdown at the top of the dashboard allows filtering by
-``trust-api``, ``data-access-api``, ``imaging-api``, or all three.
+Use the **API** dropdown at the top to show ``trust-api``, ``data-access-api``, ``imaging-api``, or all three.
 
 *************
 Configuration
@@ -223,9 +157,7 @@ Configuration
 Environment variables
 =====================
 
-The following environment variables control the logging stack. Set them in the
-appropriate ``.env.*`` file or pass them directly in the Docker Compose
-override.
+Set these in the Trust's ``.env.*`` file, or in a Docker Compose override:
 
 .. list-table::
    :header-rows: 1
@@ -234,11 +166,9 @@ override.
      - Service
      - Description
    * - ``TRUST_LOG_LEVEL``
-     - All APIs (mapped to ``LOG_LEVEL`` inside each container)
-     - Sets the Python log level uniformly across all trust services. The
-       Pydantic ``Settings`` default is ``INFO``; the example
-       ``.env.development`` sets ``TRUST_LOG_LEVEL=DEBUG`` for local
-       development.
+     - All three APIs (as ``LOG_LEVEL`` inside each container)
+     - Python log level for all Trust services. Default ``INFO``; the example ``.env.development`` sets
+       ``DEBUG``.
    * - ``GRAFANA_PORT``
      - Grafana
      - Host port for the Grafana UI (default ``3000``)
@@ -252,23 +182,28 @@ override.
 Docker Compose services
 =======================
 
-The logging infrastructure is defined in the trust-level Docker Compose files:
+The stack is part of the Trust's Compose files: ``trust/deploy/compose_trust.development.yml`` (configurable
+ports) and ``trust/deploy/compose_trust.production.yml`` (persistent data, automatic restart). It adds three
+services:
 
-- ``trust/deploy/compose_trust.development.yml`` -- development overrides with
-  configurable ports
-- ``trust/deploy/compose_trust.production.yml`` -- production settings with persistent
-  volumes and automatic restart
+.. list-table::
+   :header-rows: 1
 
-Three services are added:
+   * - Service
+     - Image
+     - Role
+   * - ``loki``
+     - ``grafana/loki:3.4.0``
+     - Log storage
+   * - ``alloy``
+     - ``grafana/alloy:v1.9.0``
+     - Log collector (starts after Loki)
+   * - ``grafana``
+     - ``grafana/grafana:11.5.0``
+     - Dashboard (starts after Loki)
 
-1. **loki** (``grafana/loki:3.4.0``) -- log storage
-2. **alloy** (``grafana/alloy:v1.9.0``) -- log collector (depends on loki)
-3. **grafana** (``grafana/grafana:11.5.0``) -- dashboard (depends on loki)
-
-In production, persistent volumes are mounted at:
-
-- ``/opt/flip/volumes/loki`` -- Loki data
-- ``/opt/flip/volumes/grafana`` -- Grafana data and configuration
+In production, Loki and Grafana keep their data in persistent volumes. On hosts provisioned with Ansible (AWS
+EC2 or on-prem), these are ``/opt/flip/volumes/loki`` and ``/opt/flip/volumes/grafana``.
 
 **************************
 Operations & Querying Logs
@@ -278,43 +213,29 @@ Accessing Grafana
 =================
 
 1. Open ``http://<trust-host>:3000`` in a browser.
-2. Log in with the admin credentials.
-3. Open the **Trust APIs** dashboard from the **Observability** folder for an
-   overview of all API services, or navigate to **Explore** and select the
-   **Loki** datasource for ad-hoc queries.
+2. Sign in with the admin credentials.
+3. Open the **Trust APIs** dashboard in the **Observability** folder for an overview, or go to **Explore** and
+   choose the **Loki** data source for your own queries.
 
 Example LogQL queries
 =====================
 
-All logs from a specific API:
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-.. code-block:: text
-
-   {api="trust-api"}
-
-Errors only:
-
-.. code-block:: text
-
-   {level="ERROR"}
-
-Logs for a specific event:
-
-.. code-block:: text
-
-   {event="training.failed"}
-
-Full-text search within a service:
-
-.. code-block:: text
-
-   {api="data-access-api"} |= "timeout"
-
-Correlate logs by request ID:
-
-.. code-block:: text
-
-   {api=~"trust-api|data-access-api|imaging-api"} |= "d4e5f6a7-..."
+   * - To find
+     - Query
+   * - All logs from one API
+     - ``{api="trust-api"}``
+   * - Errors only
+     - ``{level="ERROR"}``
+   * - One event
+     - ``{event="training.failed"}``
+   * - Text within one service
+     - ``{api="data-access-api"} |= "timeout"``
+   * - One request across services
+     - ``{api=~"trust-api|data-access-api|imaging-api"} |= "d4e5f6a7-..."``
 
 ***************
 Troubleshooting
@@ -323,27 +244,45 @@ Troubleshooting
 Logs not appearing in Grafana
 =============================
 
-1. Check that the API containers are running: ``docker compose ps``.
-2. Check Alloy can reach Loki: ``docker compose logs alloy``.
-3. Verify Alloy has access to the Docker socket
-   (``/var/run/docker.sock`` must be mounted).
-4. Check Loki is healthy: ``curl http://localhost:3100/ready``.
+1. Check that the API containers are running:
+
+   .. code-block:: shell
+
+      docker compose ps
+
+2. Check that Alloy can reach Loki:
+
+   .. code-block:: shell
+
+      docker compose logs alloy
+
+3. Check that the Docker socket (``/var/run/docker.sock``) is mounted into the Alloy container. Alloy cannot
+   find containers without it.
+4. Check that Loki is healthy:
+
+   .. code-block:: shell
+
+      curl http://localhost:3100/ready
 
 High disk usage from Loki
 =========================
 
-Loki retains logs for 30 days. If disk space is a concern:
+Loki keeps logs for 30 days. If disk space is tight:
 
-- Reduce ``retention_period`` in ``trust/observability/loki/loki-config.yml``.
-- Check that the compactor is running (``compaction_interval: 10m``).
-- Monitor the ``/opt/flip/volumes/loki`` directory size.
+- lower ``retention_period`` in ``trust/observability/loki/loki-config.yml``;
+- check that the compactor is running (it runs every 10 minutes);
+- watch the size of Loki's data volume (``/opt/flip/volumes/loki`` on Ansible-provisioned hosts).
 
-Changing log level at runtime
-=============================
+Changing the log level
+======================
 
-``LOG_LEVEL`` is read at service startup. To change the level, update the
-environment variable and restart the affected container:
+The log level is read only when a container is created. Update ``TRUST_LOG_LEVEL`` in the trust's env file,
+then recreate the affected container with the same compose files and env file the stack was started with:
 
-.. code-block:: bash
+.. code-block:: shell
 
-   docker compose restart trust-api
+   docker compose up -d --force-recreate trust-api
+
+.. note::
+
+   ``docker compose restart`` is not enough: it restarts the existing container with its old environment.

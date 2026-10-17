@@ -93,10 +93,12 @@ extensions = [
     "sphinx_reredirects",
 ]
 
-# Pages renamed in FLIP#364 keep their old URLs as HTML redirect stubs (target is relative to the old page).
+# Renamed or moved pages keep their old URLs as HTML redirect stubs (target is relative to the old page).
 redirects = {
     "components/architecture-overview": "overview.html",
     "components/component-fl-nodes": "component-fl-nets.html",
+    "user-guides/arkplus-fine-tuning": "../paper/arkplus-fine-tuning.html",
+    "user-guides/reproducing-platform-overhead": "../paper/reproducing-platform-overhead.html",
 }
 
 autoapi_type = "python"

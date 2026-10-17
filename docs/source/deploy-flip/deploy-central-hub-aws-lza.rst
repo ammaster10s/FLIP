@@ -4,23 +4,24 @@
 Deploy the Central Hub on AWS (LZA)
 ####################################
 
-The **platform-managed** deployment mode, for an AWS estate governed by the
+This is the **platform-managed** deployment mode, for an AWS estate governed by the
 `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
-(LZA): a platform team owns the network, the guardrails and a shared edge, and
-FLIP's workload account is denied network-layer creation. It is the same
-Terraform root as the self-contained mode, selected by ``PROD=lza`` (production)
-or ``PROD=lza-stag`` (staging), which set the ``lza_managed_network`` flag; with
-the flag off the resolved configuration is identical to before, so the
-self-contained environments are never touched by LZA work (FLIP#749).
+(LZA). A platform team owns the network, the guardrails and a shared edge, and FLIP's workload account is not
+allowed to create network resources.
 
-This page describes **what the mode changes and what the estate has to
-provide**. The operator runbook — the environment file, the out-of-band
-prerequisites and their commands, the apply sequence — is the "Deploying onto an
-LZA estate (PROD=lza)" section of `deploy/providers/AWS/README.md
-<https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_,
-and the estate-side configuration lives in the platform team's own repositories.
-The prerequisites, IAM permissions, service authentication, schema changes and
-email setup shared with the self-contained mode are on :ref:`deploy-central-hub`.
+It uses the same Terraform as the self-contained mode, selected with ``PROD=lza`` (production) or
+``PROD=lza-stag`` (staging). Self-contained environments are unaffected by this mode.
+
+This page explains **what the mode changes and what the estate must provide**.
+
+.. seealso::
+
+   - `Deploying onto an LZA estate
+     <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_
+     in ``deploy/providers/AWS/README.md`` — the operator runbook: the env file, the out-of-band prerequisites and
+     their commands, and the apply sequence.
+   - :ref:`deploy-central-hub` — prerequisites, IAM permissions, service authentication, schema changes and email
+     setup, shared with the self-contained mode.
 
 .. contents:: On this page
    :local:
@@ -30,11 +31,9 @@ email setup shared with the self-contained mode are on :ref:`deploy-central-hub`
 Architecture
 ************
 
-The pictures below are rendered when this documentation is built, from the same
-`deploy/providers/AWS/architecture/central_hub.py <https://github.com/londonaicentre/FLIP/blob/develop/deploy/providers/AWS/architecture/central_hub.py>`_
-script and node map as the self-contained pictures on :doc:`deploy-central-hub-aws`, with the
-LZA-gated resources drawn and the legacy-gated ones left out. The networking account's edge and
-the Transit Gateway are drawn from the handoff contract, not from Terraform in this repository.
+The diagrams are generated from the same source as those on :doc:`deploy-central-hub-aws`, showing only the
+resources this mode deploys. The networking account's edge and the Transit Gateway belong to the platform team and
+are drawn from the handoff contract, not from FLIP's Terraform.
 
 .. figure:: ../assets/generated/central-hub-aws-lza-network.png
    :align: center
@@ -46,27 +45,28 @@ the Transit Gateway are drawn from the handoff contract, not from Terraform in t
 
    Request and FL paths on an LZA estate.
 
-**One front door, in another account.** Browsers and each Trust's ``trust-api`` reach the hub over HTTPS
-through a CloudFront distribution that the platform team runs in the estate's **networking account**. It
-carries the WAF, serves the UI bucket through a cross-account origin access control, and forwards ``/api/*``
-to a small relay load balancer beside it — a CloudFront VPC origin can only point at a load balancer in its
-own account. FL clients connect to an internet-facing **edge NLB** in that same account (TCP, port 8002 for
-production and 8003 for staging, since the two share one listener set). Both then cross the estate's
-**Transit Gateway** and central **Network Firewall** into the workload account.
+**The front door is in the estate's networking account**, run by the platform team:
 
-**One internal NLB anchors both legs.** Inside the workload account the accelerator-provisioned VPC has no
-internet gateway and no NAT, so nothing in it can be public. Web and FL traffic both land on a single
-internal network load balancer whose IP addresses are fixed per subnet (``.251``); a ``:443`` listener
-forwards to ``flip-api`` and a ``:8002`` listener passes the mutual-TLS gRPC stream through untouched to the
-FL server. Because those addresses never change, the edge registers them once and no synchronisation runs
-at runtime. A private hosted zone resolves the FL server's bare name to the same addresses for callers
-inside the VPC.
+Web and API traffic (browsers and each Trust's ``trust-api``)
+   HTTPS through a **CloudFront** distribution with a WAF. It serves the UI from FLIP's bucket and forwards
+   ``/api/*`` through a relay load balancer in the networking account.
 
-**No internet egress.** Container images come from an in-account **ECR pull-through cache** (a ``ghcr/``
-prefix mirroring GHCR and a credential-less ``ecr-public/`` prefix) over the estate's central ``ecr``
-endpoints, so the workload account never reaches the internet; the platform team's interface endpoints for
-Secrets Manager, Cognito, SES, SSM and CloudWatch Logs serve the rest. Operator access stays AWS Systems
-Manager Session Manager to the bastion: no security group opens port 22.
+FL traffic (each Trust's FL client)
+   An internet-facing **edge NLB**, on TCP port **8002 for production** and **8003 for staging** (the two share one
+   listener set).
+
+Both paths then cross the estate's **Transit Gateway** and central **Network Firewall** into the workload account.
+
+**One internal NLB receives both.** The workload VPC has no internet gateway or NAT, so nothing in it can be
+public. A single internal network load balancer, with a fixed IP address in each subnet (``.251``), forwards
+``:443`` to ``flip-api`` and passes ``:8002`` (mutual-TLS gRPC) through untouched to the FL server. Because the
+addresses never change, the edge registers them once. A private hosted zone resolves the FL server's name to the
+same addresses inside the VPC.
+
+**No internet egress.** Container images come from an in-account **ECR pull-through cache** that mirrors GHCR and
+ECR Public, reached over the estate's central ECR endpoints. The platform team's interface endpoints serve Secrets
+Manager, Cognito, SES, SSM and CloudWatch Logs. Operators still connect through Session Manager to the bastion;
+port 22 is never open.
 
 .. figure:: ../assets/generated/central-hub-aws-lza-data.png
    :align: center
@@ -77,118 +77,144 @@ Manager Session Manager to the bastion: no security group opens port 22.
 
    Data and platform services on an LZA estate.
 
-**State is the same set of managed services.** RDS Proxy, EFS, the S3 buckets, Cognito, Secrets Manager,
-Parameter Store, KMS, CloudWatch Logs and SES are provisioned and used exactly as in the self-contained
-mode. Two placements differ: the database sits in the accelerator's isolated **data subnets** (local routes
-only — RDS needs nothing beyond the VPC), and the interface endpoints are the estate's central ones rather
-than in-account resources.
+**Data and platform services are the same as in the self-contained mode**, with two placement differences:
+
+- the database sits in the accelerator's isolated **data subnets**, which have only local routes;
+- the interface endpoints are the estate's central ones, not resources in FLIP's account.
 
 *********************
 What the mode changes
 *********************
 
-With ``lza_managed_network`` set, the root module:
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
 
-**Does not create**
+   * - FLIP's Terraform…
+     - Resources
+   * - **Does not create**
+     - - The VPC, subnets, internet gateway, NAT gateways and DHCP options.
+       - VPC endpoints (interface endpoints are central; S3 and DynamoDB gateway endpoints come from the platform).
+       - CloudFront, its WAF and the public FL NLB. The estate's edge replaces them.
+       - The internal ALB. The internal NLB fronts ``flip-api`` instead.
+       - The security-group drift monitor. The organisation baseline covers it.
+   * - **Discovers**
+     - The accelerator-provisioned VPC and every ``app`` and ``data`` subnet, by Name tag (``LZA_VPC_NAME``).
+       Subnets the platform team adds later appear on the next plan.
+   * - **Keeps unchanged**
+     - ECS Fargate, RDS and RDS Proxy, EFS, Cloud Map, Cognito, S3 with the hub's KMS key, Secrets Manager,
+       Parameter Store and SES.
 
-- the VPC, subnets, internet gateway, NAT gateways and DHCP options;
-- in-account VPC endpoints (interface endpoints are central; S3 and DynamoDB gateway endpoints are
-  platform-provided);
-- the in-account CloudFront distribution, its VPC origin and its WAF, and the public FL NLB — the estate's
-  own edge replaces all three, and an internet-facing load balancer is impossible without an internet
-  gateway;
-- the internal ALB — the internal NLB fronts ``flip-api`` instead;
-- the security-group drift monitor (CloudTrail → EventBridge → Lambda), which the organisation baseline
-  covers.
+Without the ALB, two behaviours change:
 
-**Discovers instead**
-
-- the accelerator-provisioned VPC and its ``app`` and ``data`` subnets, by Name tag (``LZA_VPC_NAME``),
-  matching every subnet of each kind so ones the platform team adds later appear on the next plan.
-
-**Keeps unchanged**
-
-- ECS Fargate, RDS and RDS Proxy, EFS, Cloud Map, Cognito, S3 with the hub's KMS key, Secrets Manager,
-  Parameter Store and SES.
-
-Two behavioural differences follow from the ALB's absence: the load balancer no longer filters to
-``/api`` paths or answers a default 404 (CloudFront's behaviours and the WAF are the only layer-7 gate,
-which is why the workload load balancer must stay reachable only from the edge), and idle connections
-time out after 350 seconds rather than 60.
+- **No path filtering at the load balancer.** It no longer restricts traffic to ``/api`` or answers a default 404.
+  CloudFront and the WAF are the only layer-7 gate, so the workload load balancer must stay reachable only from
+  the edge.
+- **Idle connections time out after 350 seconds**, not 60.
 
 ***********************************
 What the platform team must provide
 ***********************************
 
-Each FLIP environment needs its **own workload account** — the stack's resource names and the handoff
-parameters are fixed per account, so two environments cannot share one. Before the first ``plan`` the
-account, and the estate around it, need:
+*Who: the platform team operating the estate.*
 
-- a VPC with ``app`` and ``data`` subnets across two availability zones, a Transit Gateway attachment
-  spanning both, and a route from the app subnets to the Transit Gateway;
-- central interface endpoints reachable from the app subnets — ``ecr.api`` and ``ecr.dkr`` for image
-  pulls, Secrets Manager, Cognito, SES, SSM and CloudWatch Logs — plus S3 and DynamoDB gateway endpoints;
-- the edge in the networking account (the CloudFront distribution with its relay, and the edge NLB with a
-  listener port for this environment) and firewall rules admitting the edge's address ranges to the
-  workload load balancer's web and FL ports;
-- ECR pull-through cache rules, ``ghcr/`` (backed by a read-only GHCR token held in Secrets Manager) and
-  ``ecr-public/``;
-- the Terraform-CI bootstrap: the Terraform state bucket, the GitHub OIDC provider and the CI plan and apply
-  roles. The platform repository applies them from FLIP's ``terraform_ci_bootstrap`` module, pinned to a FLIP
-  commit. The permissions boundary every FLIP role carries is the accelerator's own
-  ``AICentre-WorkloadRoleBoundary``, which an SCP requires on every workload role and which the LZA modes of
-  the Makefile select by default; the module references it rather than declaring FLIP's. The bucket is versioned, blocks public
-  access, refuses unencrypted transport and keeps a bounded version history; it is encrypted with S3-managed
-  keys, or on production with the AWS-managed KMS key;
-- an Identity Center permission set for the operator, with a matching ``lza-prod`` or ``lza-stag`` profile
-  alias in ``~/.aws/config`` for the Makefile guard;
-- the estate's central load-balancer access-logs bucket, which the workload stack writes to.
+.. important::
 
-That platform layer (the Transit Gateway, the central firewall, endpoints and NAT, and the edge) is
-a shared estate cost that bills to the platform team's accounts rather than to the workload account;
-:ref:`deploy-central-hub-costs` gives its rough size next to the workload account's own bill.
+   Each FLIP environment needs its **own workload account**. Resource names and handoff parameters are fixed per
+   account, so two environments cannot share one.
+
+Before the first ``plan``, provide:
+
+- **Network:** a VPC with ``app`` and ``data`` subnets across two availability zones, a Transit Gateway attachment
+  spanning both, and a route from the app subnets to the Transit Gateway.
+- **Endpoints**, reachable from the app subnets: central interface endpoints for ``ecr.api`` and ``ecr.dkr``,
+  Secrets Manager, Cognito, SES, SSM and CloudWatch Logs; plus S3 and DynamoDB gateway endpoints.
+- **Edge**, in the networking account: the CloudFront distribution with its relay, the edge NLB with a listener
+  port for this environment, and firewall rules admitting the edge's address ranges to the workload load
+  balancer's web and FL ports.
+- **ECR pull-through cache rules:** ``ghcr/`` (backed by a read-only GHCR token in Secrets Manager) and
+  ``ecr-public/``.
+- **Terraform CI bootstrap:** the state bucket, the GitHub OIDC provider and the CI plan and apply roles, applied
+  from FLIP's ``terraform_ci_bootstrap`` module pinned to a FLIP commit. FLIP's roles carry the accelerator's own
+  permissions boundary, ``AICentre-WorkloadRoleBoundary``, which an SCP requires and the LZA modes use by
+  default. The module configures the bucket (versioned, public access blocked, TLS only, encrypted).
+- **Operator access:** an Identity Center permission set, with a matching ``lza-prod`` or ``lza-stag`` profile in
+  the operator's ``~/.aws/config``.
+- **Logging:** the estate's central load-balancer access-logs bucket, which the workload stack writes to.
+
+This platform layer (Transit Gateway, central firewall, endpoints, NAT and edge) is a shared cost billed to the
+platform team's accounts, not the workload account. :ref:`deploy-central-hub-costs` gives its rough size.
 
 **********************
 Two-phase edge handoff
 **********************
 
-The edge is built *from* the workload stack's outputs, so the two are applied in a fixed order. The
-first workload ``apply`` publishes the handoff parameters (``/flip/networking/*``: the internal NLB's
-fixed IP addresses, the web and FL ports, the load balancer's DNS name) that the edge stack reads. At that
-point the two edge variables in the environment file are still empty: the UI bucket's policy then grants
-no principal — fail-closed, the edge simply cannot read the bucket yet — and the UI origin is a
-placeholder. Once the platform team has applied the edge, set the distribution's domain and ARN in the
-environment file and re-apply: that grants the cross-account read and points bucket CORS and the Cognito
-callback URLs at the edge. Later changes to the workload load balancer follow the same order, networking
-stack first.
+The edge is built from the workload stack's outputs, so the two are always applied in this order:
+
+1. **Apply the workload stack.** *Who: FLIP admin (or CI).*
+
+   The first ``apply`` publishes the handoff parameters under ``/flip/networking/*``: the internal NLB's fixed IP
+   addresses, the web and FL ports, and its DNS name. Leave ``TF_VAR_lza_web_edge_domain`` and
+   ``TF_VAR_lza_web_edge_distribution_arn`` empty. Until they are set, the UI bucket grants no one access and the UI
+   origin is a placeholder.
+
+2. **Apply the edge.** *Who: platform team.*
+
+   The edge stack in the networking account reads the handoff parameters.
+
+3. **Point the workload stack at the edge.** *Who: FLIP admin (or CI).*
+
+   Set the two variables to the edge distribution's domain and ARN in the env file, then apply again. This grants
+   the edge read access to the UI bucket and points bucket CORS and the Cognito callback URLs at the edge.
+
+Later changes to the workload load balancer follow the same order, networking stack first.
 
 *********
 Deploying
 *********
 
-**CI applies this estate.** The Terraform pipeline plans the LZA staging root on
-every pull request into ``main`` or ``develop`` touching ``deploy/providers/AWS/**``,
-applies it on a push to ``develop``, and plans nightly to report drift — all
-authenticated by GitHub OIDC with no long-lived AWS keys. Pointing a GitHub
-environment at an account is a value change (the ``TF_PROD`` mode token plus the two
-role ARNs), described under "Repointing CI at the LZA accounts" in the deployment
-README. Production is on LZA too (`FLIP#1199
-<https://github.com/londonaicentre/FLIP/issues/1199>`_, repointed 2026-10-06):
-merges to ``main`` apply to LZA production.
+**CI applies this estate**, authenticated by GitHub OIDC with no long-lived AWS keys:
 
-``PROD=lza`` selects ``.env.lza-prod``, production semantics (``TF_VAR_environment=prod``, so RDS deletion
-protection and the final snapshot stay on) and deploys from ``origin/main``; ``PROD=lza-stag`` selects
-``.env.lza-stag``, staging semantics and ``origin/develop``. Each keeps its own trust-kit suffix
-(``trust/.env.<CODE>.lza-prod`` / ``.lza-stag``), so self-contained kits are never overwritten.
+- every pull request into ``main`` or ``develop`` that touches ``deploy/providers/AWS/**`` plans LZA staging;
+- a push to ``develop`` applies LZA staging;
+- a merge to ``main`` applies **LZA production**;
+- a nightly plan reports drift.
 
-The same targets run from a laptop as the **break-glass** path — when CI is wedged,
-and for the one-off account bootstrap steps that must precede the first CI plan:
+To point a GitHub environment at another account, change its values (the ``TF_PROD`` mode and the two role ARNs);
+see "Repointing CI at the LZA accounts" in the deployment README.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - Setting
+     - ``PROD=lza``
+     - ``PROD=lza-stag``
+   * - Env file
+     - ``.env.lza-prod``
+     - ``.env.lza-stag``
+   * - Semantics
+     - Production (RDS deletion protection and final snapshot on)
+     - Staging
+   * - Deploys from
+     - ``origin/main``
+     - ``origin/develop``
+   * - Trust kit files
+     - ``trust/.env.<CODE>.lza-prod``
+     - ``trust/.env.<CODE>.lza-stag``
+
+Separate kit file names mean self-contained kits are never overwritten.
+
+Break-glass deploy from a laptop
+================================
+
+*Who: FLIP admin, only when CI is unavailable, or for the one-off account bootstrap before the first CI plan.*
 
 .. code-block:: shell
 
    cd deploy/providers/AWS
    export AWS_PROFILE=lza-stag   # or: lza-prod
-   export PROD=lza-stag          # or: PROD=lza
+   export PROD=lza-stag          # or: lza
 
    make init
    make plan
@@ -198,20 +224,15 @@ and for the one-off account bootstrap steps that must precede the first CI plan:
 
 .. warning::
 
-   On an account CI applies, a laptop ``apply`` is reverted by the next pipeline
-   run and shows up as drift in between. Use it only as a recovery action; see
-   "Break-glass" in the deployment README for the conditions and the per-estate
-   commands.
+   On an account CI applies, the next pipeline run reverts a laptop ``apply``, and it shows as drift until then. Use
+   it only to recover; "Break-glass" in the deployment README gives the conditions and per-estate commands.
 
 .. note::
 
-   ``full-deploy`` is the self-contained chain. Some of its steps — the cloud
-   trust EC2, the SSH and Ansible provisioning — do not apply to a
-   platform-managed deployment, and the chain, along with ``make status`` and
-   ``make destroy``, is not yet exercised there. ``deploy-ui`` publishes the
-   bundle without a CloudFront invalidation: the edge distribution is not in
-   this account, so ``index.html`` is served with ``no-cache`` and the hashed
-   assets as immutable instead.
+   - ``full-deploy``, ``make status`` and ``make destroy`` are built for the self-contained mode and are not yet
+     tested here. Several ``full-deploy`` steps (the cloud trust EC2, SSH and Ansible setup) do not apply.
+   - ``deploy-ui`` does not invalidate a CloudFront cache, because the edge distribution is in another account.
+     Instead ``index.html`` is served uncached and the hashed assets as immutable.
 
 ***************
 Further reading
@@ -219,8 +240,7 @@ Further reading
 
 - `deploy/providers/AWS/README.md — Deploying onto an LZA estate
   <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_
-  — the operator runbook: environment file, out-of-band prerequisites, the handoff variables.
-- `FLIP#749 <https://github.com/londonaicentre/FLIP/issues/749>`_ — the migration that introduced the mode.
+  — the operator runbook.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.
 - The AI Centre's estate configuration (``londonaicentre/lza``) and its edge stack
   (``londonaicentre/aicentre-lza-iac``) are private repositories.

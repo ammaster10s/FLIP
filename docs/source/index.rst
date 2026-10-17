@@ -29,6 +29,7 @@ inside each institution's security boundary.
    working-with-flip-apps
    security
    governance-and-compliance
+   paper
 
 .. toctree::
    :maxdepth: 2

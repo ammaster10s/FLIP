@@ -4,15 +4,17 @@
 Deploy a FLIP node on-prem
 ###############################
 
-An on-prem FLIP node runs the trust-side stack (trust-api, imaging-api,
-data-access-api, FL client, optional XNAT/Orthanc) on an Ubuntu host owned by
-the Trust. The node polls the Central Hub for tasks over HTTPS — all
-communication with the hub is outbound and no inbound ports are opened to the internet.
-Retrieval from the trust's own PACS is the exception — see
-:doc:`../components/component-pacs`. This is the deployment
-model used when the Trust has direct, governed access to its own OMOP database
-and PACS. For deployment inside a TRE see :doc:`deploy-flip-node-in-tre`; for
-the Central Hub side see :doc:`deploy-central-hub`.
+An on-prem FLIP node runs the trust-side stack (trust-api, imaging-api, data-access-api, the FL client and optional
+XNAT/Orthanc) on an Ubuntu host owned by the Trust. Use this model when the Trust has direct, governed access to its
+own OMOP database and PACS.
+
+The node polls the Central Hub for work over HTTPS. **All traffic to the hub is outbound**: no inbound ports are
+opened to the internet. The one exception is retrieval from the Trust's own PACS, which needs a rule inside the
+Trust's network (see :doc:`../components/component-pacs`).
+
+.. seealso::
+
+   :doc:`deploy-flip-node-in-tre` to deploy inside a TRE, and :doc:`deploy-central-hub` for the hub side.
 
 .. contents:: On this page
    :local:
@@ -40,286 +42,386 @@ Architecture
    │ (AWS EC2) │    │ (on-prem)    │
    └──────────┘    └─────────────┘
 
-Each on-prem Trust host runs the same Docker Compose stack used on cloud
-trusts. Container ports are not published on the host (the local-trust compose
-file communicates over the internal Docker network only), so the stack can
-coexist with the dev compose stack on the same machine without port conflicts.
+An on-prem trust runs the same Docker Compose stack as a cloud trust. Its services talk over the internal Docker
+network and publish no container ports on the host, so the stack can share a machine with the dev stack without
+port conflicts.
 
-+-----------------+----------------+--------------------------------------------+
-| Service         | Container port | Protocol                                   |
-+=================+================+============================================+
-| trust-api       | 8000           | HTTP (polls hub outbound)                  |
-+-----------------+----------------+--------------------------------------------+
-| imaging-api     | 8000           | HTTP (internal)                            |
-+-----------------+----------------+--------------------------------------------+
-| data-access-api | 8000           | HTTP (internal)                            |
-+-----------------+----------------+--------------------------------------------+
-| fl-client       | —              | TCP (outbound to FL server via NLB)        |
-+-----------------+----------------+--------------------------------------------+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Service
+     - Container port
+     - Traffic
+   * - trust-api
+     - 8000
+     - HTTP; polls the hub outbound
+   * - imaging-api
+     - 8000
+     - HTTP, internal only
+   * - data-access-api
+     - 8000
+     - HTTP, internal only
+   * - fl-client
+     - —
+     - TCP, outbound to the FL server via the hub's network load balancer (NLB)
 
 *************
 Prerequisites
 *************
 
-**Operator workstation** (the machine you run commands from — typically your
-laptop):
+Deployment workstation
+======================
 
-- Python 3.12 or 3.13 and `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
-- Ansible (installed automatically by ``uv sync`` inside ``deploy/providers/AWS/``).
-- Terraform outputs available — you must have already run ``make init`` and
-  ``make apply`` in ``deploy/providers/AWS/`` (the Central Hub deployment).
-- SSH access to the trust host, if provisioning remotely.
+The machine the FLIP admin runs the hub-side commands from, typically a laptop. It needs:
 
-**Trust host** — an Ubuntu 22.04+ machine (physical or VM) with:
+- Python 3.12 or 3.13 and `UV <https://docs.astral.sh/uv/guides/install-python/>`_. Ansible is installed for you by
+  ``uv sync`` in ``deploy/providers/AWS/``.
+- The Central Hub already deployed from it (``make init`` and ``make apply`` in ``deploy/providers/AWS/``), so its
+  Terraform outputs are available.
+- SSH access to the trust host, if you provision it remotely with the hybrid flow.
 
-- A user account with ``sudo`` privileges (default: ``ubuntu``).
-- SSH access from the operator workstation (if remote), or local access.
-- Internet connectivity (to pull Docker images and packages).
-- A writable directory for the FLIP application (default ``/opt/flip``).
-- For GPU training or evaluation: an NVIDIA GPU on NVIDIA driver **580 or newer**, with the
+Trust host
+==========
+
+An Ubuntu 22.04+ machine (physical or VM) with:
+
+- A user with ``sudo`` rights (default ``ubuntu``), reachable over SSH from the workstation or used locally.
+- Internet access, to pull Docker images and packages.
+- A writable directory for FLIP (default ``/opt/flip``).
+- **For GPU training or evaluation:** an NVIDIA GPU on driver **580 or newer** (check *Driver Version* in
+  ``nvidia-smi``) and the
   `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_.
-  The FL images ship PyTorch built for CUDA 13, which bundles its own CUDA runtime, so no CUDA
-  toolkit is needed on the host; check the "Driver Version" reported by ``nvidia-smi``. The
-  playbook installs neither the driver nor the toolkit. A CPU-only host (kit
-  ``NUM_AVAILABLE_GPUS=0``) needs neither.
+  The FL images bring their own CUDA 13 runtime, so the host needs no CUDA toolkit. The provisioning playbook installs
+  neither the driver nor the toolkit. A CPU-only host (``NUM_AVAILABLE_GPUS=0`` in the kit) needs neither.
 
-**Trust data** — the two systems the FLIP node reads. Both must already exist
-and already agree with each other before the node is deployed:
+Trust data
+==========
 
-- An **OMOP database** (PostgreSQL) holding the trust's clinical data in the
-  ``omop`` schema — OMOP CDM 5.4 plus the MI-CDM imaging tables
-  (``image_occurrence``, ``image_feature``). FLIP reads it through a read-only
-  role and writes nothing back.
-- A **PACS** that answers a study-level query by accession number. The
-  checklist to agree with your PACS manager is in
-  :doc:`../components/component-pacs`.
-- **The accession number is the link between the two.** For every imaging row
-  in ``image_occurrence``, the ``accession_id`` column must hold the accession
-  number the PACS answers to for that study — the DICOM Accession Number
-  ``(0008,0050)``. This column is FLIP's own addition to MI-CDM, so a standard
-  OMOP ETL neither creates nor fills it: your data team adds it and populates
-  it as part of the OMOP load (:ref:`omop-accession-id` has the one-line DDL
-  and what to populate it from). A row may exist per study or per series — the
-  same accession repeats on each series row and FLIP imports the study once —
-  but the value must be exactly one study's accession number — never empty,
-  and never containing ``*``, ``?`` or ``\``: to a PACS those are queries that
-  match many studies, not one, so FLIP refuses to send them — such a row is
-  dropped from the pull with a warning in the trust's imaging-api log, and the
-  study it stood for is silently never pulled.
+The node reads two systems. Both must already exist, and agree with each other, before you deploy:
 
-Confirm both with the data and PACS teams before deployment. Neither is checked
-by the deployment itself; a gap surfaces only when the first project's imaging
-pull runs.
+- An **OMOP database** (PostgreSQL) holding the Trust's clinical data in the ``omop`` schema: OMOP CDM 5.4 plus the
+  MI-CDM imaging tables (``image_occurrence``, ``image_feature``). FLIP reads it through a read-only role and writes
+  nothing back.
+- A **PACS** that answers a study-level query by accession number. Agree the checklist in
+  :doc:`../components/component-pacs` with your PACS manager.
 
-**Central Hub deployed in AWS** — required so the trust can resolve the hub
-URL, fetch the FL participant kit from S3, and so the operator can update the
-FL load balancer's security group with the trust's public IP
-(:doc:`deploy-central-hub-aws`; on a Landing Zone Accelerator estate the FL
-entry point is the networking account's edge instead, see
-:doc:`deploy-central-hub-aws-lza`). See :doc:`deploy-central-hub` for the
-shared prerequisites.
+**The accession number links the two.** Every imaging row in ``image_occurrence`` must carry, in its ``accession_id``
+column, the accession number the PACS answers to for that study (DICOM tag ``(0008,0050)``). This column is FLIP's
+own addition to MI-CDM, so a standard OMOP ETL does not create it: your data team adds and fills it during the OMOP
+load. :ref:`omop-accession-id` has the DDL and what to fill it from.
+
+Rows may be per study or per series; FLIP imports each study once. Each value must be exactly one study's accession
+number:
+
+- never empty;
+- never containing ``*``, ``?`` or ``\``. A PACS treats these as wildcards, so FLIP refuses to send them. The row is
+  dropped with a warning in the imaging-api log, and **that study is never pulled**.
+
+.. important::
+
+   The deployment checks neither system. A gap only shows up when the first project's imaging pull runs, so confirm
+   both with the data and PACS teams first.
+
+Central Hub
+===========
+
+The hub must be deployed in AWS (:doc:`deploy-central-hub-aws`) before the trust can resolve the hub URL, fetch its
+FL participant kit and be let through the FL load balancer. On a Landing Zone Accelerator estate the FL entry point
+is the networking account's edge instead (:doc:`deploy-central-hub-aws-lza`). Shared prerequisites are in
+:doc:`deploy-central-hub`.
+
+.. note::
+
+   On the trust host, every command that touches Docker runs with ``sudo``. The provisioning playbook deliberately
+   does not add the login user to the ``docker`` group, because membership is equivalent to root access.
 
 ************************************
 Recommended end-to-end (hybrid) flow
 ************************************
 
-The wrapper target ``full-deploy-hybrid`` performs the full Central Hub deploy,
-registers the trusts on the hub (``register-trusts``), and provisions the
-on-prem trust:
+*Who: someone with hub AWS access who can also reach the trust host.* One wrapper deploys the Central Hub, registers
+the trusts and provisions the on-prem trust.
 
-.. code-block:: shell
+#. **Deploy the hub and provision the trust.**
 
-   cd deploy/providers/AWS
-   make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
+   .. code-block:: shell
 
-If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
-auto-detected via ``curl -s https://api.ipify.org``. ``PROD`` is inherited
-from the environment and supports both staging (``stag``) and production
-(``true``).
+      cd deploy/providers/AWS
+      make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 
-After the wrapper exits, you still need to start the trust stack on the host
-itself. ``sudo`` is required: the provisioning playbook deliberately does
-**not** add the login user to the ``docker`` group (docker group membership is
-root-equivalent — any member can mount ``/`` into a container and chroot in),
-so all docker-touching commands on the trust host run via ``sudo``:
+   ``PROD=stag`` targets staging, ``PROD=true`` production. Leave out ``LOCAL_TRUST_IP`` to use the workstation's
+   own public IP, detected automatically.
 
-.. code-block:: shell
+#. **Start the trust stack on the host.** Use the trust code you scaffolded:
 
-   cd ../../..
-   sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
+   .. code-block:: shell
 
-Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
-show successful task polls against the Central Hub. No trust service sets
-``container_name``, so compose names the container from the trust's project —
-``trust<N>``, where ``<N>`` is the FL kit slot number the hub assigned
-(``FL_KIT_SLOT_NUMBER`` in the kit file).
+      cd ../../..
+      sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+
+#. **Check the trust is polling.**
+
+   .. code-block:: shell
+
+      sudo docker logs -f trust<N>-trust-api-1
+
+   You should see successful task polls against the Central Hub. ``<N>`` is the FL kit slot number the hub assigned
+   (``FL_KIT_SLOT_NUMBER`` in the kit file); every trust container is named ``trust<N>-<service>-1``.
 
 ******************************************
 Onboarding an on-prem trust (step by step)
 ******************************************
 
-When the Central Hub is already deployed, an on-prem trust is onboarded
-asynchronously: the FLIP admin (who holds prod AWS creds) scaffolds,
-registers, and packages a kit; the operator (who does not) extracts it and
-brings the stack up. There is no SSH path — each side runs its own step
-locally. ``<CODE>`` is the trust's short code; the kit file is
-``trust/.env.<CODE>.production``.
+Use this when the Central Hub is already running. Onboarding is split between two people, and neither needs access
+to the other's machines:
 
-**1. Scaffold the kit (FLIP admin).** On a workstation with prod AWS creds:
+- The **FLIP admin** holds production AWS credentials. They create, register and package the trust's **kit**.
+- The **trust operator** has no AWS access. They install the kit on the trust host and start the stack.
+
+``<CODE>`` is the trust's short code. Its kit file is ``trust/.env.<CODE>.production``.
+
+Step 1 — Create the kit
+=======================
+
+*Who: FLIP admin*
 
 .. code-block:: shell
 
    make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=true
 
-This writes ``trust/.env.<CODE>.production`` from the base template
-(``trust/.env.example``): a host-local profile, mock-stack default
-credentials, and ``<run-make-register-trust>`` placeholders for the
-hub-managed blocks.
+This writes ``trust/.env.<CODE>.production`` with host defaults, placeholder local passwords and
+``<run-make-register-trust>`` placeholders for the values the hub manages.
 
-**2. Register the kit on the prod hub (FLIP admin).**
+Step 2 — Register the trust on the hub
+======================================
+
+*Who: FLIP admin*
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
 
-This registers the trust on the prod hub and fills the Kit credentials
-(``TRUST_API_KEY``, ``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``,
-``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``) plus as much of the Hub-shared
-block as the hub task's environment carries. The block is built from the
-environment of the one-off ``flip-api`` Fargate task
-(``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
-comprehension that silently skips absent keys), and that task definition
-(``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
-``FL_BACKEND`` of the eleven: ``AES_KEY_BASE64`` is read from Secrets Manager at
-use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
-image tags, the two kit dates, ``NLB_SUBDOMAIN``, ``FL_SERVER_PORT`` and
-``FL_EDGE_PORT`` are not in the task definition at all. Those nine stay at their
-placeholder until the next step. The hub stores only SHA-256 hashes of the
-credentials and cannot re-emit them, so the credentials half is write-once —
-re-register to rotate.
+This registers the trust with the production hub and writes the trust's **credentials** into its kit file (API key,
+internal service key, FL slot and expected trust id). Most of the **hub-shared settings**, including the encryption
+key and the hub URL, are still placeholders afterwards; step 3 fills them.
 
-**2b. Fill the rest of the Hub-shared block (FLIP admin, required).** From the
-repo root, with the admin's local ``.env.production`` present:
+.. important::
+
+   The hub keeps only hashes of these credentials and cannot show them again. Keep the kit file safe; to rotate the
+   credentials, register the trust again.
+
+Step 3 — Fill in the hub-shared settings
+========================================
+
+*Who: FLIP admin.* Run from the repo root, with your local ``.env.production`` present.
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> PROD=true
 
-This upserts the Hub-shared block from the local env file and preserves the
-credentials written in step 2. Skip it and the operator receives a kit whose
-``AES_KEY_BASE64`` and ``CENTRAL_HUB_API_URL`` are still placeholders — a trust
-that cannot decrypt a task or reach the hub. The same behaviour is described
-from the hub side in ``deploy/providers/AWS/README.md`` ("Registering trusts
-against the ECS hub").
+This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
+untouched.
 
-**3. Package the kit (FLIP admin).** Tarball the populated kit file + the
-operator's slice of the FL participant kit:
+.. important::
+
+   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders, and the trust can
+   neither reach the hub nor decrypt a task.
+
+.. seealso::
+
+   ``deploy/providers/AWS/README.md``, "Registering trusts against the ECS hub", for the same flow from the hub side.
+
+Step 4 — Package and send the kit
+=================================
+
+*Who: FLIP admin*
 
 .. code-block:: shell
 
    make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true
 
-The script reads ``FL_BACKEND`` / ``FL_KIT_SLOT`` out of
-``trust/.env.<CODE>.production`` (it does not edit the file), slices only this
-operator's portion of the FL participant kit out of S3
-(``net-1/services/<slot>/`` for nvflare; ``net-1/certificates/`` + one
-``supernode_credentials_<N>`` for flower), and writes a tarball under
-``deploy/providers/AWS/build/trust-kits/``. Send it to the operator over an
-encrypted channel — it contains a plaintext API key, AES encryption key, and
-an FL TLS private key.
+This bundles the completed kit file with this trust's share of the FL participant kit (fetched from S3) into a
+tarball under ``deploy/providers/AWS/build/trust-kits/``. It does not modify the kit file.
 
-**4. Extract, configure, and start (trust operator).** Extract the tarball,
-copy the kit into the checkout — a checkout at the **release the hub runs**
-(``git fetch --tags origin && git checkout v<X.Y.Z>``; the admin tells you which,
-and the hub's ``/api/health`` reports it), never a branch tip, because the
-compose files and Makefiles that run the images come from it — edit **only**
-the Host-local profile, then bring the stack up:
+.. warning::
 
-.. code-block:: shell
+   The tarball holds a plaintext API key, the AES encryption key and an FL TLS private key. Send it to the operator
+   over an encrypted channel only.
 
-   tar -xzf flip-trust-kit-<slot>-<date>.tar.gz
-   cp .env.<CODE>.production trust/
-   # Edit trust/.env.<CODE>.production (Host-local profile section only):
-   #   - FL_KIT_DIR=<path to extracted fl-kit>
-   #   - adjust ports / bind-mount dirs to match your host
-   #   - rotate the Trust-local passwords
-   sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
-   sudo -E make up-onprem-trust KIT=<CODE> PROD=true         # comes up after all checks pass
+Step 5 — Install the kit
+========================
 
-Both run via ``sudo``: the provisioning playbook deliberately does not add the
-login user to the ``docker`` group (membership is root-equivalent), and the
-checklist's docker-swarm row needs the docker socket.
+*Who: trust operator, on the trust host*
 
-``make onboard-onprem-trust`` prints a ✅/❌ checklist (your public IP, docker
-swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set and on
-disk, FL kit contents present) — fix any ❌ rows before ``up-onprem-trust``,
-which gates on the same checks. The checklist is read-only, so you can run it
-at any point — including before the kit is fully staged — just to read off the
-``Your public IP`` row and report it to the FLIP admin for step 5.
+#. **Check out the release the hub runs.** The admin tells you the version (the hub's ``/api/health`` also reports
+   it). Never use a branch tip: the compose files and Makefiles that run the images come from this checkout.
 
-The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
-fl-client container, so preserve it as extracted.
+   .. code-block:: shell
+
+      git fetch --tags origin && git checkout v<X.Y.Z>
+
+#. **Extract the tarball and copy the kit file into the checkout.**
+
+   .. code-block:: shell
+
+      tar -xzf flip-trust-kit-<slot>-<date>.tar.gz
+      cp .env.<CODE>.production trust/
+
+   Keep the extracted ``net-1/`` folder exactly as it is: the stack mounts that layout into the FL client.
+
+#. **Edit** ``trust/.env.<CODE>.production`` **for your host.** Change only the settings below. Leave the
+   *Hub-shared* and *Kit credentials* blocks alone; they are managed by the admin.
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 55 15
+
+      * - Setting
+        - What to set
+        - Required?
+      * - ``FL_KIT_DIR``
+        - Path to the extracted FL kit (the folder that contains ``net-1/``).
+        - Yes
+      * - ``XNAT_PORT`` and ``XNAT_WEB_PORT``
+        - XNAT's DICOM receiver port and its web UI port. Both are published on the host, so they **must differ**
+          (shipped defaults: 8104 and 8105).
+        - Yes
+      * - Other host ports, e.g. ``OMOP_DB_PORT``
+        - Change any that clash with something already on the host.
+        - If needed
+      * - Storage and bind-mount directories
+        - Point them at your host's disk layout.
+        - If needed
+      * - Trust-local passwords
+        - Replace every default password in the *Trust-local credentials* section with a real secret.
+        - Yes
+      * - ``NUM_AVAILABLE_GPUS``
+        - Number of GPUs for FL jobs; ``0`` on a CPU-only host.
+        - If needed
+      * - ``FL_SITE_PRIVACY_POLICY`` and its parameters
+        - Your site's own privacy filter on FL updates (NVFLARE only). See
+          :ref:`onprem-site-privacy-policy`.
+        - Optional
 
 .. note::
 
-   **Upgrading a trust deployed before the XNAT port split (FLIP#993) — every
-   existing trust must act.** ``XNAT_PORT`` used to mean both the DICOM SCP
-   receiver and the web UI. It now means the receiver only, and the web UI has
-   its own ``XNAT_WEB_PORT``. Both are published on the host on **every**
-   deployment, not only where a real PACS is connected, so the two must differ.
-   A kit that sets only ``XNAT_PORT`` resolves them to the same number — the
-   web port defaults to ``XNAT_PORT`` — so your next ``up-onprem-trust`` is
-   **refused**, naming both values and the file to edit. That refusal is the
-   upgrade path, not a fault: it asks you to allocate a second port rather than
-   moving your web UI to a number nothing else expects. Add ``XNAT_WEB_PORT``
-   to the Host-local profile before your next deployment; the shipped
-   allocation is 8104 for DICOM and 8105 for the web UI.
+   **Upgrading a trust deployed before the XNAT port split.** ``XNAT_PORT`` used to cover both the DICOM receiver and
+   the web UI; the web UI now has its own ``XNAT_WEB_PORT``. A kit that sets only ``XNAT_PORT`` gives both the same
+   number, so the next ``up-onprem-trust`` is **refused** with a message naming both values and the file to edit.
+   That refusal is expected: add ``XNAT_WEB_PORT`` (for example 8105) to the kit before your next deployment.
 
-**Optional — set your site privacy policy (NVFLARE backend).** As the data
-holder you can enforce your own update-privacy filter on everything the
-fl-client sends to the FL server, independently of the researcher's app
-configuration: uncomment ``FL_SITE_PRIVACY_POLICY`` (and optionally its
-parameters) in the Host-local profile of ``trust/.env.<CODE>.production``.
-``make onboard-onprem-trust`` validates the values (an invalid combination
-stops the fl-client at startup, by design), and after ``up-onprem-trust`` the
-fl-client log shows a ``[site-privacy] site privacy policy ACTIVE: ...`` line.
-To change or drop the policy later, edit the kit file and restart the
-fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE> PROD=true``). See
-:doc:`../components/component-fl-nets` ("Site-enforced privacy policy") for
-the parameter reference and enforcement semantics.
+Step 6 — Run the readiness checklist and start the stack
+========================================================
 
-**5. Open the AWS firewall (FLIP admin).** Once the operator reports their
-host's public IP, open the FL-server NLB to it:
+*Who: trust operator*
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip> PROD=true
+   sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
+   sudo -E make up-onprem-trust KIT=<CODE> PROD=true        # starts only if every check passes
 
-``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
-are real config, so later full applies stay idempotent (no drift).
+The checklist prints a ✅ or ❌ for each of: your public IP, Docker swarm state, the hub-shared settings and
+credentials being filled in, ``FL_KIT_DIR`` being set and present, and the FL kit contents. Fix every ❌ row;
+``up-onprem-trust`` runs the same checks and will not start until they pass.
 
-Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
-show successful task polls against the Central Hub (``<N>`` is the assigned FL kit
-slot number, as above).
+Send the **Your public IP** value to the FLIP admin for step 7.
 
-**Rotation (later, no re-mint).** ``sync-trust-kit`` is the same command that
-completed the kit in step 2b, so when the admin later rotates a Hub-shared value
-(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), re-run it to refresh only the
-Hub-shared block from the admin's local env file — credentials are preserved:
+.. tip::
+
+   The checklist changes nothing, so you can run it at any time, even before the kit is fully in place, just to read
+   off your public IP.
+
+Step 7 — Open the FL load balancer to the trust
+===============================================
+
+*Who: FLIP admin*
+
+#. Add the trust's public IP to ``LOCAL_TRUST_PUBLIC_IPS`` in your hub env file (``.env.production``). It is an HCL
+   list, for example ``LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]``.
+
+#. Apply it:
+
+   .. code-block:: shell
+
+      make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip> PROD=true
+
+   This checks the IP is in the list, then runs a normal Terraform plan and apply. The rule is ordinary config, so
+   later full applies show no drift.
+
+Step 8 — Check the trust is polling
+===================================
+
+*Who: trust operator*
 
 .. code-block:: shell
 
-   make sync-trust-kit KIT=<CODE> PROD=true
+   sudo docker logs -f trust<N>-trust-api-1
 
-Re-transmit the refreshed kit to the operator over the same encrypted channel. The
-operator replaces only the Hub-shared block and re-applies it with
-``sudo -E make upgrade-onprem-trust KIT=<slot> YES=1`` — not ``up-onprem-trust``, which
-is the first-install verb and resets XNAT.
+You should see successful task polls against the Central Hub. ``<N>`` is ``FL_KIT_SLOT_NUMBER`` from the kit file.
 
-**Upgrading to a release (later).** Sites move between releases with
-``sudo -E make upgrade-onprem-trust KIT=<slot>`` — the operator's command, defaulting to
-the release the hub runs. See :doc:`/sys-admin/admin-upgrading-sites` for the runbook,
-including when the admin has to re-issue kits first.
+.. _onprem-site-privacy-policy:
+
+Optional — set a site privacy policy (NVFLARE)
+==============================================
+
+*Who: trust operator*
+
+As the data holder, you can apply your own privacy filter to everything the FL client sends to the FL server,
+whatever the researcher's app configures.
+
+#. In ``trust/.env.<CODE>.production``, uncomment ``FL_SITE_PRIVACY_POLICY`` and, optionally, its parameters.
+#. Run ``make onboard-onprem-trust`` to validate them. An invalid combination stops the FL client at startup, by
+   design.
+#. After ``up-onprem-trust``, the FL client log shows ``[site-privacy] site privacy policy ACTIVE: ...``.
+
+To change or remove the policy later, edit the kit file and restart the FL clients:
+
+.. code-block:: shell
+
+   make -C trust up-fl-clients-kit KIT=<CODE> PROD=true
+
+.. seealso::
+
+   :doc:`../components/component-fl-nets`, "Site-enforced privacy policy", for the parameters and how they are
+   enforced.
+
+Later — rotate hub-shared settings
+==================================
+
+When the admin changes a hub-shared value (the encryption key, image tags or FL backend), the credentials do not need
+to be re-issued.
+
+#. *FLIP admin:* refresh the kit, then send it to the operator over the same encrypted channel.
+
+   .. code-block:: shell
+
+      make sync-trust-kit KIT=<CODE> PROD=true
+
+#. *Trust operator:* replace only the *Hub-shared* block in your kit file, then apply it:
+
+   .. code-block:: shell
+
+      sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
+
+.. warning::
+
+   Do not use ``up-onprem-trust`` on a running trust. It is the first-install command and resets XNAT.
+
+Later — upgrade to a new release
+================================
+
+*Who: trust operator*
+
+.. code-block:: shell
+
+   sudo -E make upgrade-onprem-trust KIT=<slot>
+
+By default this moves the site to the release the hub runs.
+
+.. seealso::
+
+   :doc:`/sys-admin/admin-upgrading-sites` for the full runbook, including when the admin must re-issue kits first.
 
 .. _onprem-core-vocabulary:
 
@@ -327,114 +429,113 @@ including when the admin has to re-issue kits first.
 Load the OMOP core vocabulary
 *****************************
 
-The node's OMOP database starts without the OMOP core vocabulary — SNOMED CT, LOINC and the other
-licensed vocabularies that cohort queries resolve concepts through. Each site downloads its own copy
-under its own licences: the vocabularies belong to their owners, and handing the AI Centre's copy to
-another organisation would be redistribution those licences do not clearly allow.
+*Who: trust operator, once, after the first* ``up-onprem-trust``
 
-**What to download.** At least the vocabularies in the
-`core vocabulary roster <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`_.
+The node's OMOP database starts without the OMOP core vocabulary: SNOMED CT, LOINC and the other licensed
+vocabularies that cohort queries resolve concepts through. Each site downloads its own copy under its own licences;
+the AI Centre cannot hand on its copy, because the licences do not clearly allow that redistribution.
 
-**Where from.** `OHDSI Athena <https://athena.ohdsi.org/>`_, with your own account, accepting each
-vocabulary's licence there. The UK editions (SNOMED CT UK, dm+d, Read v2) come from
-`NHS TRUD <https://isd.hscic.gov.uk/trud/>`_ under the NHS national licences. Unzip the export into
-one directory: the loader reads the nine Athena table files from its top level (``CONCEPT.csv``,
-``CONCEPT_ANCESTOR.csv``, ``CONCEPT_CLASS.csv``, ``CONCEPT_RELATIONSHIP.csv``,
-``CONCEPT_SYNONYM.csv``, ``DOMAIN.csv``, ``DRUG_STRENGTH.csv``, ``RELATIONSHIP.csv``,
-``VOCABULARY.csv``).
+.. warning::
 
-**Load it** once, after the first ``up-onprem-trust``, from the checkout on the trust host. It needs
-``psql`` (``sudo apt-get install postgresql-client``); take the four values from your kit file:
+   Without the vocabulary the node starts and passes every health check, but any cohort query that resolves
+   core-vocabulary concepts returns nothing.
 
-.. code-block:: shell
+#. **Download the vocabularies.** You need at least those in the
+   `core vocabulary roster <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`_.
 
-   cd trust/omop-db
-   OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=<OMOP_DB_PORT> OMOP_POSTGRES_DB=<OMOP_POSTGRES_DB> \
-     OMOP_POSTGRES_USER=<OMOP_POSTGRES_USER> OMOP_POSTGRES_PASSWORD='<OMOP_POSTGRES_PASSWORD>' \
-     ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
+   - From `OHDSI Athena <https://athena.ohdsi.org/>`_, with your own account, accepting each vocabulary's licence.
+   - The UK editions (SNOMED CT UK, dm+d, Read v2) from `NHS TRUD <https://isd.hscic.gov.uk/trud/>`_, under the NHS
+     national licences.
 
-The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are
-skipped. With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once
-every table is loaded. If a cohort query ran before the load, restart data-access-api
-(``sudo docker restart trust<N>-data-access-api-1``): it caches query results and would replay the
-empty answer.
+#. **Unzip the export into one directory.** The loader reads these nine files from its top level: ``CONCEPT.csv``,
+   ``CONCEPT_ANCESTOR.csv``, ``CONCEPT_CLASS.csv``, ``CONCEPT_RELATIONSHIP.csv``, ``CONCEPT_SYNONYM.csv``,
+   ``DOMAIN.csv``, ``DRUG_STRENGTH.csv``, ``RELATIONSHIP.csv`` and ``VOCABULARY.csv``.
 
-On a Helm-deployed node, leave ``omopDb.vocabLoad.s3Bucket`` empty and run the same loader over a
-``kubectl port-forward`` to the ``omop-db`` service, as the chart README
-(``trust/deploy/helm/README.md``, "Local clusters (kind)") shows — with your own export in place of
-its ``make fetch-vocab-core`` step.
+#. **Load it** from the checkout on the trust host. You need ``psql`` (``sudo apt-get install postgresql-client``).
+   Take the four ``OMOP_*`` values from your kit file:
 
-**Without it** the node starts and passes every health check, but a cohort query that resolves
-core-vocabulary concepts returns nothing.
+   .. code-block:: shell
+
+      cd trust/omop-db
+      OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=<OMOP_DB_PORT> OMOP_POSTGRES_DB=<OMOP_POSTGRES_DB> \
+        OMOP_POSTGRES_USER=<OMOP_POSTGRES_USER> OMOP_POSTGRES_PASSWORD='<OMOP_POSTGRES_PASSWORD>' \
+        ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
+
+   The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are skipped.
+
+#. **Check it.** With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once every
+   table is loaded.
+
+#. **If a cohort query ran before the load,** restart data-access-api so it drops its cached (empty) results:
+
+   .. code-block:: shell
+
+      sudo docker restart trust<N>-data-access-api-1
+
+.. note::
+
+   On a Helm-deployed node, leave ``omopDb.vocabLoad.s3Bucket`` empty and run the same loader over a
+   ``kubectl port-forward`` to the ``omop-db`` service. The chart README (``trust/deploy/helm/README.md``, "Local
+   clusters (kind)") shows how; use your own export in place of its ``make fetch-vocab-core`` step.
 
 ***********************
 Trust authentication
 ***********************
 
-The Central Hub identifies a trust by its API key, not by IP address or
-hostname — any host with the correct credentials in its ``.env`` can act as
-that trust. The trust's env must contain:
+The hub identifies a trust by its **API key**, not by IP address or hostname: any host with the right credentials in
+its kit file can act as that trust. The kit file must contain:
 
-+----------------------------------+--------------------------------------------------------+
-| Variable                         | Purpose                                                |
-+==================================+========================================================+
-| ``EXPECTED_TRUST_ID`` (optional) | Opt-in self-check. If set and the hub resolves this    |
-|                                  | host's API key to a different trust *id*, trust-api    |
-|                                  | exits instead of acting as the wrong trust.            |
-+----------------------------------+--------------------------------------------------------+
-| ``TRUST_API_KEY``                | Per-trust secret used on every outbound call to the    |
-|                                  | hub.                                                   |
-+----------------------------------+--------------------------------------------------------+
-| ``CENTRAL_HUB_API_URL``          | Public hub URL the trust polls (e.g.                   |
-|                                  | ``https://app.flip.aicentre.co.uk``).                  |
-+----------------------------------+--------------------------------------------------------+
-| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for the AES-256-GCM  |
-|                                  | payload envelope. Must match the hub's key byte for    |
-|                                  | byte; a mismatch fails every task as ``failed          |
-|                                  | authentication``. Upgrade in step with the hub across  |
-|                                  | FLIP#1179 (no CBC compatibility).                      |
-+----------------------------------+--------------------------------------------------------+
-| ``TRUST_INTERNAL_SERVICE_KEY``   | Per-trust shared secret used inside the trust for      |
-|                                  | calls between trust-api / imaging-api / fl-client and  |
-|                                  | imaging-api / data-access-api. Never leaves the trust. |
-+----------------------------------+--------------------------------------------------------+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
-**Hub-side prerequisites** (must already be in place before the trust can
-connect):
+   * - Variable
+     - Purpose
+   * - ``TRUST_API_KEY``
+     - The trust's secret, sent on every call to the hub.
+   * - ``CENTRAL_HUB_API_URL``
+     - The public hub URL the trust polls, e.g. ``https://app.flip.aicentre.co.uk``.
+   * - ``AES_KEY_BASE64``
+     - The encryption key shared with the hub for task payloads (AES-256-GCM). It must match the hub's key exactly;
+       a mismatch fails every task with ``failed authentication``. Trusts must be upgraded together with their hub
+       across the move to AES-256-GCM, because payloads in the older format are not accepted.
+   * - ``TRUST_INTERNAL_SERVICE_KEY``
+     - A per-trust secret the trust's own services use to authenticate one another. It never leaves the trust.
+   * - ``EXPECTED_TRUST_ID`` (optional)
+     - A self-check. If set, and the hub resolves this host's API key to a different trust, trust-api stops instead
+       of acting as the wrong trust.
 
-1. The trust must be registered on the hub — a row in the ``trust`` table with
-   its ``api_key_hash`` — via ``make -C deploy/providers/AWS register-trusts
-   KIT=<CODE>`` or the Add-Trust admin flow (``POST /admin/trusts``).
-2. That same target mints the trust's API key and internal service key into the
-   kit file (``trust/.env.<CODE>.production`` for the on-prem trust) as part of
-   registration.
-3. No hub redeploy is needed — the trust registry is the live database, read
-   on every request.
-
-In the step-by-step flow above, the trust must be registered (step 2) before
-the operator brings the stack up.
+Before the trust can connect, it must be **registered on the hub**, either by step 2 above or through the Add-Trust
+admin flow. Registration also writes the API key and internal service key into the kit file. No hub redeploy is
+needed: the hub reads its trust list live on every request.
 
 ***********************
 Network requirements
 ***********************
 
-**No inbound port forwarding from the internet is needed.** (Retrieval from a trust PACS needs
-one rule inside the trust's own network — see :doc:`../components/component-pacs`.) Trusts poll the hub outbound for
-tasks, and FL clients connect outbound to the FL server via the NLB. All
-communication is trust-initiated.
+**No inbound port forwarding from the internet is needed.** Trusts poll the hub for tasks, and FL clients connect
+out to the FL server. (Retrieval from a trust PACS needs one rule inside the Trust's own network; see
+:doc:`../components/component-pacs`.)
 
-The trust host must be able to make outbound connections to two **separate** Central Hub
-endpoints — different hostnames behind different load balancers, so both must be allowlisted:
+The trust host must reach two **separate** hub endpoints. They have different hostnames behind different load
+balancers, so allow both:
 
-- The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
-- The FL Server endpoint over gRPC or HTTP (the kit's ``FL_EDGE_PORT``, else
-  ``FL_SERVER_PORT``; 8002 on production, 8003 on LZA staging) — the NLB
-  (e.g. ``fl.app.flip.aicentre.co.uk``).
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
 
-If the trust's public IP changes (common with residential broadband), update
-the NLB security group. Add the new IP to the ``LOCAL_TRUST_PUBLIC_IPS`` HCL
-list in the hub env file (``.env.stag`` / ``.env.production``), then apply
-the targeted security-group change:
+   * - Endpoint
+     - Example host
+     - Port
+   * - Central Hub API (HTTPS)
+     - ``app.flip.aicentre.co.uk``
+     - 443
+   * - FL server (gRPC or HTTP)
+     - ``fl.app.flip.aicentre.co.uk``
+     - The kit's ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``: 8002 on production, 8003 on LZA staging
+
+**If the trust's public IP changes** (common on residential broadband), the FLIP admin adds the new IP to
+``LOCAL_TRUST_PUBLIC_IPS`` in the hub env file (``.env.stag`` or ``.env.production``) and re-applies, as in step 7:
 
 .. code-block:: shell
 
@@ -444,18 +545,18 @@ the targeted security-group change:
 Troubleshooting
 ***************
 
-+----------------------------------+------------------------------------------------------------+
-| Symptom                          | Check                                                      |
-+==================================+============================================================+
-| Trust not polling hub            | Trust stack running? ``sudo docker ps`` on the trust host. |
-|                                  | Check ``trust-api`` logs for polling errors.               |
-+----------------------------------+------------------------------------------------------------+
-| ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |
-|                                  | Firewall blocking outbound 8002 (8003 on LZA staging)?     |
-+----------------------------------+------------------------------------------------------------+
-| Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
-|                                  | (443) and the FL gRPC port (``FL_EDGE_PORT``, def. 8002).  |
-+----------------------------------+------------------------------------------------------------+
-| Ansible ``Permission denied``    | SSH key correct? User has ``sudo``? ``ANSIBLE_BECOME_PASS``|
-|                                  | set if running in local-host mode?                         |
-+----------------------------------+------------------------------------------------------------+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Symptom
+     - Check
+   * - Trust not polling the hub
+     - Is the stack running (``sudo docker ps`` on the trust host)? Look for polling errors in the trust-api logs.
+   * - ``Connection timed out`` (FL)
+     - Has the trust's public IP changed? Update the NLB allow-list (see `Network requirements`_).
+   * - Firewall blocking outbound traffic
+     - Make sure the host and router firewalls allow outbound HTTPS (443) and the FL port (``FL_EDGE_PORT``, default
+       8002; 8003 on LZA staging).
+   * - Ansible ``Permission denied``
+     - Is the SSH key correct? Does the user have ``sudo``? In local-host mode, is ``ANSIBLE_BECOME_PASS`` set?
