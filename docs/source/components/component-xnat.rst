@@ -194,10 +194,10 @@ FLIP replaces the default script with a site-wide anonymization script (``anon_s
 - **Patient identifiers**: birth date, address, telephone numbers, other patient IDs
 - **Institutional identifiers**: institution name, address, department
 - **Physician/operator identifiers**: referring, performing, and requesting physicians
-- **Other identifying tags**: accession number, medical record locator, ethnic group, occupation
+- **Other identifying tags**: accession number (the tag; its value is kept as Study Description, see below), medical record locator, ethnic group, occupation
 - **Vendor private tags**: all of them, at any depth
 - **Nested copies**: every tag above is removed wherever it occurs, including inside sequences; nested copies of the patient's name and ID are removed too
-- **UID pseudonymization**: study, series and SOP instance UIDs are hashed for repeatable pseudonymization
+- **UID pseudonymization**: the top-level study, series and SOP instance UIDs are hashed for repeatable pseudonymization
 - **De-identification recording**: sets ``Patient Identity Removed`` and a ``De-identification Method`` that states what is kept
 
 The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
@@ -205,10 +205,11 @@ The script is configured automatically during XNAT initialization via ``configur
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist, not a DICOM PS3.15 confidentiality profile. It removes the tags it lists, wherever they occur, and every vendor private tag; any other tag survives. Four boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is a denylist, not a DICOM PS3.15 confidentiality profile. It removes the tags it lists, wherever they occur, and every vendor private tag; any other tag survives. Five boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
 - **Dates and patient characteristics are kept on purpose.** Study, series and acquisition dates and times, and the patient's age, sex, size and weight, pass through unchanged.
 - **The accession number survives as Study Description.** The script writes the XNAT session label there, and imaging-api names each session after its accession number.
+- **Other UIDs keep their PACS values.** Only the top-level study, series and SOP instance UIDs are hashed. Copies inside sequences and references such as Referenced SOP Instance UID pass through unchanged, and can link a session back to its original study.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
 - **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 

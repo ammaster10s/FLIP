@@ -11,7 +11,7 @@ version "6.3"
 // depth, +/(gggg,eeee) only inside a sequence.
 
 // Store XNAT labels into DICOM headers
-(0010,4000) := project
+(0010,4000) := project    // removed again below: Patient Comments is not stored
 (0010,0010) := subject
 (0010,0020) := subject
 (0008,1030) := session
@@ -47,12 +47,12 @@ removeAllPrivateTags
 - */(0008,1070)    // Operators Name
 
 // Remove other potentially identifying tags
-- */(0008,0050)    // Accession Number (we use relabelMap for session)
+- */(0008,0050)    // Accession Number (its value is kept as Study Description: the session label above)
 - */(0010,1090)    // Medical Record Locator
 - */(0010,2160)    // Ethnic Group
 - */(0010,2180)    // Occupation
 - */(0010,21B0)    // Additional Patient History
-- */(0010,4000)    // Patient Comments (after project label stored above)
+- */(0010,4000)    // Patient Comments (drops the project label written above too)
 - */(0032,1032)    // Requesting Physician
 - */(0040,0006)    // Scheduled Performing Physician Name
 - */(0040,2016)    // Placer Order Number

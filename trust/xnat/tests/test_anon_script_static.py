@@ -154,7 +154,7 @@ def test_private_tags_are_removed(anon_rules: list[Rule]) -> None:
 
 
 def test_no_orphan_rules(anon_rules: list[Rule]) -> None:
-    """Every rule we parsed should be one of the four supported kinds.
+    """Every rule we parsed should be a supported kind.
 
     parse_script raises on unsupported syntax, so this is mostly a smoke test
     that the file actually contains rules and we did not silently parse zero.

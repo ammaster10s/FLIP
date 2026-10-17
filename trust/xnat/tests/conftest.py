@@ -37,8 +37,8 @@ def anon_rules(anon_script_path: Path) -> list[Rule]:
 @pytest.fixture
 def xnat_labels() -> XnatLabels:
     # In production the XNAT session label is set by imaging-api's
-    # `relabelMap.Session = accession_number` (see
-    # trust/imaging-api/imaging_api/routers/schemas.py:201-206), so the
+    # `relabelMap.Session = accession_number` (`ImportStudy.set_relabel_map`
+    # in trust/imaging-api/imaging_api/routers/schemas.py), so the
     # session label IS the accession number. Encode that here so tests
     # exercise the same invariant the OMOP <-> XNAT linkage relies on.
     return XnatLabels(project="FLIP_TEST_PROJECT", subject="FLIP_SUBJ_001", session="ACC-FAK-77115197")
@@ -70,7 +70,7 @@ def _phi_study() -> Dataset:
     ds.OtherPatientNames = "DOE^J^PHI"
 
     # Other Patient IDs Sequence (SQ): nested item carrying PHI. The whole
-    # sequence must be stripped by the `- (0010,1002)` rule. We embed a
+    # sequence must be stripped by the `- */(0010,1002)` rule. We embed a
     # recognisable PHI string inside the sequence item so iterall()-based
     # leak-scans flag it if the sequence ever survives anonymization.
     other_id_item = Dataset()

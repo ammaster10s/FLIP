@@ -154,13 +154,14 @@ def test_distinct_studies_get_distinct_uids(
 
 
 def test_accession_number_tag_is_removed(anonymized: Dataset) -> None:
-    """OMOP <-> XNAT linkage is via XNAT's session label, NOT the DICOM tag.
+    """The Accession Number tag is removed; its value is not.
 
     imaging-api sets ``relabelMap.Session = accession_number`` at import time
-    (see trust/imaging-api/imaging_api/routers/schemas.py:201-206), and
-    downstream lookups use ``experiment_id_or_label=accession_id``. The DICOM
-    Accession Number tag must therefore be stripped from the stored object so
-    we don't leak it as PHI; the linkage continues to work via XNAT metadata.
+    (``ImportStudy.set_relabel_map``), and downstream lookups use
+    ``experiment_id_or_label=accession_id``. The tag goes, but the value still
+    reaches the stored object as Study Description through
+    ``(0008,1030) := session`` (pinned by the next test; see the limits in
+    component-xnat.rst).
     """
     assert 0x00080050 not in anonymized, (
         "Accession Number (0008,0050) must be removed from the stored DICOM. "
