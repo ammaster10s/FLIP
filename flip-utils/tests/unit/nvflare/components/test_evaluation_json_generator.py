@@ -440,7 +440,12 @@ class TestEvaluationJsonGenerator:
             model_owner="SRV_model",
         )
 
+        self.generator.logger = Mock()
+
         assert self.generator.hub_metrics() == {"Trust_1": {"N": 0.5}}
+        self.generator.logger.warning.assert_called_once_with(
+            "Not sent to the hub for Trust_1 (not a finite number): ['AUROC', 'BIG', 'FLAG', 'NOTE', 'PER_SAMPLE']"
+        )
 
     def test_hub_metrics_leave_out_failed_tasks_and_clear_on_start_run(self):
         self._receive("Trust_1", make_reply(ReturnCode.TASK_ABORTED), model_owner="SRV_model")

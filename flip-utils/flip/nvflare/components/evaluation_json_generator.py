@@ -134,11 +134,14 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         hub: dict[str, dict[str, float]] = {}
         for client, replies in self._replies.items():
             labels: dict[str, float] = {}
+            dropped: set[str] = set()
             for owner, reply in replies.items():
                 name = owner.removeprefix("SRV_") if owner else None
                 self_keyed = isinstance(reply, Mapping) and isinstance(reply.get(name), Mapping)
                 prefix = (name,) if name and multi_model and not self_keyed else ()
-                _flatten_metrics(reply, prefix, labels)
+                _flatten_metrics(reply, prefix, labels, dropped)
+            if dropped:
+                self.logger.warning(f"Not sent to the hub for {client} (not a finite number): {sorted(dropped)}")
             if labels:
                 hub[client] = labels
         return hub
@@ -205,13 +208,20 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._write_json(fl_ctx, run_dir, self._failures_file_name, self._eval_failures, "evaluation failures path")
 
 
-def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float]) -> None:
-    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path."""
+def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float], dropped: set[str]) -> None:
+    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path.
+
+    The label of any other leaf goes into ``dropped``.
+    """
     if isinstance(value, Mapping):
         for key, child in value.items():
-            _flatten_metrics(child, (*path, str(key)), out)
-    elif path and isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
+            _flatten_metrics(child, (*path, str(key)), out, dropped)
+    elif not path:
+        return
+    elif isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
         out["/".join(path).upper()] = float(value)
+    else:
+        dropped.add("/".join(path).upper())
 
 
 def _merge(metrics: Any, supplementary: Any) -> Any:
