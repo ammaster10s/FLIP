@@ -186,7 +186,7 @@ report: ## Print the latest self-test report (FL_BACKEND=nvflare|flower)
 	$(require_subscription)
 	@$(call run_on_node,flip-node report $(FL_BACKEND))
 
-stop: ## Deallocate the VM (compute stops billing; disks and IP stay)
+stop: ## Deallocate the VM (compute stops billing; disks and any NAT gateway stay)
 	$(require_subscription)
 	az vm deallocate --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 

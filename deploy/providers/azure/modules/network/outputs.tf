@@ -21,3 +21,8 @@ output "nat_public_ip_address" {
   description = "The NAT gateway's outbound address on a created network; empty on a site subnet, whose egress the site owns."
   value       = local.create ? azurerm_public_ip.nat[0].ip_address : ""
 }
+
+output "nat_gateway_ids" {
+  description = "The NAT gateway on a created network (one id), none on a site subnet."
+  value       = azurerm_nat_gateway.this[*].id
+}
