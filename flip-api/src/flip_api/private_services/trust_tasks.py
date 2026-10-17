@@ -56,8 +56,7 @@ def _trust_identity(trust: Trust) -> dict[str, str]:
 
 # ---------------------------------------------------------------------------
 # Core handlers (key-only protocol). Each route function below is a thin
-# wrapper that calls one of these so the deprecated `{trust_name}` shims share
-# exactly the same code path.
+# wrapper that calls one of these.
 # ---------------------------------------------------------------------------
 
 
@@ -257,7 +256,7 @@ def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput 
 
 
 # ---------------------------------------------------------------------------
-# Canonical routes — no `{trust_name}` segment. Identity is the API key.
+# Routes. Identity is the API key.
 # ---------------------------------------------------------------------------
 
 

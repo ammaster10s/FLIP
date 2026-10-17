@@ -1330,7 +1330,6 @@ def test_abort_model_training_success(
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
 
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
@@ -1364,7 +1363,6 @@ def test_abort_model_training_idempotent_when_no_running_job(
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
 
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
     fl_service.abort_model_training(request, model_id, fake_session)
@@ -1399,7 +1397,6 @@ def test_abort_model_training_aborts_a_job_still_waiting_to_start(
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
 
     fl_service.abort_model_training(request, model_id, fake_session)
 
@@ -2165,7 +2162,6 @@ def test_abort_model_training_raises_when_server_not_running(
     mock_fetch_server_status.return_value = None  # FL server is down
 
     request = MagicMock()
-    request.path_params = {"target": "server", "clients": None}
 
     with pytest.raises(ValueError, match="FL Server not running"):
         fl_service.abort_model_training(request, model_id, fake_session)
@@ -2175,36 +2171,6 @@ def test_abort_model_training_raises_when_server_not_running(
     mock_abort.assert_not_called()
     # The abort was never delivered, so the net must NOT be released — the job may still be live.
     mock_release.assert_not_called()
-
-
-@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
-@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
-@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
-@patch("flip_api.fl_services.services.fl_service.abort_job")
-@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
-@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
-def test_abort_model_training_raises_on_invalid_target(
-    mock_remove,
-    mock_get_net,
-    mock_abort,
-    mock_fetch_server_status,
-    mock_get_fl_backend_job_id_by_model_id,
-    mock_extract_current_job_data,
-    model_id,
-    fake_session,
-):
-    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
-    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
-    mock_fetch_server_status.return_value = {"status": "started"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
-
-    request = MagicMock()
-    request.path_params = {"target": "bogus-target", "clients": None}
-
-    with pytest.raises(ValueError, match="Invalid target: bogus-target"):
-        fl_service.abort_model_training(request, model_id, fake_session)
-
-    mock_abort.assert_not_called()
 
 
 # --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
@@ -2875,18 +2841,7 @@ def test_start_training_says_when_flower_records_but_does_not_enforce_the_reques
     ) in logged
 
 
-def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_job_id, fake_session):
-    """An fl-api that predates per-job requests drops the field silently; say so instead of implying it applied."""
-    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
-
-    _, logged = _start(model_id, fl_job_id, fake_session, job, {"message": "ok"})
-
-    assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
-
-
-def test_start_training_logs_nothing_about_gpus_for_an_older_fl_api_when_none_was_asked(
-    model_id, fl_job_id, fake_session
-):
+def test_start_training_logs_nothing_about_gpus_when_none_was_asked(model_id, fl_job_id, fake_session):
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
 
     assert logged == []

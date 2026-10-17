@@ -34,7 +34,7 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
     JobRequiredFiles,
 )
-from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
+from flip_api.domain.schemas.status import FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
@@ -742,18 +742,14 @@ _RESOURCE_SOURCES = {
 }
 
 
-def _log_applied_gpu_request(
-    model_id: UUID, override: IJobResources | None, upload_reply: Any, session: Session
-) -> None:
+def _log_applied_gpu_request(model_id: UUID, upload_reply: Any, session: Session) -> None:
     """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
 
     The NVFLARE fl-api reports the request it wrote into the job and where it came from; the Flower
-    fl-api reports it recorded but did not enforce it. An fl-api older than per-job requests reports
-    nothing, which only matters when an override was sent and silently dropped.
+    fl-api reports it recorded but did not enforce it, and reports nothing when no override was sent.
 
     Args:
         model_id (UUID): The model being trained.
-        override (IJobResources | None): what was sent as the run's override.
         upload_reply (Any): the FL API's reply to upload_app.
         session (Session): SQLModel session.
     """
@@ -761,14 +757,6 @@ def _log_applied_gpu_request(
 
     reported = upload_reply.get("resources") if isinstance(upload_reply, dict) else None
     if reported is None:
-        if override is not None:
-            add_log(
-                model_id,
-                f"The FL API did not report applying the GPU request set for this run ({override.describe()}); "
-                "it may predate per-job GPU requests.",
-                session,
-                success=False,
-            )
         return
     try:
         described = IJobResources.model_validate(reported).describe()
@@ -830,7 +818,7 @@ def start_training(
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
     upload_reply = upload_app(model_id, training_details, endpoint)
-    _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
+    _log_applied_gpu_request(model_id, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
@@ -1444,7 +1432,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         session (Session): SQLModel session object
 
     Raises:
-        ValueError: If the FL server is not running, or if ``target`` is invalid.
+        ValueError: If the FL server is not running.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
     """
@@ -1499,21 +1487,11 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         )
         return
 
-    # Extracting target and clients from the request path parameters
-    path_params = request.path_params
-    target = path_params.get("target")
-    clients = path_params.get("clients")
-
-    # Checking if the target provided is valid
-    if target and target not in FLTargets:
-        logger.error(f"Invalid target: {target}")
-        raise ValueError(f"Invalid target: {target}")
-
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
     response = abort_job(net_endpoint, fl_backend_job_id)
 
-    logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+    logger.info(f"Abort job response: {response}")
 
     # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
     # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.

@@ -29,7 +29,6 @@ def model_id():
 def fake_request():
     request = MagicMock(spec=Request)
     request.scope = {"request_id": "req-123"}
-    request.path_params = {"target": "SERVER", "clients": None}
     return request
 
 

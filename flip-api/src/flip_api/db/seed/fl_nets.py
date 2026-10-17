@@ -23,13 +23,8 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     """Upsert FL nets in the database from ``NET_ENDPOINTS`` and ``FL_BACKEND``.
 
     Rows are matched by ``name`` and their ``endpoint`` reconciled to the value
-    in ``NET_ENDPOINTS`` on every startup. The previous behaviour was
-    insert-only and skipped on name conflict, which silently stranded stale
-    endpoints after the EC2-compose → ECS Cloud Map migration (rows seeded
-    with the old `http://flip-fl-api-net-1:8000` docker-compose hostname
-    survived alongside the new `http://fl-api-net-1.flip.local:8000` service
-    discovery URL in the env, breaking `/api/fl/status` with `Name or service
-    not known`). NET_ENDPOINTS is the canonical source — operator changes to
+    in ``NET_ENDPOINTS`` on every startup, so a stale endpoint never survives a
+    change to the env. NET_ENDPOINTS is the canonical source — operator changes to
     the row's endpoint via SQL would also be overwritten on the next start,
     which is the intended behaviour.
 
