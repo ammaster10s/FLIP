@@ -16,6 +16,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import { FileUploadStatus } from "@/interfaces/model/types";
 import Training from "@/partials/models/Training.vue";
 import { ModelStatus } from "@/services/model-service";
 
@@ -55,7 +56,7 @@ interface MountOpts {
     status?: ModelStatus;
     view?: "prepare" | "run";
     requiredFiles?: string[];
-    uploadedFileNames?: string[];
+    uploadedFiles?: { name: string; status: FileUploadStatus }[];
     flBackendLabel?: string;
     jobTypesError?: boolean;
     jobTypesLoading?: boolean;
@@ -73,7 +74,7 @@ function mountTraining(options: MountOpts = {}) {
         permissions = ["CanCreateProjects"],
         status = "PENDING",
         requiredFiles = ["trainer.py", "config.json"],
-        uploadedFileNames = [],
+        uploadedFiles = [],
         flBackendLabel,
         jobTypesError = false,
         jobTypesLoading = false,
@@ -116,7 +117,7 @@ function mountTraining(options: MountOpts = {}) {
                 TrainingActionsMenu: actionsMenuStub,
                 TrainingOptions: {
                     name: "TrainingOptions",
-                    props: ["disabled", "requiredFiles", "missingFiles"],
+                    props: ["disabled", "requiredFiles"],
                     template: "<div data-test=\"training-options\" :data-disabled=\"disabled\" />"
                 },
                 TrainingMetrics: { template: "<div />" },
@@ -133,7 +134,7 @@ function mountTraining(options: MountOpts = {}) {
             canTrain: true,
             status,
             requiredFiles,
-            uploadedFileNames,
+            uploadedFiles,
             flBackendLabel,
             jobTypesError,
             jobTypesLoading,
@@ -159,16 +160,27 @@ describe("Training viewer-aware rendering", () => {
 describe("Training required files", () => {
     // The required-files banners were folded into the "Required files" readiness row, which
     // TrainingOptions renders from what Training hands it.
-    it("passes the required files and the missing subset to TrainingOptions, with no banner", () => {
+    it("passes each required file's upload status to TrainingOptions, with no banner", () => {
         const wrapper = mountTraining({
             requiredFiles: ["trainer.py", "config.json"],
-            uploadedFileNames: ["trainer.py"]
+            uploadedFiles: [{
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            }]
         });
 
         const options = wrapper.findComponent({ name: "TrainingOptions" });
 
-        expect(options.props("requiredFiles")).toEqual(["trainer.py", "config.json"]);
-        expect(options.props("missingFiles")).toEqual(["config.json"]);
+        expect(options.props("requiredFiles")).toEqual([
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            },
+            {
+                name: "config.json",
+                status: undefined
+            }
+        ]);
         expect(wrapper.find("[data-test=alert-stub]").exists()).toBe(false);
     });
 
@@ -522,7 +534,7 @@ describe("Training reads the real vee-validate form", () => {
                 canTrain: true,
                 status: "PENDING" as const,
                 requiredFiles: [],
-                uploadedFileNames: [],
+                uploadedFiles: [],
                 view: "prepare" as const
             }
         });
@@ -613,7 +625,7 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
                 canTrain: true,
                 status: "PENDING" as const,
                 requiredFiles: [],
-                uploadedFileNames: [],
+                uploadedFiles: [],
                 view: "prepare" as const
             }
         });
@@ -725,7 +737,7 @@ describe("Training shows a dispatched run's GPU override in the real form", () =
                 canTrain: true,
                 status: "RUNNING" as const,
                 requiredFiles: [],
-                uploadedFileNames: [],
+                uploadedFiles: [],
                 view: "prepare" as const,
                 runTrusts: ["trust-a"],
                 runResources: { num_gpus: 1 }

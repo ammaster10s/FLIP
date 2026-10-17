@@ -15,6 +15,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import { FileUploadStatus, IRequiredFile } from "@/interfaces/model/types";
 import TrainingOptions from "@/partials/models/TrainingOptions.vue";
 import type { IProjectTrust } from "@/services/project-service";
 
@@ -31,7 +32,7 @@ function mountTrainingOptions(
     disabled = false,
     hasImaging: boolean | undefined = undefined,
     flBackendLabel: string | undefined = undefined,
-    files: { requiredFiles?: string[]; missingFiles?: string[] } = {}
+    files: { requiredFiles?: IRequiredFile[] } = {}
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -262,46 +263,102 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
 });
 
 describe("TrainingOptions required files row", () => {
-    const mountWithFiles = (requiredFiles: string[], missingFiles: string[]) =>
-        mountTrainingOptions([], false, undefined, undefined, {
-            requiredFiles,
-            missingFiles
-        });
+    const { COMPLETED, SCANNING, UPLOADING, ERROR, INFECTED } = FileUploadStatus;
+    const mountWithFiles = (requiredFiles: IRequiredFile[]) =>
+        mountTrainingOptions([], false, undefined, undefined, { requiredFiles });
+    const summary = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-summary]");
+    const pill = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-status]");
 
-    it("lists the missing files and counts the uploaded ones", () => {
-        const wrapper = mountWithFiles(["client_app.py", "config.json", "models.py"], ["client_app.py", "models.py"]);
+    it("lists the missing files and counts the ready ones", () => {
+        const wrapper = mountWithFiles([
+            { name: "client_app.py" },
+            {
+                name: "config.json",
+                status: COMPLETED
+            },
+            { name: "models.py" }
+        ]);
 
-        expect(wrapper.find("[data-test=required-files-summary]").text())
-            .toBe("Missing client_app.py, models.py");
-        expect(wrapper.find("[data-test=required-files-status]").text()).toBe("1 of 3");
+        expect(summary(wrapper).text()).toBe("Missing client_app.py, models.py");
+        expect(pill(wrapper).text()).toBe("1 of 3");
+        expect(pill(wrapper).classes()).toContain("bg-amber-100");
     });
 
-    it("reads complete once every required file is uploaded", () => {
-        const wrapper = mountWithFiles(["config.json"], []);
+    it("reads Checking while the only thing left is uploads and checks finishing", () => {
+        const wrapper = mountWithFiles([
+            {
+                name: "client_app.py",
+                status: UPLOADING
+            },
+            {
+                name: "config.json",
+                status: SCANNING
+            },
+            {
+                name: "models.py",
+                status: COMPLETED
+            }
+        ]);
 
-        expect(wrapper.find("[data-test=required-files-summary]").text()).toBe("All required files uploaded");
-        expect(wrapper.find("[data-test=required-files-status]").text()).toBe("Complete");
+        expect(summary(wrapper).text()).toBe("Uploading client_app.py · Checking config.json");
+        expect(pill(wrapper).text()).toBe("Checking");
+        expect(pill(wrapper).classes()).toContain("bg-amber-100");
+    });
+
+    it("names failed and unsafe files first and keeps counting", () => {
+        const wrapper = mountWithFiles([
+            {
+                name: "client_app.py",
+                status: SCANNING
+            },
+            {
+                name: "config.json",
+                status: ERROR
+            },
+            {
+                name: "model.pt",
+                status: INFECTED
+            },
+            {
+                name: "models.py",
+                status: COMPLETED
+            }
+        ]);
+
+        expect(summary(wrapper).text())
+            .toBe("Unsafe content model.pt · Upload failed config.json · Checking client_app.py");
+        expect(pill(wrapper).text()).toBe("1 of 4");
+    });
+
+    it("reads complete, in green, once every required file has passed its check", () => {
+        const wrapper = mountWithFiles([{
+            name: "config.json",
+            status: COMPLETED
+        }]);
+
+        expect(summary(wrapper).text()).toBe("All required files uploaded");
+        expect(pill(wrapper).text()).toBe("Complete");
+        expect(pill(wrapper).classes()).toContain("bg-green-100");
     });
 
     it("is the first row of the checklist", () => {
-        const wrapper = mountWithFiles(["config.json"], ["config.json"]);
+        const wrapper = mountWithFiles([{ name: "config.json" }]);
         const row = wrapper.find("[data-test=required-files-row]");
 
         expect(row.element.parentElement?.firstElementChild).toBe(row.element);
     });
 
     it("is hidden when the required files are unknown", () => {
-        const wrapper = mountWithFiles([], []);
+        const wrapper = mountWithFiles([]);
 
         expect(wrapper.find("[data-test=required-files-row]").exists()).toBe(false);
     });
 
     it("escapes file names so user-controlled values cannot inject HTML", () => {
         const payload = "<img src=x onerror=alert(1)>";
-        const wrapper = mountWithFiles([payload], [payload]);
-        const summary = wrapper.find("[data-test=required-files-summary]");
+        const wrapper = mountWithFiles([{ name: payload }]);
 
-        expect(summary.find("img").exists()).toBe(false);
-        expect(summary.html()).toContain("&lt;img");
+        expect(summary(wrapper).find("img").exists()).toBe(false);
+        expect(summary(wrapper).html()).toContain("&lt;img");
     });
 });

@@ -12,8 +12,8 @@
 -->
 
 <template>
-    <!-- The card fills the height its column is given; the file list and the
-         uploader below it are what scroll, so the heading stays put. -->
+    <!-- The card fills the height its column is given; only the file list and the
+         uploader below it scroll, so the heading and the required-files summary stay put. -->
     <section class="flex flex-col flex-1 min-h-0">
         <AiCard class="flex flex-col flex-1 min-h-0">
             <div class="flex flex-col flex-1 min-h-0">
@@ -59,6 +59,7 @@
                                 job_type: {{ jobType }}
                             </span>
                             <span
+                                v-if="canUpload"
                                 v-tippy="'Set job_type in your config.json to change'"
                                 tabindex="0"
                                 class="underline cursor-help decoration-dotted underline-offset-[3px]"
@@ -68,8 +69,8 @@
                         </div>
                     </div>
 
-                    <!-- The list and the uploader scroll together, so the drop zone always
-                         follows the last file instead of squeezing the list. -->
+                    <!-- Scrolling with the list keeps the drop zone after the last file
+                         instead of squeezing the list. -->
                     <div class="flex-1 min-h-0 overflow-y-auto">
                         <template v-if="loading">
                             <AiSkeleton class="w-full h-10" />
@@ -150,6 +151,7 @@
                                 <div class="flex flex-col min-w-0 grow">
                                     <div class="flex flex-row items-center gap-2 min-w-0">
                                         <p
+                                            data-test="file-name"
                                             class="font-mono text-[13px] truncate"
                                             :class="row.file
                                                 ? 'font-semibold text-primary-500 dark:text-primary-200'
@@ -309,17 +311,28 @@ const allFiles = computed(() => internalFiles.value.concat(uploadingFiles.value)
 
 const showRequired = computed(() => !props.jobTypesError && props.requiredFiles.length > 0);
 
+const IN_FLIGHT_STATUSES = [FileUploadStatus.UPLOADING, FileUploadStatus.SCANNING];
+
+// A required slot shows an upload in progress, else the server's copy, else a failed attempt. Any
+// other entry for that name (say a failed re-upload over a good copy) gets its own row, so it
+// never hides the copy training will use.
+const slotFile = (name: string): FileInfo | undefined =>
+    uploadingFiles.value.find(f => f.name === name && IN_FLIGHT_STATUSES.includes(f.status))
+    ?? internalFiles.value.find(f => f.name === name)
+    ?? uploadingFiles.value.find(f => f.name === name);
+
 const fileRows = computed((): IFileRow[] => {
-    const byName = new Map(allFiles.value.map(f => [f.name, f]));
+    const required = props.requiredFiles.map(name => ({
+        name,
+        required: true,
+        file: slotFile(name)
+    }));
+    const shown = new Set(required.map(r => r.file));
 
     return [
-        ...props.requiredFiles.map(name => ({
-            name,
-            required: true,
-            file: byName.get(name)
-        })),
+        ...required,
         ...allFiles.value
-            .filter(f => !props.requiredFiles.includes(f.name))
+            .filter(f => !shown.has(f))
             .map(f => ({
                 name: f.name,
                 required: false,
@@ -328,13 +341,9 @@ const fileRows = computed((): IFileRow[] => {
     ];
 });
 
-// Counts files the server knows about, the same test the page uses to unlock training, so an
-// in-flight upload does not tick the counter early.
-const requiredUploadedCount = computed(() => {
-    const names = internalFiles.value.map(f => f.name);
-
-    return props.requiredFiles.filter(n => names.includes(n)).length;
-});
+// Only a file that passed its check counts, the same bar training holds it to.
+const requiredUploadedCount = computed(() => props.requiredFiles.filter(name =>
+    internalFiles.value.some(f => f.name === name && f.status === FileUploadStatus.COMPLETED)).length);
 
 const requiredComplete = computed(() => requiredUploadedCount.value === props.requiredFiles.length);
 

@@ -29,22 +29,20 @@
                     <div
                         data-test="required-files-summary"
                         class="mr-2 text-sm"
-                        :class="missingFiles.length ? 'text-amber-800 dark:text-amber-300' : 'text-gray-400 dark:text-gray-300'"
+                        :class="requiredReady ? 'text-gray-400 dark:text-gray-300' : 'text-amber-800 dark:text-amber-300'"
                     >
-                        {{ missingFiles.length ? `Missing ${missingFiles.join(", ")}` : "All required files uploaded" }}
+                        {{ requiredSummary }}
                     </div>
                 </div>
                 <div class="mt-1 text-right sm:mt-0 sm:col-span-1">
                     <span
                         data-test="required-files-status"
                         class="inline-flex px-2.5 py-1 text-[13px] font-semibold rounded-full"
-                        :class="missingFiles.length
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                            : 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'"
+                        :class="requiredReady
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'"
                     >
-                        {{ missingFiles.length
-                            ? `${requiredFiles.length - missingFiles.length} of ${requiredFiles.length}`
-                            : "Complete" }}
+                        {{ requiredPill }}
                     </span>
                 </div>
             </div>
@@ -157,6 +155,7 @@ import { computed, ComputedRef } from "vue";
 
 import AiInput from "@/components/AiInput/AiInput.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
+import { FileUploadStatus, IRequiredFile } from "@/interfaces/model/types";
 import { projectHasImaging } from "@/partials/projects/projectType";
 import { IJobResources, MAX_GPUS_PER_SITE } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
@@ -168,10 +167,9 @@ interface ITrainingOptionsProps {
     disabled?: boolean
     // "NVFlare" or "Flower", when known: Flower records a GPU request without enforcing it.
     flBackendLabel?: string
-    // The files this model's backend + job type require, and the subset not yet uploaded. Empty
-    // while the job types are unknown, which hides the row.
-    requiredFiles?: string[]
-    missingFiles?: string[]
+    // The files this model's backend + job type require, with their upload status. Empty while the
+    // job types are unknown, which hides the row.
+    requiredFiles?: IRequiredFile[]
     // A dispatched run's GPU override. AiInput seeds its own field and would overwrite the Form's
     // initialValues with "", so the inputs take the run's values directly.
     runResources?: IJobResources | null
@@ -192,8 +190,38 @@ const props = withDefaults(defineProps<ITrainingOptionsProps>(), {
     disabled: false,
     flBackendLabel: undefined,
     requiredFiles: () => [],
-    missingFiles: () => [],
     runResources: null
+});
+
+// The same states the file list shows, in the order they need attention. A missing file has no status.
+const REQUIRED_FILE_GROUPS: [string, FileUploadStatus | undefined][] = [
+    ["Missing", undefined],
+    ["Unsafe content", FileUploadStatus.INFECTED],
+    ["Upload failed", FileUploadStatus.ERROR],
+    ["Uploading", FileUploadStatus.UPLOADING],
+    ["Checking", FileUploadStatus.SCANNING]
+];
+const IN_FLIGHT_STATUSES = [FileUploadStatus.UPLOADING, FileUploadStatus.SCANNING];
+
+const readyCount = computed(() =>
+    props.requiredFiles.filter(f => f.status === FileUploadStatus.COMPLETED).length);
+const requiredReady = computed(() => readyCount.value === props.requiredFiles.length);
+
+const requiredSummary = computed(() => (requiredReady.value
+    ? "All required files uploaded"
+    : REQUIRED_FILE_GROUPS.flatMap(([label, status]) => {
+        const names = props.requiredFiles.filter(f => f.status === status).map(f => f.name);
+
+        return names.length ? [`${label} ${names.join(", ")}`] : [];
+    }).join(" · ")));
+
+// "Checking" when nothing is left to do but wait for uploads and checks to finish.
+const requiredPill = computed(() => {
+    if (requiredReady.value) return "Complete";
+    const waiting = props.requiredFiles.every(f =>
+        f.status === FileUploadStatus.COMPLETED || (f.status && IN_FLIGHT_STATUSES.includes(f.status)));
+
+    return waiting ? "Checking" : `${readyCount.value} of ${props.requiredFiles.length}`;
 });
 
 // The GPU inputs appear only once the researcher chooses to override the job's own request (FLIP#70).

@@ -140,7 +140,7 @@
                                 :can-train="readyToTrain"
                                 :status="modelData?.status"
                                 :required-files="requiredFiles"
-                                :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                                :uploaded-files="modelData?.files ?? []"
                                 :fl-backend-label="flBackendLabel"
                                 :job-types-error="jobTypesError"
                                 :job-types-loading="jobTypesLoading"
@@ -158,7 +158,7 @@
                     :can-train="readyToTrain"
                     :status="modelData?.status"
                     :required-files="requiredFiles"
-                    :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                    :uploaded-files="modelData?.files ?? []"
                     :fl-backend-label="flBackendLabel"
                 />
             </div>

@@ -47,8 +47,7 @@
                     :errors="errors"
                     :disabled="!pending"
                     :fl-backend-label="flBackendLabel"
-                    :required-files="jobTypesError ? [] : requiredFiles"
-                    :missing-files="missingFiles"
+                    :required-files="jobTypesError ? [] : requiredFileStates"
                     :run-resources="pending ? null : runResources"
                 />
             </div>
@@ -102,6 +101,7 @@ import { array, lazy, number, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
+import { FileInfo, IRequiredFile } from "@/interfaces/model/types";
 import { getStatusEnumValue, IInitTraining, IJobResources, initialiseTraining,
     MAX_GPUS_PER_SITE,
     ModelStatus,
@@ -117,7 +117,7 @@ interface ITrainingProps {
     canTrain: boolean;
     status: ModelStatus;
     requiredFiles: string[];
-    uploadedFileNames: string[];
+    uploadedFiles: Pick<FileInfo, "name" | "status">[];
     flBackendLabel?: string;
     // True when the job-types map could not be loaded: `requiredFiles` is empty because it is
     // unknown, not because nothing is required.
@@ -144,12 +144,10 @@ const emits = defineEmits(["started", "retryJobTypes"]);
 
 const route = useRoute();
 
-/**
- * Computes the list of files that are still missing (required but not uploaded).
- */
-const missingFiles = computed(() => {
-    return props.requiredFiles.filter(f => !props.uploadedFileNames.includes(f));
-});
+const requiredFileStates = computed((): IRequiredFile[] => props.requiredFiles.map(name => ({
+    name,
+    status: props.uploadedFiles.find(f => f.name === name)?.status
+})));
 
 const schema = object().shape({
     enriched: string().required("Please confirm data enrichment."),

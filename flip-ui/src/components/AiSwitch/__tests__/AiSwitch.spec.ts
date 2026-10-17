@@ -178,8 +178,8 @@ describe("AiSwitch", () => {
                 name: "flag",
                 value: "true",
                 label: {
-                    enabled: "Trust Included",
-                    disabled: "Trust Excluded"
+                    enabled: "On",
+                    disabled: "Off"
                 }
             },
             global: {
