@@ -149,7 +149,6 @@ class InitialPTModelLocator(ModelLocator):
                     self.log_info(fl_ctx, f"Could not load the weights from {model_path} into the model. ")
                     return None
 
-                # Create dxo and return
                 return ml
             except Exception as e:
                 self.log_error(fl_ctx, f"Error in retrieving {model_name}: {e}", fire_event=False)

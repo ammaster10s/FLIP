@@ -226,8 +226,8 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
     The key grammar is ``<label>[@<x_label>][.x_<V>]``:
 
     - ``.x_<V>`` (optional, trailing) sets the plot x-coordinate; ``V`` is a float literal (``.x_5``,
-      ``.x_1.5``, ``.x_1e-3``). Absent or non-numeric -> ``None`` (the hub plots the metric at its FL
-      global round).
+      ``.x_1.5``, ``.x_1e-3``). Absent, non-numeric or non-finite (nan/inf) -> ``None`` (the hub plots
+      the metric at its FL global round); a non-numeric or non-finite suffix stays on the label.
     - ``@<x_label>`` (optional) names the x-axis, e.g. "epoch"; absent -> ``None`` (the hub defaults it
       to "Global Rounds"). A plot's identity is (label, x_label), so distinct x-labels render as separate
       plots — see https://github.com/londonaicentre/FLIP/issues/148.
