@@ -79,8 +79,20 @@ check_arg = v=$(call sq,$(2)); [[ "$$v" =~ ^$(3)$$ ]] || { echo "❌ $(1)='$$v' 
 # The AKS API server admits one IP, and an operator's public IP moves (home, office, VPN). This
 # resets it without a plan. aks-plan passes OPERATOR_IP to Terraform the same way, so its next plan
 # shows no allowlist change as long as your IP has not moved again.
+# The nodes' egress (the NAT gateway's IP, or NODE_EGRESS_IPS on a site subnet) stays admitted:
+# without it the nodes lose their API server. Read from the aks state, and checked before use.
 define admit_operator
-	az aks update --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --api-server-authorized-ip-ranges "$(OPERATOR_IP)/32"
+	( nodes="$$($(TF) -chdir=aks output -raw api_server_node_ranges)"; \
+	  [[ "$$nodes" =~ ^$(IPV4_PATTERN)/32(,$(IPV4_PATTERN)/32)*$$ ]] || { \
+		echo "❌ Cannot read the nodes' egress ranges from the aks state ('$$nodes'): not changing the API server's allowlist, which would lock the nodes out."; exit 1; }; \
+	  az aks update --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --api-server-authorized-ip-ranges "$(OPERATOR_IP)/32,$$nodes" )
+endef
+
+# NODE_EGRESS_IPS (comma-separated) goes into a Terraform list, so it is checked first.
+comma := ,
+NODE_EGRESS_VAR = $(if $(NODE_EGRESS_IPS),-var 'node_egress_ips=["$(subst $(comma),"$(comma)",$(NODE_EGRESS_IPS))"]')
+define require_node_egress_ips
+	@$(if $(NODE_EGRESS_IPS),$(call check_arg,NODE_EGRESS_IPS,$(NODE_EGRESS_IPS),$(IPV4_PATTERN)(,$(IPV4_PATTERN))*),true)
 endef
 
 # The value is single-quoted for the local shell while it is checked, as check_arg does.
@@ -213,7 +225,8 @@ start: ## Start a deallocated VM
 
 # ── AKS: the same trust on a one-node managed cluster (the flip-trust chart) ─────────────────
 # The trial quota fits one 4-vCPU node: never run the cluster and the VM together. SUBNET_ID
-# works as for the VM: the site's subnet and egress, or empty for a network with its own NAT.
+# works as for the VM: the site's subnet and egress, or empty for a network with its own NAT. On a
+# site subnet, NODE_EGRESS_IPS names the site's egress IPs, which the API server must admit.
 
 aks-init: ## Point the aks root at the bootstrap's state storage
 	$(require_subscription)
@@ -225,11 +238,12 @@ aks-init: ## Point the aks root at the bootstrap's state storage
 		-backend-config="key=aks.tfstate" \
 		-backend-config="use_azuread_auth=true"
 
-aks-plan: ## Plan the AKS cluster (its API server admits only your IP)
+aks-plan: ## Plan the AKS cluster (its API server admits your IP and the nodes' egress)
+	$(require_node_egress_ips)
 	$(require_subscription)
 	$(TF) -chdir=aks plan -out=aks.tfplan \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "existing_subnet_id=$(SUBNET_ID)" -var "operator_ip=$(OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(OPERATOR_IP)"
 
 aks-apply: ## Show the saved AKS plan and the subscription, then apply it only after a typed yes
 	$(require_subscription)
@@ -243,10 +257,11 @@ aks-apply: ## Show the saved AKS plan and the subscription, then apply it only a
 	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
 
 aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
+	$(require_node_egress_ips)
 	$(require_subscription)
 	$(TF) -chdir=aks destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "existing_subnet_id=$(SUBNET_ID)" -var "operator_ip=$(DESTROY_OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	$(require_subscription)
@@ -258,7 +273,7 @@ aks-stop: ## Stop the cluster (its node stops billing; disks and any NAT gateway
 	$(require_subscription)
 	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
 
-aks-start: ## Start a stopped cluster, then admit only your current IP to its API server
+aks-start: ## Start a stopped cluster, then admit your current IP (and the nodes' egress) to its API server
 	$(require_operator_ip)
 	$(require_subscription)
 	az aks start --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
@@ -266,7 +281,7 @@ aks-start: ## Start a stopped cluster, then admit only your current IP to its AP
 		echo "❌ The cluster is running (and billing), but its API server still admits only its previous IP."; \
 		echo "   Retry: make aks-allow-ip AZ_SUBSCRIPTION=... Or stop it: make aks-stop AZ_SUBSCRIPTION=..."; exit 1; }
 
-aks-allow-ip: ## Admit only your current IP to the running cluster's API server, without a plan (free)
+aks-allow-ip: ## Admit your current IP (and keep the nodes' egress) on the API server, without a plan (free)
 	$(require_operator_ip)
 	$(require_subscription)
 	$(admit_operator)

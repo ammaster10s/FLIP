@@ -26,13 +26,61 @@ variables {
   operator_ip     = "203.0.113.7"
 }
 
-run "api_server_admits_only_the_operator" {
+run "api_server_admits_the_operator_and_the_nat_gateway" {
   command = plan
 
-  assert {
-    condition     = azurerm_kubernetes_cluster.this.api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.7/32"])
-    error_message = "Only the operator's IP may reach the API server."
+  override_resource {
+    target = module.network.azurerm_public_ip.nat[0]
+    values = {
+      id         = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-aks-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-aks-nat-ip"
+      ip_address = "198.51.100.9"
+    }
+    override_during = plan
   }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.7/32", "198.51.100.9/32"])
+    error_message = "The API server admits the operator and the nodes' NAT gateway IP, and nothing else: AKS adds no NAT gateway IP by itself."
+  }
+  assert {
+    condition     = output.api_server_node_ranges == "198.51.100.9/32"
+    error_message = "make aks-allow-ip reads the nodes' ranges from this output."
+  }
+}
+
+run "api_server_admits_the_site_egress_on_a_site_subnet" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+    node_egress_ips    = ["198.51.100.20"]
+  }
+
+  assert {
+    condition     = azurerm_kubernetes_cluster.this.api_server_access_profile[0].authorized_ip_ranges == toset(["203.0.113.7/32", "198.51.100.20/32"])
+    error_message = "On a site subnet the API server admits the operator and the site's egress IPs."
+  }
+}
+
+run "site_subnet_needs_its_egress_ips" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+  }
+
+  expect_failures = [var.node_egress_ips]
+}
+
+run "node_egress_ips_must_be_addresses" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+    node_egress_ips    = ["198.51.100.0/24"]
+  }
+
+  expect_failures = [var.node_egress_ips]
 }
 
 run "users_sign_in_with_entra_only" {
@@ -96,6 +144,7 @@ run "site_subnet_egress_is_the_sites" {
 
   variables {
     existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+    node_egress_ips    = ["198.51.100.20"]
   }
 
   assert {
