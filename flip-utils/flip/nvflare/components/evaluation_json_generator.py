@@ -11,7 +11,10 @@
 #
 
 import json
+import math
+import numbers
 import os.path
+from collections.abc import Mapping
 from typing import Any
 
 from nvflare.apis.dxo import DataKind, from_shareable
@@ -50,6 +53,9 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     recorded in ``_eval_failures`` and written to ``PTConstants.EvalFailuresFilename``, and
     :meth:`all_tasks_failed` lets ServerEventHandler fail the run rather than report success on an
     empty results file (FLIP#754).
+
+    **Hub metrics.** :meth:`hub_metrics` flattens the same results into per-client metric labels, which
+    ServerEventHandler forwards to the Central Hub at END_RUN (FLIP#1526).
     """
 
     def __init__(
@@ -71,6 +77,8 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         self._eval_results: dict = {}
         self._eval_failures: list[dict] = []
         self._failures_file_name = failures_file_name
+        # Each client's replies keyed by model owner (None without one), for hub_metrics.
+        self._replies: dict[str, dict[str | None, Any]] = {}
 
     def all_tasks_failed(self) -> bool:
         """Whether every validate task this run produced a failure and none produced metrics.
@@ -98,6 +106,34 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._eval_results.setdefault(data_client, {})[model_owner] = metrics
         else:
             self._eval_results[data_client] = metrics
+        self._replies.setdefault(data_client, {})[model_owner] = metrics
+
+    def hub_metrics(self) -> dict[str, dict[str, float]]:
+        """Flatten each client's evaluation results into the metric labels sent to the Central Hub.
+
+        Nested keys join with ``/`` and the label is upper-cased, as Flower does. When a client
+        evaluated more than one model, each label is prefixed with the model name (the ``config.json``
+        key, without the ``SRV_`` prefix ``GlobalModelEval`` adds). A reply that already keys its
+        metrics by that model name, as the Ark+ evaluators do, is taken as it is. A later reply
+        overwrites an earlier one with the same label, so cumulative replies are sent once.
+
+        Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
+        lists, which is where per-sample values would live, are never sent.
+
+        Returns:
+            dict[str, dict[str, float]]: ``{client: {label: value}}``.
+        """
+        hub: dict[str, dict[str, float]] = {}
+        for client, replies in self._replies.items():
+            labels: dict[str, float] = {}
+            for owner, reply in replies.items():
+                name = owner.removeprefix("SRV_") if owner else None
+                self_keyed = isinstance(reply, Mapping) and name in reply
+                prefix = (name,) if name and len(replies) > 1 and not self_keyed else ()
+                _flatten_metrics(reply, prefix, labels)
+            if labels:
+                hub[client] = labels
+        return hub
 
     def _handle_validation_result(self, fl_ctx: FLContext) -> None:
         """Sort one received validate result into either the metrics store or the failure list."""
@@ -151,6 +187,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         if event_type == EventType.START_RUN:
             self._eval_results.clear()
             self._eval_failures.clear()
+            self._replies.clear()
         elif event_type == AppEventType.VALIDATION_RESULT_RECEIVED:
             self._handle_validation_result(fl_ctx)
         elif event_type == EventType.END_RUN:
@@ -158,3 +195,12 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._write_json(fl_ctx, run_dir, self._json_file_name, self._eval_results, "evaluation results path")
             # Always written, even when empty, so its absence never has to be interpreted.
             self._write_json(fl_ctx, run_dir, self._failures_file_name, self._eval_failures, "evaluation failures path")
+
+
+def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float]) -> None:
+    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path."""
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            _flatten_metrics(child, (*path, str(key)), out)
+    elif path and isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
+        out["/".join(path).upper()] = float(value)

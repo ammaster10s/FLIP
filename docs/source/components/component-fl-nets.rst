@@ -156,6 +156,10 @@ modern **NVFLARE Client API** — a plain training/evaluation script using ``nvf
 (these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
 ones, then took over the plain names when those were retired).
 The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
+On both backends an evaluation sends each trust's returned metrics to the hub from the FL server,
+so they appear on the model page as one point per trust, at round 0 on NVFLARE and round 1 on
+Flower. Evaluation code needs nothing extra: whatever aggregate metrics it returns are forwarded
+(nested keys joined with ``/``, upper-cased; undefined values such as NaN are left out).
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**

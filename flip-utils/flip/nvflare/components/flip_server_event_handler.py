@@ -156,6 +156,30 @@ class ServerEventHandler(FLComponent):
         generator = self.validation_json_generator
         return isinstance(generator, EvaluationJsonGenerator) and generator.all_tasks_failed()
 
+    def _forward_evaluation_metrics(self, fl_ctx: FLContext, generator: EvaluationJsonGenerator) -> None:
+        """Send each client's final evaluation metrics to the Central Hub (FLIP#1526).
+
+        Evaluators return their aggregate metrics in the validate reply instead of streaming them, so
+        the server forwards them here, the way Flower's ``FlipFedAvg`` forwards each reply's metrics.
+        They are a single point, recorded at round 0. A failure is logged and never stops END_RUN.
+        """
+        try:
+            model_id = self._resolve_model_id(fl_ctx)
+            hub_metrics = generator.hub_metrics()
+        except Exception:
+            self.log_exception(fl_ctx, "Could not collect evaluation metrics for the hub", fire_event=False)
+            return
+
+        for client_name, labels in hub_metrics.items():
+            for label, value in labels.items():
+                try:
+                    # send_metrics validates its payload before its own try block, so guard here.
+                    self.flip.send_metrics(
+                        client_name=client_name, model_id=model_id, label=label, value=value, global_round=0
+                    )
+                except Exception:
+                    self.log_exception(fl_ctx, f"Failed to forward evaluation metric {label}", fire_event=False)
+
     def _terminal_status(self, default: ModelStatus) -> ModelStatus:
         """Resolve the run's terminal status, most salient cause first.
 
@@ -239,6 +263,9 @@ class ServerEventHandler(FLComponent):
 
         elif event_type == EventType.END_RUN:
             self.log_info(fl_ctx, "End run event received")
+
+            if isinstance(validation_json_generator, EvaluationJsonGenerator):
+                self._forward_evaluation_metrics(fl_ctx, validation_json_generator)
 
             try:
                 # The results are uploaded even when the evaluation wholly failed: the zip carries

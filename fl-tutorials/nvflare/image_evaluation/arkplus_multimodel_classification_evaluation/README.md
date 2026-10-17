@@ -193,7 +193,9 @@ Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make
 
 The evaluator returns **aggregate** (cohort-level) metrics only — per-lesion AUROC per model plus pairwise
 DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected by the server into
-`evaluation_results.json` keyed by site then model:
+`evaluation_results.json` keyed by site then model. The FL server also sends them to the hub, where they
+show on the model page per trust, keyed by model: `<MODEL>/AUROC_<LESION>` and
+`<MODEL>/DELONG_P_VALUES/<LESION>/<OTHER MODEL>` (likewise `DELONG_Q_VALUES`):
 
 ```json
 {

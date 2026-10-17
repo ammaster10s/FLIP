@@ -366,3 +366,73 @@ class TestEvaluationJsonGenerator:
         self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
 
         assert self.generator._eval_results == {"Trust_1": {"model_a": {"dice": 0.7}}}
+
+    # --- FLIP#1526: the same results, flattened for the Central Hub ---
+
+    def test_hub_metrics_for_one_model_are_the_bare_metric_names(self):
+        self._receive("Trust_1", self._metrics(mean_dice=0.9, mean_iou=0.8), model_owner="SRV_model")
+        self._receive("Trust_2", self._metrics(mean_dice=0.7), model_owner="SRV_model")
+
+        assert self.generator.hub_metrics() == {
+            "Trust_1": {"MEAN_DICE": 0.9, "MEAN_IOU": 0.8},
+            "Trust_2": {"MEAN_DICE": 0.7},
+        }
+
+    def test_hub_metrics_prefix_the_model_name_when_a_client_evaluated_several(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_model_a")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_model_b")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.9, "MODEL_B/DICE": 0.8}}
+
+    def test_hub_metrics_take_a_reply_already_keyed_by_its_model_as_it_is(self):
+        """Ark+ baseline: ``{model_name: {auroc_<lesion>: ...}}`` under owner ``SRV_<model_name>``."""
+        self._receive("Trust_1", self._metrics(arkplus={"auroc_Effusion": 0.81}), model_owner="SRV_arkplus")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"ARKPLUS/AUROC_EFFUSION": 0.81}}
+
+    def test_hub_metrics_send_cumulative_multimodel_replies_once_per_model(self):
+        """Ark+ multimodel: each reply carries every model scored so far, plus the DeLong map."""
+        first = {"m_a": {"auroc_Effusion": 0.8}}
+        last = {
+            "m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_a": 1.0, "m_b": 0.04}}},
+            "m_b": {"auroc_Effusion": 0.7, "delong_p_values": {"Effusion": {"m_a": 0.04, "m_b": 1.0}}},
+        }
+        self._receive("Trust_1", self._metrics(**first), model_owner="SRV_m_a")
+        self._receive("Trust_1", self._metrics(**last), model_owner="SRV_m_b")
+
+        assert self.generator.hub_metrics() == {
+            "Trust_1": {
+                "M_A/AUROC_EFFUSION": 0.8,
+                "M_A/DELONG_P_VALUES/EFFUSION/M_A": 1.0,
+                "M_A/DELONG_P_VALUES/EFFUSION/M_B": 0.04,
+                "M_B/AUROC_EFFUSION": 0.7,
+                "M_B/DELONG_P_VALUES/EFFUSION/M_A": 0.04,
+                "M_B/DELONG_P_VALUES/EFFUSION/M_B": 1.0,
+            }
+        }
+
+    def test_hub_metrics_omit_undefined_and_non_scalar_values(self):
+        """NaN is undefined, not 0; a list could hold per-sample values; neither is sent."""
+        self._receive(
+            "Trust_1",
+            self._metrics(
+                auroc=float("nan"), big=float("inf"), flag=True, per_sample=[0.1, 0.2], note="x", n=np.float32(0.5)
+            ),
+            model_owner="SRV_model",
+        )
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"N": 0.5}}
+
+    def test_hub_metrics_leave_out_failed_tasks_and_clear_on_start_run(self):
+        self._receive("Trust_1", make_reply(ReturnCode.TASK_ABORTED), model_owner="SRV_model")
+        assert self.generator.hub_metrics() == {}
+
+        self._receive("Trust_2", self._metrics(dice=0.9), model_owner="SRV_model")
+        self.generator.handle_evaluation_events(EventType.START_RUN, self.fl_ctx)
+
+        assert self.generator.hub_metrics() == {}
+
+    def test_hub_metrics_without_a_model_owner_flatten_the_reply(self):
+        self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.7}}
