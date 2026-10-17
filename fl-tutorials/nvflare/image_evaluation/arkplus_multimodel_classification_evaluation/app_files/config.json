@@ -1,6 +1,5 @@
 {
   "job_type": "evaluation",
-  "HUB_METRICS_EXCLUDE": ["delong_*"],
   "label_mapping": {
     "arkplus_pretrained": "nih14_5class",
     "arkplus_finetuned": null

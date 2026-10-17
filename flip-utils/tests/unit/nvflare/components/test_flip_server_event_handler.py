@@ -661,23 +661,6 @@ class TestEvaluationMetricsForwarding:
         assert flip.send_metrics.call_count == 2
         assert handler.final_status == ModelStatus.RESULTS_UPLOADED
 
-    def test_the_apps_hub_metrics_exclude_reaches_the_generator(self):
-        generator = self._evaluation_generator({})
-        config = {"HUB_METRICS_EXCLUDE": ["delong_*"]}
-
-        with patch("flip.nvflare.components.flip_server_event_handler.get_app_config", return_value=config):
-            self._end_run(generator, MagicMock())
-
-        generator.hub_metrics.assert_called_once_with(exclude=["delong_*"])
-
-    def test_without_the_setting_every_metric_is_sent(self):
-        generator = self._evaluation_generator({})
-
-        with patch("flip.nvflare.components.flip_server_event_handler.get_app_config", return_value={}):
-            self._end_run(generator, MagicMock())
-
-        generator.hub_metrics.assert_called_once_with(exclude=[])
-
     def test_training_jobs_forward_nothing(self):
         """The training validate phase streams its metrics from the clients; nothing extra here."""
         flip = MagicMock()

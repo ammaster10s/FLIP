@@ -10,12 +10,11 @@
 # limitations under the License.
 #
 
-import fnmatch
 import json
 import math
 import numbers
 import os.path
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 from nvflare.apis.dxo import DataKind, from_shareable
@@ -27,11 +26,8 @@ from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.utils.file_utils import resolve_path_under_root
 from nvflare.app_common.widgets.validation_json_generator import to_serializable
 
-from flip.constants import PTConstants
+from flip.constants import FlipMetaKey, PTConstants
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
-
-# The app config.json key listing reply-key patterns kept off the hub (they stay in the results file).
-HUB_METRICS_EXCLUDE_KEY = "HUB_METRICS_EXCLUDE"
 
 
 class EvaluationJsonGenerator(ValidationJsonGenerator):
@@ -58,8 +54,9 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     :meth:`all_tasks_failed` lets ServerEventHandler fail the run rather than report success on an
     empty results file (FLIP#754).
 
-    **Hub metrics.** :meth:`hub_metrics` flattens the same results into per-client metric labels, which
-    ServerEventHandler forwards to the Central Hub at END_RUN (FLIP#1526).
+    **Hub metrics.** :meth:`hub_metrics` flattens each reply's ``metrics`` into per-client metric labels,
+    which ServerEventHandler forwards to the Central Hub at END_RUN (FLIP#1526). Results the evaluator
+    puts in the reply's ``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]`` are merged into the results file only.
     """
 
     def __init__(
@@ -104,16 +101,20 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             fire_event=False,
         )
 
-    def _record_result(self, model_owner: str | None, data_client: str, metrics: Any) -> None:
-        """Store one client's metrics, nesting under the model name when the controller supplies one."""
+    def _record_result(self, model_owner: str | None, data_client: str, metrics: Any, supplementary: Any) -> None:
+        """Store one client's reply, nesting under the model name when the controller supplies one.
+
+        The results file gets ``metrics`` with ``supplementary`` merged in; the hub gets ``metrics`` only.
+        """
+        results = _merge(metrics, supplementary)
         if model_owner:
-            self._eval_results.setdefault(data_client, {})[model_owner] = metrics
+            self._eval_results.setdefault(data_client, {})[model_owner] = results
         else:
-            self._eval_results[data_client] = metrics
+            self._eval_results[data_client] = results
         self._replies.setdefault(data_client, {})[model_owner] = metrics
 
-    def hub_metrics(self, exclude: Sequence[str] = ()) -> dict[str, dict[str, float]]:
-        """Flatten each client's evaluation results into the metric labels sent to the Central Hub.
+    def hub_metrics(self) -> dict[str, dict[str, float]]:
+        """Flatten each client's evaluation metrics (not its supplementary results) into the hub's labels.
 
         Nested keys join with ``/`` and the label is upper-cased, as Flower does. When a client
         evaluated more than one model, each label is prefixed with the model name (the ``config.json``
@@ -124,20 +125,9 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
         lists, which is where per-sample values would live, are never sent.
 
-        Args:
-            exclude (Sequence[str]): ``fnmatch`` patterns, from the app's ``config.json``
-                ``HUB_METRICS_EXCLUDE``. A reply key matching one, at any depth and ignoring case, is
-                left out with everything under it. Defaults to sending every metric.
-
         Returns:
             dict[str, dict[str, float]]: ``{client: {label: value}}``.
-
-        Raises:
-            TypeError: If ``exclude`` is not a list of strings.
         """
-        if not isinstance(exclude, list | tuple) or not all(isinstance(p, str) for p in exclude):
-            raise TypeError(f"{HUB_METRICS_EXCLUDE_KEY} must be a list of strings, got {exclude!r}")
-        patterns = [p.lower() for p in exclude]
         hub: dict[str, dict[str, float]] = {}
         for client, replies in self._replies.items():
             labels: dict[str, float] = {}
@@ -145,7 +135,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
                 name = owner.removeprefix("SRV_") if owner else None
                 self_keyed = isinstance(reply, Mapping) and name in reply
                 prefix = (name,) if name and len(replies) > 1 and not self_keyed else ()
-                _flatten_metrics(reply, prefix, labels, patterns)
+                _flatten_metrics(reply, prefix, labels)
             if labels:
                 hub[client] = labels
         return hub
@@ -185,7 +175,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._record_failure(fl_ctx, model_owner, data_client, ReturnCode.EXECUTION_RESULT_ERROR)
             return
 
-        self._record_result(model_owner, data_client, dxo.data)
+        self._record_result(model_owner, data_client, dxo.data, dxo.get_meta_prop(FlipMetaKey.SUPPLEMENTARY_RESULTS))
 
     def _write_json(self, fl_ctx: FLContext, run_dir: str, file_name: str, payload: Any, description: str) -> None:
         """Write one json artefact into the run's evaluation results directory."""
@@ -212,14 +202,18 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._write_json(fl_ctx, run_dir, self._failures_file_name, self._eval_failures, "evaluation failures path")
 
 
-def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float], exclude: list[str]) -> None:
-    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path.
-
-    A key matching one of the lower-cased ``exclude`` patterns is skipped with everything under it.
-    """
+def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float]) -> None:
+    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path."""
     if isinstance(value, Mapping):
         for key, child in value.items():
-            if not any(fnmatch.fnmatchcase(str(key).lower(), pattern) for pattern in exclude):
-                _flatten_metrics(child, (*path, str(key)), out, exclude)
+            _flatten_metrics(child, (*path, str(key)), out)
     elif path and isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
         out["/".join(path).upper()] = float(value)
+
+
+def _merge(metrics: Any, supplementary: Any) -> Any:
+    """Merge ``supplementary`` into ``metrics`` key by key, keeping ``metrics``'s order; ``metrics`` wins a clash."""
+    if not (isinstance(metrics, Mapping) and isinstance(supplementary, Mapping)):
+        return metrics
+    merged = {key: _merge(value, supplementary.get(key)) for key, value in metrics.items()}
+    return {**merged, **{key: value for key, value in supplementary.items() if key not in merged}}

@@ -11,8 +11,9 @@
 
 """The Ark+ multimodel evaluation sends only per-model, per-lesion AUROC to the hub (FLIP#1526).
 
-The evaluator's real replies (``compute_metrics``, AUROC plus the DeLong maps) go through FLIP's
-``EvaluationJsonGenerator`` with the app's own ``config.json`` ``HUB_METRICS_EXCLUDE``.
+The evaluator's real replies (``compute_metrics``: AUROC in ``metrics``, the DeLong maps in
+``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]``) go through NVFLARE's ``FLModel`` conversion into FLIP's
+``EvaluationJsonGenerator``.
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ import sys
 from unittest.mock import MagicMock
 
 import numpy as np
-from flip.nvflare.components.evaluation_json_generator import HUB_METRICS_EXCLUDE_KEY, EvaluationJsonGenerator
-from nvflare.apis.dxo import DXO, DataKind
+from flip.constants import FlipMetaKey
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
+from nvflare.app_common.abstract.fl_model import FLModel
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
+from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from tutorial_apps import TUTORIALS_ROOT, load_module
 
 APP_FILES = TUTORIALS_ROOT / "nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/app_files"
@@ -48,12 +51,13 @@ def _evaluator():
                 del sys.modules[name]
 
 
-def _receive(generator: EvaluationJsonGenerator, client: str, owner: str, metrics: dict) -> None:
-    props = {
-        AppConstants.DATA_CLIENT: client,
-        AppConstants.MODEL_OWNER: owner,
-        AppConstants.VALIDATION_RESULT: DXO(data_kind=DataKind.METRICS, data=metrics).to_shareable(),
-    }
+def _receive(generator: EvaluationJsonGenerator, client: str, owner: str, reply: tuple[dict, dict]) -> None:
+    metrics, supplementary = reply
+    # What flare.send() hands the server: NVFLARE copies FLModel.meta into the METRICS DXO's meta.
+    result = FLModelUtils.to_shareable(
+        FLModel(metrics=metrics, meta={FlipMetaKey.SUPPLEMENTARY_RESULTS.value: supplementary})
+    )
+    props = {AppConstants.DATA_CLIENT: client, AppConstants.MODEL_OWNER: owner, AppConstants.VALIDATION_RESULT: result}
     fl_ctx = MagicMock()
     fl_ctx.get_prop.side_effect = lambda key, default=None: props.get(key, default)
     generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, fl_ctx)
@@ -76,9 +80,18 @@ def test_hub_gets_exactly_one_auroc_per_model_per_lesion():
         reply = evaluator.compute_metrics(models[:scored], predictions, all_targets, lesions)
         _receive(generator, "Trust_1", f"SRV_{models[scored - 1]}", reply)
 
-    labels = generator.hub_metrics(exclude=config[HUB_METRICS_EXCLUDE_KEY])["Trust_1"]
+    labels = generator.hub_metrics()["Trust_1"]
 
     assert sorted(labels) == sorted(f"{m}/AUROC_{lesion}".upper() for m in models for _, lesion in lesions)
     assert len(labels) == 10
-    # The downloaded results keep the DeLong maps.
-    assert "delong_p_values" in generator._eval_results["Trust_1"][f"SRV_{models[-1]}"][models[0]]
+    # The downloaded results keep the README's shape: every model's AUROCs plus both DeLong maps.
+    stored = generator._eval_results["Trust_1"][f"SRV_{models[-1]}"]
+    delong_shape = {lesion: set(models) for _, lesion in lesions}
+    for model in models:
+        assert list(stored[model]) == [f"auroc_{lesion}" for _, lesion in lesions] + [
+            "delong_p_values",
+            "delong_q_values",
+        ]
+        for table in ("delong_p_values", "delong_q_values"):
+            assert {lesion: set(row) for lesion, row in stored[model][table].items()} == delong_shape
+            assert all(row[model] == 1.0 for row in stored[model][table].values())

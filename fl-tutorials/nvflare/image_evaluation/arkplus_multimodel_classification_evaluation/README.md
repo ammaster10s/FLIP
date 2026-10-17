@@ -193,11 +193,11 @@ Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make
 
 The evaluator returns **aggregate** (cohort-level) metrics only — per-lesion AUROC per model plus pairwise
 DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected by the server into
-`evaluation_results.json` keyed by site then model. The FL server also sends the AUROCs to the hub, where
-they show on the model page as one point per trust: `<MODEL>/AUROC_<LESION>`, ten plots for two models and
-five lesions (e.g. `ARKPLUS_PRETRAINED/AUROC_EFFUSION`). The DeLong maps stay in the results file only:
-`config.json` sets `"HUB_METRICS_EXCLUDE": ["delong_*"]`, which keeps every reply key matching those
-patterns off the hub:
+`evaluation_results.json` keyed by site then model. The AUROCs are the reply's `metrics`, which the FL
+server also sends to the hub: one point per trust for each `<MODEL>/AUROC_<LESION>`, ten plots for two models
+and five lesions (e.g. `ARKPLUS_PRETRAINED/AUROC_EFFUSION`). The DeLong tables go in the reply's
+`meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]`, which the server merges back under each model in the results file
+only:
 
 ```json
 {

@@ -19,10 +19,10 @@ from nvflare.app_common.app_event_type import AppEventType
 from flip import FLIP, FLIPBase
 from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
-from flip.nvflare.components.evaluation_json_generator import HUB_METRICS_EXCLUDE_KEY, EvaluationJsonGenerator
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
-from flip.nvflare.runtime import get_app_config, get_flip_model_id
+from flip.nvflare.runtime import get_flip_model_id
 from flip.schemas import FLLogEvent
 
 
@@ -161,12 +161,11 @@ class ServerEventHandler(FLComponent):
 
         Evaluators return their aggregate metrics in the validate reply instead of streaming them, so
         the server forwards them here, the way Flower's ``FlipFedAvg`` forwards each reply's metrics.
-        They are a single point, recorded at round 0. An app can keep some of them off the hub with
-        ``HUB_METRICS_EXCLUDE`` in its ``config.json``. A failure is logged and never stops END_RUN.
+        They are a single point, recorded at round 0. A failure is logged and never stops END_RUN.
         """
         try:
             model_id = self._resolve_model_id(fl_ctx)
-            hub_metrics = generator.hub_metrics(exclude=get_app_config(fl_ctx).get(HUB_METRICS_EXCLUDE_KEY, []))
+            hub_metrics = generator.hub_metrics()
         except Exception:
             self.log_exception(fl_ctx, "Could not collect evaluation metrics for the hub", fire_event=False)
             return

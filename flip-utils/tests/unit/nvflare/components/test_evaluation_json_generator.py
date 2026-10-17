@@ -16,7 +16,6 @@ import tempfile
 from unittest.mock import MagicMock, Mock
 
 import numpy as np
-import pytest
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
@@ -24,7 +23,7 @@ from nvflare.apis.shareable import make_reply
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.constants import PTConstants
+from flip.constants import FlipMetaKey, PTConstants
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator as FlipValidationJsonGenerator
 
@@ -57,9 +56,10 @@ class TestEvaluationJsonGenerator:
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
     @staticmethod
-    def _metrics(**metrics):
-        """Build the shareable a client returns on a successful validate task."""
-        return DXO(data_kind=DataKind.METRICS, data=dict(metrics)).to_shareable()
+    def _metrics(metrics=None, supplementary=None, /, **kwargs):
+        """Build the shareable a client returns on a successful validate task, as ``FLModelUtils.to_shareable`` does."""
+        meta = {} if supplementary is None else {FlipMetaKey.SUPPLEMENTARY_RESULTS: supplementary}
+        return DXO(data_kind=DataKind.METRICS, data={**(metrics or {}), **kwargs}, meta=meta).to_shareable()
 
     def test_init_default_values(self):
         """Test initialization with default values"""
@@ -391,26 +391,30 @@ class TestEvaluationJsonGenerator:
 
         assert self.generator.hub_metrics() == {"Trust_1": {"ARKPLUS/AUROC_EFFUSION": 0.81}}
 
-    def test_hub_metrics_send_cumulative_multimodel_replies_once_per_model(self):
-        """Ark+ multimodel: each reply carries every model scored so far, plus the DeLong map."""
-        first = {"m_a": {"auroc_Effusion": 0.8}}
-        last = {
-            "m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_a": 1.0, "m_b": 0.04}}},
-            "m_b": {"auroc_Effusion": 0.7, "delong_p_values": {"Effusion": {"m_a": 0.04, "m_b": 1.0}}},
-        }
-        self._receive("Trust_1", self._metrics(**first), model_owner="SRV_m_a")
-        self._receive("Trust_1", self._metrics(**last), model_owner="SRV_m_b")
+    def test_supplementary_results_reach_the_results_file_but_not_the_hub(self):
+        """``meta[SUPPLEMENTARY_RESULTS]`` merges back into the reply's entry; only ``metrics`` are plotted."""
+        reply = {"m_a": {"auroc_Effusion": 0.8}}
+        extra = {"m_a": {"delong_p_values": {"Effusion": {"m_b": 0.04}}}}
+        self._receive("Trust_1", self._metrics(reply, extra), model_owner="SRV_m_a")
 
-        assert self.generator.hub_metrics() == {
-            "Trust_1": {
-                "M_A/AUROC_EFFUSION": 0.8,
-                "M_A/DELONG_P_VALUES/EFFUSION/M_A": 1.0,
-                "M_A/DELONG_P_VALUES/EFFUSION/M_B": 0.04,
-                "M_B/AUROC_EFFUSION": 0.7,
-                "M_B/DELONG_P_VALUES/EFFUSION/M_A": 0.04,
-                "M_B/DELONG_P_VALUES/EFFUSION/M_B": 1.0,
-            }
+        assert self.generator._eval_results == {
+            "Trust_1": {"SRV_m_a": {"m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_b": 0.04}}}}}
         }
+        assert self.generator.hub_metrics() == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8}}
+
+    def test_cumulative_multimodel_replies_keep_the_documented_results_and_plot_each_auroc_once(self):
+        """Ark+ multimodel: each reply repeats every model scored so far; the last one carries the DeLong map."""
+        p_a, p_b = {"Effusion": {"m_a": 1.0, "m_b": 0.04}}, {"Effusion": {"m_a": 0.04, "m_b": 1.0}}
+        last = {"m_a": {"auroc_Effusion": 0.8}, "m_b": {"auroc_Effusion": 0.7}}
+        extra = {"m_a": {"delong_p_values": p_a}, "m_b": {"delong_p_values": p_b}}
+        self._receive("Trust_1", self._metrics({"m_a": {"auroc_Effusion": 0.8}}), model_owner="SRV_m_a")
+        self._receive("Trust_1", self._metrics(last, extra), model_owner="SRV_m_b")
+
+        assert self.generator._eval_results["Trust_1"]["SRV_m_b"] == {
+            "m_a": {"auroc_Effusion": 0.8, "delong_p_values": p_a},
+            "m_b": {"auroc_Effusion": 0.7, "delong_p_values": p_b},
+        }
+        assert self.generator.hub_metrics() == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8, "M_B/AUROC_EFFUSION": 0.7}}
 
     def test_hub_metrics_omit_undefined_and_non_scalar_values(self):
         """NaN is undefined, not 0; a list could hold per-sample values; neither is sent."""
@@ -437,22 +441,3 @@ class TestEvaluationJsonGenerator:
         self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
 
         assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.7}}
-
-    def test_hub_metrics_drop_excluded_keys_with_everything_under_them(self):
-        """``exclude`` patterns match reply keys at any depth, case-insensitively."""
-        reply = {"m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_b": 0.04}}, "Delong_Q": {"x": 1}}}
-        self._receive("Trust_1", self._metrics(**reply), model_owner="SRV_m_a")
-
-        assert self.generator.hub_metrics(exclude=["delong_*"]) == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8}}
-        assert "M_A/DELONG_P_VALUES/EFFUSION/M_B" in self.generator.hub_metrics()["Trust_1"]
-
-    def test_hub_metrics_leave_out_a_client_whose_every_metric_is_excluded(self):
-        self._receive("Trust_1", self._metrics(note_count=3), model_owner="SRV_model")
-
-        assert self.generator.hub_metrics(exclude=["NOTE_*"]) == {}
-
-    @pytest.mark.parametrize("bad", ["delong_*", [1], None])
-    def test_hub_metrics_refuse_an_exclude_that_is_not_a_list_of_strings(self, bad):
-        """A bare string would otherwise be matched one character at a time."""
-        with pytest.raises(TypeError, match="HUB_METRICS_EXCLUDE"):
-            self.generator.hub_metrics(exclude=bad)
