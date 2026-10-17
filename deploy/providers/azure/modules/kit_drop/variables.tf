@@ -52,14 +52,3 @@ variable "uploader_principal_id" {
   description = "The operator's Entra object id, which uploads kits."
   type        = string
 }
-
-variable "operator_principal_type" {
-  description = "What kind of principal uploader_principal_id is: User for an `az login` operator, ServicePrincipal for a pipeline. Stated on the uploader's role assignment rather than left for Azure to look up."
-  type        = string
-  default     = "User"
-
-  validation {
-    condition     = contains(["User", "ServicePrincipal", "Group"], var.operator_principal_type)
-    error_message = "operator_principal_type must be User, ServicePrincipal or Group."
-  }
-}

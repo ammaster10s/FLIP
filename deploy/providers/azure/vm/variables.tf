@@ -57,7 +57,7 @@ variable "existing_subnet_id" {
 }
 
 variable "image_version" {
-  description = "Ubuntu 24.04 image version (az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all). \"latest\" follows Canonical's current image, as the AWS trust follows its stable AMI; pin one to rebuild a node bit-for-bit. Changing it replaces the VM."
+  description = "Ubuntu 24.04 image version: \"latest\", or a pinned one from az vm image list --publisher Canonical --offer ubuntu-24_04-lts --sku server --all. Changing it replaces the VM."
   type        = string
   default     = "latest"
 

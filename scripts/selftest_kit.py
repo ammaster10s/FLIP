@@ -34,6 +34,7 @@ PLACEHOLDER = re.compile(r"^([A-Z0-9_]+)=<run-make-[a-z-]+>$")
 
 def managed_values(backend: str, docker_tag: str) -> dict[str, str]:
     """Values for the blocks `make register-trust` would fill from the hub."""
+    fl_port = "8002"
     return {
         "AES_KEY_BASE64": base64.b64encode(secrets.token_bytes(32)).decode(),
         "CENTRAL_HUB_API_URL": "https://hub.invalid/api",
@@ -46,8 +47,8 @@ def managed_values(backend: str, docker_tag: str) -> dict[str, str]:
         "DOCKER_FL_TAG": docker_tag,
         "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
         "NLB_SUBDOMAIN": "fl-server.invalid",
-        "FL_SERVER_PORT": "8002",
-        "FL_EDGE_PORT": "8002",
+        "FL_SERVER_PORT": fl_port,
+        "FL_EDGE_PORT": fl_port,  # register_trust defaults it to FL_SERVER_PORT
         "TRUST_API_KEY": secrets.token_urlsafe(32),
         "TRUST_INTERNAL_SERVICE_KEY": secrets.token_urlsafe(32),
         "FL_KIT_SLOT": "Trust_1",

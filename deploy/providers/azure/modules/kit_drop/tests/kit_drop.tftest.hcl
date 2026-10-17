@@ -84,6 +84,6 @@ run "node_reads_and_operator_writes_the_container_only" {
   }
   assert {
     condition     = azurerm_role_assignment.reader.principal_type == "ServicePrincipal" && azurerm_role_assignment.uploader.principal_type == "User"
-    error_message = "Both assignments state their principal type: the node's identity, and an az login operator by default."
+    error_message = "Both assignments state their principal type: the node's identity, and the az login operator."
   }
 }

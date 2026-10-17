@@ -20,6 +20,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -193,14 +194,14 @@ def main() -> int:
     ):
         _assert(_check(report, name).get("ok") is True, f"check '{name}' passed", json.dumps(_check(report, name)))
     _assert(calls.exists() and "down-trust KIT=SELFTEST PROD=true" in calls.read_text(), "stack torn down afterwards")
-    password = next(
-        line.split("=", 1)[1]
-        for line in (tmp / ".env.SELFTEST.production").read_text().splitlines()
-        if line.startswith("ORTHANC_PASSWORD=")
+    kit = dict(
+        line.split("=", 1) for line in (tmp / ".env.SELFTEST.production").read_text().splitlines() if "=" in line
     )
+    password = kit.get("ORTHANC_PASSWORD", "")
     _assert(bool(password) and password not in calls.read_text(), "the Orthanc password never appears in argv")
+    token = base64.b64encode(f"{kit['ORTHANC_USERNAME']}:{password}".encode()).decode()
     config = tmp / "curl-config.log"
-    _assert(config.exists() and password in config.read_text(), "curl reads it from a config on stdin")
+    _assert(config.exists() and token in config.read_text(), "curl reads it from a config on stdin")
 
     print("an_aborted_run_still_tears_the_stack_down")
     aborted, _, aborted_calls, _ = _run("abort", abort_in_sleep=True)

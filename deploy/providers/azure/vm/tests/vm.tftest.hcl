@@ -117,7 +117,7 @@ run "rejects_a_prefix_too_long_for_a_storage_account_name" {
   expect_failures = [var.name_prefix]
 }
 
-run "image_follows_latest_by_default_and_can_be_pinned" {
+run "pinned_image_version_reaches_the_vm" {
   command = plan
 
   variables {

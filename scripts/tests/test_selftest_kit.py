@@ -155,6 +155,15 @@ def main() -> int:
     left = _run(tmp / "y", "--template", str(template))
     _assert(left.returncode == 1 and "NEW_MANAGED_KEY" in left.stderr, "names the unfilled key", left.stderr)
 
+    print("covers_every_key_register_trust_writes")
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    import selftest_kit
+    import trust_kit_lib
+
+    written = trust_kit_lib.HUB_SHARED_KEYS + trust_kit_lib.CREDENTIAL_KEYS + trust_kit_lib.METADATA_KEYS
+    missing = set(written) - set(selftest_kit.managed_values("nvflare", "stag"))
+    _assert(not missing, "managed_values fills every hub-managed key", ", ".join(sorted(missing)))
+
     print(f"\n==== {PASS} passed, {FAIL} failed ====")
     return 0 if FAIL == 0 else 1
 
