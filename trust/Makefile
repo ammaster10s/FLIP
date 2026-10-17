@@ -277,7 +277,27 @@ define require_monailabel_supported
 	fi
 endef
 
-MONAI_LABEL_STATUS_MSG := $(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
+# up-trust starts monailabel before up-xnat, whose xnat-reset deletes and recreates the XNAT
+# data dir; the container's bind mount still holds the deleted archive, so it would never see
+# a study. Once XNAT is up, check the archive exists where the overlay mounts it from (a local
+# daemon only: a remote one resolves the path on its own host), then recreate monailabel onto it.
+define rebind_monailabel_archive
+	@host="$${DOCKER_HOST:-}"; \
+	if [ -z "$$host" ]; then \
+	  host=$$(docker context inspect $${DOCKER_CONTEXT:+"$$DOCKER_CONTEXT"} --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	fi; \
+	case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
+	case "$$host" in ssh://*|tcp://*) ;; *) \
+	  if [ ! -d "$(MONAI_LABEL_XNAT_ARCHIVE_DIR)" ]; then \
+	    echo "❌ MONAI Label mounts the XNAT archive from $(MONAI_LABEL_XNAT_ARCHIVE_DIR),"; \
+	    echo "   which does not exist after up-xnat. Check XNAT_DATA_DIR in $(KIT_FILE_LABEL)."; \
+	    exit 1; \
+	  fi;; \
+	esac
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --force-recreate --no-deps monailabel
+endef
+
+MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
 
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
@@ -513,6 +533,7 @@ up-trust: require-xnat-aetitle create-networks
 	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+	$(if $(MONAILABEL_OVERRIDE),$(rebind_monailabel_archive))
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
