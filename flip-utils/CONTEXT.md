@@ -37,8 +37,9 @@ The factory class (`flip.core.flip.FLIP`) that returns a `FLIPBase` implementati
 or Prod) for accessing project data, the FLIP dataframe, and sending metrics to the
 Central Hub.
 
-**ScatterAndGather (deprecated)**:
-Legacy NVFlare controller. Replaced by `FedAvgRecipe` + `fl.client` API.
+**ScatterAndGather**:
+The round controller (`flip.nvflare.controllers.scatter_and_gather`, FLIP's subclass of NVFlare's)
+that the FLIP FedAvg recipes wire in; clients talk to it through the Client API.
 
 ## Relationships
 

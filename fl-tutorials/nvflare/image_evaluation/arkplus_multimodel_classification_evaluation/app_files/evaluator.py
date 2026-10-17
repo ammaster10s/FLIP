@@ -103,9 +103,7 @@ def load_config() -> dict:
 
 def _autocast(enabled: bool = False):
     """AMP autocast context — mirrors the legacy evaluator so inference results are identical."""
-    if hasattr(torch, "amp"):
-        return torch.amp.autocast(device_type="cuda", enabled=enabled)
-    return torch.cuda.amp.autocast(enabled=enabled)
+    return torch.amp.autocast(device_type="cuda", enabled=enabled)
 
 
 def resolve_models_config(config: dict) -> tuple[list[dict], list[tuple[int, str]], LesionDict]:

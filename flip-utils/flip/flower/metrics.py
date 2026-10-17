@@ -216,9 +216,8 @@ def _resolve_site_name(msg: Message) -> str | None:
     return None
 
 
-# Trailing-suffix spellings that set a metric's plot x-coordinate. ".x_" is the canonical form;
-# ".round_" is the deprecated pre-x_value spelling, kept parsing so existing apps don't break.
-_X_VALUE_SUFFIXES = (".x_", ".round_")
+# Trailing suffix that sets a metric's plot x-coordinate.
+_X_VALUE_SUFFIX = ".x_"
 
 
 def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
@@ -228,7 +227,7 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
 
     - ``.x_<V>`` (optional, trailing) sets the plot x-coordinate; ``V`` is a float literal (``.x_5``,
       ``.x_1.5``, ``.x_1e-3``). Absent or non-numeric -> ``None`` (the hub plots the metric at its FL
-      global round). ``.round_<N>`` is the deprecated pre-x_value spelling and still parses.
+      global round).
     - ``@<x_label>`` (optional) names the x-axis, e.g. "epoch"; absent -> ``None`` (the hub defaults it
       to "Global Rounds"). A plot's identity is (label, x_label), so distinct x-labels render as separate
       plots — see https://github.com/londonaicentre/FLIP/issues/148.
@@ -237,18 +236,15 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
     ``"loss@epoch"`` -> ("loss", None, "epoch"); ``"loss@epoch.x_5"`` -> ("loss", 5.0, "epoch").
     """
     x_value: float | None = None
-    for suffix in _X_VALUE_SUFFIXES:
-        if suffix in key:
-            base, x_value_str = key.rsplit(suffix, 1)
-            try:
-                parsed = float(x_value_str)
-            except ValueError:
-                # Non-numeric suffix: leave the key (and its suffix) intact.
-                continue
-            # nan/inf would survive to the DB and break JSON-encoding the hub's metrics response.
-            if math.isfinite(parsed):
-                key, x_value = base, parsed
-                break
+    if _X_VALUE_SUFFIX in key:
+        base, x_value_str = key.rsplit(_X_VALUE_SUFFIX, 1)
+        try:
+            parsed = float(x_value_str)
+        except ValueError:
+            parsed = None  # Non-numeric suffix: leave the key (and its suffix) intact.
+        # nan/inf would survive to the DB and break JSON-encoding the hub's metrics response.
+        if parsed is not None and math.isfinite(parsed):
+            key, x_value = base, parsed
 
     key, x_label = split_x_label(key)
 

@@ -124,11 +124,7 @@ class InitialPTModelLocator(ModelLocator):
                 self.log_info(fl_ctx, model_path)
                 if not os.path.exists(model_path):
                     self.log_info(fl_ctx, f"Model does not exist at {model_path}")
-                    # Safe house: constant safehouse should be defined. Here we are just getting it directly.
-                    model_path = os.path.join("/safehouse", fl_ctx.get_job_id(), PTConstants.PTFileModelName)
-                    if not os.path.exists(model_path):
-                        self.log_info(fl_ctx, f"Model does not exist at safehouse ({model_path})")
-                        return None
+                    return None
 
                 # Load the torch model
                 device = "cuda" if torch.cuda.is_available() else "cpu"
