@@ -295,11 +295,6 @@ tflint-lint: ## Static tflint lint (terraform recommended preset + AWS ruleset, 
 checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
 	bash scripts/checkov_lint.sh
 
-.PHONY: create-backend
-create-backend: ## Create Terraform backend S3 bucket - Only run once
-	@echo "🚀 Creating Terraform backend resources..."
-	@TFSTATE_BUCKET_NAME="$(FLIP_TFSTATE_BUCKET_NAME)" TFSTATE_KEY="flip/terraform.tfstate" TFSTATE_REGION="$(AWS_REGION)" ./scripts/create-backend.sh
-
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
 	@echo "🔐 Logging into AWS SSO..."
@@ -348,60 +343,6 @@ init: ## Initialize Terraform configuration
 .PHONY: print-tf-env
 print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
 	@env | grep '^TF_VAR_' | sort
-
-.PHONY: import-persistent
-import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
-	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
-
-
-.PHONY: migrate-flip-bucket
-migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the three new buckets (run after `make apply` creates the new buckets)
-	## Source bucket: $${FLIP_BUCKET_NAME} (read from $(MAIN_ENV_FILE))
-	## Destination buckets: $${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}, $${FLIP_FL_RESULTS_BUCKET_NAME}, $${FLIP_APP_BUNDLES_BUCKET_NAME}
-	##
-	## Sequencing: (1) `make apply` provisions the new buckets, (2) this target copies
-	## prefixes into them, (3) `make verify-flip-bucket-migration` parity-checks, (4) redeploy
-	## with the new env vars, (5) smoke-test, (6) after a 24-48h cooldown manually decommission
-	## the old bucket with:
-	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `make verify-flip-bucket-migration` is green
-	## Note: `terraform state rm` is NOT needed — the `removed { destroy = false }`
-	## blocks in services.tf already forgot the legacy bucket on the last apply.
-	##
-	## Safe to re-run: `aws s3 sync` re-copies any source object whose mtime/size differs
-	## from the destination, and skips matching ones. Per-object failures (KMS grant gaps,
-	## throttling) do NOT cause `aws s3 sync` to exit non-zero — always finish with
-	## `make verify-flip-bucket-migration` before trusting that the migration completed.
-	@if [ -z "$(FLIP_BUCKET_NAME)" ]; then \
-		echo "❌ FLIP_BUCKET_NAME is not set in $(MAIN_ENV_FILE) — nothing to migrate from."; exit 1; \
-	fi
-	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
-	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
-		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
-	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
-		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
-	# The legacy base-application/ prefix is intentionally NOT migrated: the base FL
-	# application templates now ship in the flip-api image, not S3 (FLIP#724).
-	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
-		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
-	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
-
-
-.PHONY: verify-flip-bucket-migration
-verify-flip-bucket-migration: ## Parity-check the three migrated prefixes (every src key must exist on dst; extras on dst are fine)
-	## Why this exists: `aws s3 sync` returns exit code 0 even when individual object copies
-	## fail (per-object AccessDenied / throttling / RequestTimeout), so the migrate target's
-	## green banner is not enough to safely decommission the source bucket. The companion
-	## script computes a key-set subset check — every source key must exist on the
-	## destination. Keys present only on destination (e.g. researcher uploads landing on the
-	## new bucket after the env-var cutover) are reported but do not fail.
-	@bash scripts/verify-flip-bucket-migration.sh
-
 
 .PHONY: force-unlock
 force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
@@ -1206,7 +1147,7 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
 	## Step order:
-	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
+	## 1. login + init: auth and Terraform init
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
@@ -1217,7 +1158,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, seed the trust data with the stack down, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London HUB=$(HUB)
-full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
+full-deploy: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-hub-only
 full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust runs on-prem (honours HUB)
@@ -1236,4 +1177,4 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui HUB=$(HUB)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
-full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
+full-deploy-hub-only: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status

@@ -70,11 +70,10 @@ locals {
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
   flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
 
-  # Sub-paths under the new three-bucket layout. The legacy single-bucket
+  # Sub-paths under the three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `app_destination_bucket`) are re-pointed at the new purpose-built buckets
-  # per the migration mapping in `make migrate-flip-bucket` (see
-  # deploy/providers/AWS/Makefile). Keeping the same local names
+  # `app_destination_bucket`) are re-pointed at the purpose-built buckets
+  # (FLIP#24). Keeping the same local names
   # (`uploaded_federated_data_uri`, …) means the ecs_task_env map below can stay
   # byte-identical with the prior single-bucket layout — only the value behind
   # each local changes.

@@ -276,4 +276,3 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table)
 - Persistent resources (S3, Secrets, Cognito) preserved during destroy
-- `make import-persistent` to import pre-existing resources

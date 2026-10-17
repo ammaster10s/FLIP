@@ -100,17 +100,16 @@ This command executes the following steps in order:
 1. **`github-login`**: Authenticate with GitHub CLI
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
-4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
-5. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`
-6. **`plan`**: Generate and review the initial Terraform execution plan
-7. **`apply`**: Apply infrastructure changes
-8. **`update-env`**: Refresh the root environment file with Terraform outputs
-9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
-10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
-11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
-12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
-13. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then stop the stack, seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load), and bring Trust services back up via Docker Compose
-14. **`status`**: Run comprehensive health checks
+4. **`generate-internal-service-key`**: Check the fl-server → hub `INTERNAL_SERVICE_KEY` and its hash are in sync (re-syncing a stale hash). It cannot mint a first key from this directory — the Makefile refuses to parse at all while `INTERNAL_SERVICE_KEY` is unset in the env file — so mint it beforehand from the repo root: `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`
+5. **`plan`**: Generate and review the initial Terraform execution plan
+6. **`apply`**: Apply infrastructure changes
+7. **`update-env`**: Refresh the root environment file with Terraform outputs
+8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
+9. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
+10. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3
+11. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<hub>`) on the running hub and write its credentials back. Only the two hub-shared values the ECS task env carries (`TRUST_API_KEY_HEADER`, `FL_BACKEND`) come back with it — the rest of the block needs `make sync-trust-kit KIT=<CODE> HUB=<hub>` from the repo root afterwards (see [Registering trusts against the ECS hub](#registering-trusts-against-the-ecs-hub))
+12. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then stop the stack, seed the Trust EC2 with that trust's OMOP + Orthanc mock data (`seed-trust-data`, a ~1 GB HuggingFace fetch at the `trust/.data_version` tag plus the OMOP vocabulary load), and bring Trust services back up via Docker Compose
+13. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
 change, run `make provision-bastion HUB=stag|prod`; this does not touch the
@@ -447,13 +446,7 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which `main.tf` consumes for every deployed environment, so a CORS or bucket-policy change plans identically across them. (Development uses no AWS buckets: the dev stack's object store is a local RustFS container, FLIP#1291.) The same module also renders the Ark+ demo-assets bucket (`module.flip_demo_assets_bucket`, `services.tf`), the one exception to the SSE-KMS rule above: it uses SSE-S3 (`sse_algorithm = "AES256"`) and grants the edge distribution's CloudFront OAC read access to `ark_demo/assets/*` through `extra_bucket_policy_statements_json`.
 
-**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
-
-#### Migrating off the legacy single-bucket layout
-
-Every estate is migrated (FLIP#24); an account still holding a pre-split `flip{env}` bucket follows `make
-migrate-flip-bucket HUB=<stag|prod>` then `make verify-flip-bucket-migration HUB=<stag|prod>` (the target help
-says what each step does and when the old bucket may go).
+**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading a selection from those local templates, plus the user's model files, into `flip{env}-app-bundles/app_destinations/<model_id>/`. The selection is an allowlist (FLIP#1008): the backend's app folder(s) plus its single root file ship, and everything else in the template directory is excluded and listed at debug level — worth knowing before pointing `FL_APP_BASE_DIR` at an operator-provided tree, since an unrecognised file is dropped rather than shipped. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image.
 
 ### Manual Step-by-Step Deployment
 
@@ -475,45 +468,42 @@ make aws-login
 # 3. Initialize Terraform (uses the configured S3 backend)
 make init
 
-# 4. Import existing persistent resources (prevents replacement errors)
-make import-persistent
-
-# 5. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
+# 4. Check the fl-server -> hub INTERNAL_SERVICE_KEY + hash are in sync (the key must already be
 #    set in the env file or the Makefile will not parse; mint it first from the repo root with
 #    `make generate-internal-service-key ENV_FILE=$(pwd)/.env.<hub>`)
 make generate-internal-service-key
 
-# 6. Plan changes
+# 5. Plan changes
 make plan
 
-# 7. Apply infrastructure
+# 6. Apply infrastructure
 make apply
 
-# 8. Refresh the root env file with Terraform outputs (DB_HOST, POSTGRES_SECRET_ARN, the two Cognito IDs)
+# 7. Refresh the root env file with Terraform outputs (DB_HOST, POSTGRES_SECRET_ARN, the two Cognito IDs)
 make update-env
 
-# 9. Configure SSH access
+# 8. Configure SSH access
 make ssh-config
 
-# 10. Setup EC2 instances with Ansible
+# 9. Setup EC2 instances with Ansible
 make ansible-init
 
-# 11. Deploy the Central Hub
+# 10. Deploy the Central Hub
 make deploy-centralhub
 
-# 12. Register every locally-present trust kit file on the hub and write its credentials back
+# 11. Register every locally-present trust kit file on the hub and write its credentials back
 make register-trusts
 #     ...then fill the rest of each kit's hub-shared block from the local env file (repo root):
 #     make sync-trust-kit KIT=<CODE> HUB=<hub>
 
-# 13. Deploy trust services (runs stage-fl-kit + seed-trust-data; needs KIT=<CODE>)
+# 12. Deploy trust services (runs stage-fl-kit + seed-trust-data; needs KIT=<CODE>)
 make deploy-trust KIT=<CODE>
 
-# 14. Check status
+# 13. Check status
 make status
 ```
 
-Step 13 is not a single action. `deploy-trust` runs `stage-fl-kit` as a prerequisite and
+Step 12 is not a single action. `deploy-trust` runs `stage-fl-kit` as a prerequisite and
 `seed-trust-data` inside its recipe, between stopping and restarting the stack — the seed
 starts a throwaway postmaster on the trust's data directory, so the trust's own omop-db
 must not hold it open (the play refuses if it does). Seeding loads that trust's OMOP +
@@ -757,7 +747,7 @@ files once:
   two names for one kit stop make. A site renames only once it will not roll back past this release, whose
   predecessors know only the old names.
 
-On GitHub, add `TF_HUB` to `aws-stag` / `aws-prod` before the merge. Delete `TF_PROD`, `LOCAL_TRUST_PUBLIC_IPS`,
+On GitHub, add `TF_HUB` to `aws-stag` / `aws-prod` before the merge. Delete `TF_PROD`, `FLIP_BUCKET_NAME`, `LOCAL_TRUST_PUBLIC_IPS`,
 `K8S_TRUST_PUBLIC_IPS`, `LZA_ELB_ACCESS_LOGS_BUCKET` and any `RELEASE_WEB_ALIAS` from `aws-stag` once this is on `develop`, but from `aws-prod`
 only once the release containing it reaches `main`: `main`'s apply and drift workflows read them until then.
 
@@ -1109,7 +1099,7 @@ rules, and carries only the SSM managed IAM policy. The internal NLB's web and F
 forward to ECS Fargate `target_type=ip` target groups
 (`aws_lb_target_group.ecs_flip_api`, `aws_lb_target_group.ecs_fl_server_tcp`).
 
-The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
+The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed.
 
 ### Destroy Infrastructure
 
