@@ -92,6 +92,8 @@ gave its AWS trust one for allowlisting and removed it, because it protected not
 +--------------------------------------+-----------------------------------------------------+
 | ``github.com``                       | First boot clones FLIP at a pinned commit           |
 +--------------------------------------+-----------------------------------------------------+
+| ``huggingface.co``                   | First install loads the published mock trust data   |
++--------------------------------------+-----------------------------------------------------+
 | The OS, Docker and uv package        | First-boot installs                                 |
 | sources                              |                                                     |
 +--------------------------------------+-----------------------------------------------------+
