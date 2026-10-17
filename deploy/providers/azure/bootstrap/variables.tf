@@ -28,12 +28,6 @@ variable "location" {
   default     = "uksouth"
 }
 
-variable "egress_location" {
-  description = "Region of the node's static outbound IP: it must match the node's region (a NIC or NAT gateway cannot use an IP from another region). Empty means location."
-  type        = string
-  default     = ""
-}
-
 variable "name_prefix" {
   description = "Prefix for resource names; the vm root takes the same one and builds a storage account name from it, hence 3-13 lowercase letters and digits."
   type        = string

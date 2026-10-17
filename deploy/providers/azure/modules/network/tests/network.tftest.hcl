@@ -31,44 +31,22 @@ run "default_creates_network_with_no_inbound_rules" {
     condition     = length(azurerm_network_security_group.this[0].security_rule) == 0
     error_message = "The NSG must have no rules: Azure's defaults deny inbound from the internet."
   }
-  assert {
-    condition     = output.attach_public_ip_to_nic == true
-    error_message = "public_ip is the default egress mode."
-  }
-  assert {
-    condition     = length(azurerm_nat_gateway.this) == 0
-    error_message = "public_ip mode creates no NAT gateway."
-  }
 }
 
-run "nat_mode_uses_the_bootstrap_ip" {
+run "created_network_leaves_through_its_own_nat_gateway" {
   command = plan
 
-  variables {
-    egress_mode         = "nat"
-    egress_public_ip_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-bootstrap-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-egress-ip"
-  }
-
   assert {
-    condition     = length(azurerm_nat_gateway.this) == 1 && output.attach_public_ip_to_nic == false
-    error_message = "nat mode creates a NAT gateway and puts no public IP on the NIC."
+    condition     = length(azurerm_nat_gateway.this) == 1 && length(azurerm_subnet_nat_gateway_association.this) == 1
+    error_message = "A created network gets a NAT gateway on the node subnet."
   }
   assert {
-    condition     = azurerm_nat_gateway_public_ip_association.this[0].public_ip_address_id == var.egress_public_ip_id
-    error_message = "The NAT gateway must use the bootstrap IP."
+    condition     = length(azurerm_public_ip.nat) == 1 && azurerm_public_ip.nat[0].sku == "Standard"
+    error_message = "The NAT gateway's IP is created with the network, in this module, not taken from bootstrap."
   }
-}
-
-run "none_mode_creates_no_egress" {
-  command = plan
-
-  variables {
-    egress_mode = "none"
-  }
-
   assert {
-    condition     = length(azurerm_nat_gateway.this) == 0 && output.attach_public_ip_to_nic == false
-    error_message = "none mode creates no egress at all."
+    condition     = azurerm_subnet.this[0].default_outbound_access_enabled == false
+    error_message = "The subnet must not fall back to Azure's implicit outbound access."
   }
 }
 
@@ -77,7 +55,6 @@ run "existing_subnet_creates_nothing" {
 
   variables {
     existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
-    egress_mode        = "none"
   }
 
   assert {
@@ -88,26 +65,8 @@ run "existing_subnet_creates_nothing" {
     condition     = output.subnet_id == var.existing_subnet_id
     error_message = "The existing subnet is passed through."
   }
-}
-
-run "nat_needs_a_created_subnet" {
-  command = plan
-
-  variables {
-    existing_subnet_id  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
-    egress_mode         = "nat"
-    egress_public_ip_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/flipaz-bootstrap-rg/providers/Microsoft.Network/publicIPAddresses/flipaz-egress-ip"
+  assert {
+    condition     = length(azurerm_public_ip.nat) == 0 && length(azurerm_nat_gateway.this) == 0 && output.nat_public_ip_address == ""
+    error_message = "On a site subnet the module creates no public IP and no NAT gateway: the site's egress applies."
   }
-
-  expect_failures = [var.egress_mode]
-}
-
-run "rejects_unknown_egress_mode" {
-  command = plan
-
-  variables {
-    egress_mode = "open"
-  }
-
-  expect_failures = [var.egress_mode]
 }

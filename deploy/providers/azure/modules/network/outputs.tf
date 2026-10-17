@@ -17,7 +17,7 @@ output "subnet_id" {
   value       = local.create ? azurerm_subnet.this[0].id : var.existing_subnet_id
 }
 
-output "attach_public_ip_to_nic" {
-  description = "True only in public_ip mode, where the root puts the bootstrap IP on the VM's NIC."
-  value       = var.egress_mode == "public_ip"
+output "nat_public_ip_address" {
+  description = "The NAT gateway's outbound address on a created network; empty on a site subnet, whose egress the site owns."
+  value       = local.create ? azurerm_public_ip.nat[0].ip_address : ""
 }

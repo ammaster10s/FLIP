@@ -23,8 +23,8 @@ the AKS half comes later.
 
 | Layer | Directory | What it creates | Lifetime |
 |---|---|---|---|
-| Bootstrap | `bootstrap/` | Resource group, Terraform state storage (Entra ID access only), a budget alert, the node's static outbound IP | Created once, kept across node rebuilds |
-| Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs, all inbound denied at the VM's NIC, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
+| Bootstrap | `bootstrap/` | Resource group, Terraform state storage (Entra ID access only), a budget alert | Created once, kept across node rebuilds |
+| Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs, a NAT gateway with its own outbound IP (none of these on a site subnet), all inbound denied at the VM's NIC, no public IP on the VM, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
 | Kit drop | `modules/kit_drop/` (on by default in `vm/`) | A storage account with shared keys off and a private `kits` container. Its firewall admits only the node's subnet and your IP; a lifecycle rule deletes every blob a day after upload, and Azure runs it daily, so within about 48 hours. The node can read the container, you can write to it | With the node |
 
 At first boot cloud-init installs `flip-node` (`vm/templates/flip-node.sh`). It mounts the data
@@ -49,7 +49,8 @@ The node never provisions an FL kit, so it carries no provisioning tooling.
 **Cost.** Nothing here skips Terraform's confirmation: every `bootstrap`, `apply` and `destroy`
 shows the plan and asks. On a Free Trial with the spending limit on, running out of credit
 stops resources rather than billing you. A running `Standard_D4s_v5` uses roughly $0.20 an
-hour; `make stop` deallocates it so only the disks and the IP cost anything; `make destroy`
+hour, and the NAT gateway with its IP roughly $0.05 an hour more, running or not; `make stop`
+deallocates the VM so only the disks and the NAT gateway cost anything; `make destroy`
 at the end of a session removes the node and keeps the bootstrap layer.
 
 ## Steps
@@ -92,12 +93,27 @@ edge itself (outbound); nothing listens on the node.
 
 ## Choosing a region
 
-`LOCATION` (default `uksouth`) is the node's region, and the outbound IP follows it; the
-bootstrap's state storage stays in `BOOTSTRAP_LOCATION` (default `uksouth`), so moving the node
-replaces only the IP. Free Trial subscriptions often cannot create 4-vCPU VMs in the busy UK
+`LOCATION` (default `uksouth`) is the node's region; the bootstrap's state storage stays in
+`BOOTSTRAP_LOCATION` (default `uksouth`), so the node can move without it. Free Trial subscriptions often cannot create 4-vCPU VMs in the busy UK
 regions (`SkuNotAvailable` / `NotAvailableForSubscription`); check what yours allows with
 `az vm list-skus --subscription "$SUB" --location <region> --size Standard_D4 --all -o table`,
-then pass the same `LOCATION=<region>` to `bootstrap` (to move the IP) and to `plan`.
+then pass `LOCATION=<region>` to `plan`.
+
+## Network and outbound traffic
+
+The node only makes outbound connections, and nothing listens on it. The hub admits it by its
+API key and its FL kit's mTLS certificates, never by its source address, so no target here keeps
+a fixed IP for it.
+
+- **A site's own subnet (`SUBNET_ID=<subnet resource id>` on `plan`, `apply` and `destroy`).**
+  The node uses the site's routes, normally through its firewall, and this tree creates no
+  network, no NAT gateway and no public IP. This is how a trust deploys. The subnet needs the
+  `Microsoft.Storage` service endpoint for the kit drop, and the site's firewall must allow the
+  hub's URL on 443, the hub's FL endpoint (8002, or 8003 on staging), and what first boot fetches:
+  GitHub (the FLIP clone), GHCR (the images) and the OS, Docker and uv package sources. The FL
+  endpoint must be exempt from TLS inspection: its mTLS fails through a proxy that re-signs it.
+- **No `SUBNET_ID`.** For a standalone or trial node: the tree creates a VNet whose subnet
+  leaves through its own NAT gateway. The gateway's IP is created and destroyed with the node.
 
 ## When something goes wrong
 
@@ -114,7 +130,7 @@ then pass the same `LOCATION=<region>` to `bootstrap` (to move the IP) and to `p
   reprovision; do not edit the node by hand.
 - **The node cannot fetch its kit.** `fetch-kit` retries for about five minutes and then
   names the status: 403 right after an apply is the node's read role still propagating (run it
-  again); a 403 that persists on a site-supplied subnet (`existing_subnet_id`) means the subnet
+  again); a 403 that persists on a site-supplied subnet (`SUBNET_ID`) means the subnet
   lacks the `Microsoft.Storage` service endpoint the kit drop's firewall needs; 404 means the blob was never uploaded or has expired (kits are deleted within about 48 hours: upload again).
 
 ## Checks without Azure

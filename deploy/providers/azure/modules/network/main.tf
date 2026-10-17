@@ -56,8 +56,21 @@ resource "azurerm_subnet_network_security_group_association" "this" {
   network_security_group_id = azurerm_network_security_group.this[0].id
 }
 
+# Outbound for a network this module creates: a NAT gateway with its own IP, created and
+# destroyed with the node. Nothing keeps an address across rebuilds, because the hub admits a trust
+# by its credentials, never by source IP. On a site subnet the site's own egress applies.
+resource "azurerm_public_ip" "nat" {
+  count               = local.create ? 1 : 0
+  name                = "${var.name_prefix}-nat-ip"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
 resource "azurerm_nat_gateway" "this" {
-  count               = local.create && var.egress_mode == "nat" ? 1 : 0
+  count               = local.create ? 1 : 0
   name                = "${var.name_prefix}-nat"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -68,7 +81,7 @@ resource "azurerm_nat_gateway" "this" {
 resource "azurerm_nat_gateway_public_ip_association" "this" {
   count                = length(azurerm_nat_gateway.this)
   nat_gateway_id       = azurerm_nat_gateway.this[0].id
-  public_ip_address_id = var.egress_public_ip_id
+  public_ip_address_id = azurerm_public_ip.nat[0].id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "this" {
