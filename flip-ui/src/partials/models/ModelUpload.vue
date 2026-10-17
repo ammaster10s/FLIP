@@ -52,7 +52,7 @@
                             </span>
                         </div>
                         <div class="flex flex-wrap items-center gap-1.5 text-[13px] text-gray-600 dark:text-gray-300">
-                            <span v-if="flBackendLabel" :class="CHIP_CLASS" data-test="fl-backend-chip">
+                            <span v-if="flBackendLabel" :class="backendChipClass" data-test="fl-backend-chip">
                                 {{ flBackendLabel }}
                             </span>
                             <span :class="[CHIP_CLASS, 'font-mono text-xs']" data-test="job-type-chip">
@@ -97,14 +97,6 @@
                                     data-test="file-status-missing"
                                     aria-label="Missing"
                                 />
-                                <span
-                                    v-else-if="row.required && row.file.status === FileUploadStatus.COMPLETED"
-                                    class="flex items-center justify-center w-[18px] h-[18px] text-white bg-green-600 rounded-full shrink-0"
-                                    data-test="file-upload-status-completed"
-                                    aria-label="Ready"
-                                >
-                                    <icon-ph-check-bold class="w-3 h-3" />
-                                </span>
                                 <div
                                     v-else
                                     class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
@@ -306,6 +298,14 @@ interface IFileRow {
 
 const CHIP_CLASS = "px-2 py-0.5 font-semibold rounded-full bg-primary-100 text-primary-500 "
     + "dark:bg-dark-raised dark:text-primary-200";
+
+// Each FL backend's brand colour, both light enough to need dark text: NVIDIA green, Flower yellow.
+const BACKEND_CHIP_CLASSES: Record<string, string> = {
+    NVFlare: "px-2 py-0.5 font-semibold rounded-full bg-[#76B900] text-ink",
+    Flower: "px-2 py-0.5 font-semibold rounded-full bg-[#F2B705] text-ink"
+};
+
+const backendChipClass = computed(() => BACKEND_CHIP_CLASSES[props.flBackendLabel ?? ""] ?? CHIP_CLASS);
 
 const allFiles = computed(() => internalFiles.value.concat(uploadingFiles.value));
 
