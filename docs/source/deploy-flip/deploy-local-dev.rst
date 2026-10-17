@@ -121,9 +121,6 @@ placeholders:
    * - ``AES_KEY_BASE64``
      - A new 32-byte key:
        ``python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())"``
-   * - ``AICENTRE_BUCKET_NAME``
-     - Leave the placeholder. Only staging/production kit uploads use it; the
-       local kits are provisioned in-tree (Step 5).
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
