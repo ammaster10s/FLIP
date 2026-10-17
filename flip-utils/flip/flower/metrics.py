@@ -241,10 +241,11 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
         try:
             parsed = float(x_value_str)
         except ValueError:
-            parsed = None  # Non-numeric suffix: leave the key (and its suffix) intact.
-        # nan/inf would survive to the DB and break JSON-encoding the hub's metrics response.
-        if parsed is not None and math.isfinite(parsed):
-            key, x_value = base, parsed
+            pass  # Non-numeric suffix: leave the key (and its suffix) intact.
+        else:
+            # nan/inf would survive to the DB and break JSON-encoding the hub's metrics response.
+            if math.isfinite(parsed):
+                key, x_value = base, parsed
 
     key, x_label = split_x_label(key)
 

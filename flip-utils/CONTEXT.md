@@ -15,7 +15,7 @@ _Avoid_: Executor, Controller (when referring to the old pattern)
 A PyTorch-specific recipe class (`nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe`) that
 configures a complete FedAvg job with ScriptRunner, model persistor, and optional early
 stopping — replacing manual `config.json` setup.
-_Avoid_: config.json, ScatterAndGather
+_Avoid_: config.json
 
 **FLUNet**:
 A thin wrapper around `monai.networks.nets.UNet` that stores constructor parameters as
@@ -38,8 +38,8 @@ or Prod) for accessing project data, the FLIP dataframe, and sending metrics to 
 Central Hub.
 
 **ScatterAndGather**:
-The round controller (`flip.nvflare.controllers.scatter_and_gather`, FLIP's subclass of NVFlare's)
-that the FLIP FedAvg recipes wire in; clients talk to it through the Client API.
+FLIP's subclass of NVFlare's round controller (`flip.nvflare.controllers.ScatterAndGather`), wired in
+by the FLIP FedAvg recipes; clients talk to it through the Client API.
 
 ## Relationships
 

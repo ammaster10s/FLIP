@@ -680,7 +680,7 @@ def recreate_image(
         mask_size (List[Tuple[int, ...]]): Original mask sizes for each item in batch
         coords (List[Tuple[List[int], List[int], List[int], List[int]]]):
             Patch coordinates as (c_coord, h_coord, w_coord, d_coord) for each patch
-        patches_per_image (List[int]): Number of patches for each image in batch.
+        patches_per_image (List[int]): Number of patches for each image in batch (may differ per image).
 
     Returns:
         Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
@@ -689,9 +689,6 @@ def recreate_image(
             - new_probabilities: List of reconstructed probability tensors
             - new_images: List of reconstructed image tensors
             - new_masks: List of reconstructed mask tensors
-
-    Note:
-        Each image may have its own patch count, so batch_size > 1 is supported.
     """
     # Calculate patch indices for each image
     patch_indices = []

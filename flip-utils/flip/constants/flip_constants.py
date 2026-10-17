@@ -113,7 +113,6 @@ def get_flip_constants() -> DevSettings | ProdSettings:
     return _flip_constants_instance
 
 
-# FlipConstants: attribute access to the lazily-built settings (get_flip_constants()).
 class _FlipConstantsProxy:
     """Proxy to provide lazy loading via attribute access.
 
