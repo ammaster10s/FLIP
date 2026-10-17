@@ -124,18 +124,11 @@ placeholders:
    * - ``AICENTRE_BUCKET_NAME``
      - Leave the placeholder. Only staging/production kit uploads use it; the
        local kits are provisioned in-tree (Step 5).
-   * - ``NLB_SUBDOMAIN``
-     - Leave the placeholder. A local stack never dials it, but ``make up``
-       copies it into the dev trust kits with the other hub-shared values and
-       stops if it is empty.
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
-production only), the object-store keys (defaults are in
-``deploy/compose.development.yml``) and
-``DEMO_*_PASSWORD`` (read only by ``make demo-users``, the demo-video recorder's
-setup; set them to passwords your identity provider's policy accepts if you
-record one).
+production only) and the object-store keys (defaults are in
+``deploy/compose.development.yml``).
 
 .. warning::
 
