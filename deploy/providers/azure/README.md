@@ -110,9 +110,12 @@ a fixed IP for it.
   gateway and no public IP. This is how a trust deploys. The subnet needs the `Microsoft.Storage`
   service endpoint for the kit drop, and the site's firewall must allow the hub's URL on 443, the
   hub's FL endpoint (8002, or 8003 on staging), and what first boot and first install fetch:
-  GitHub (the FLIP clone), GHCR (the images), Hugging Face (the published mock trust data) and
-  the OS, Docker and uv package sources. The FL endpoint must be exempt from TLS inspection: a
-  proxy that re-signs it breaks its certificate check.
+  GitHub (the FLIP clone), GHCR (`ghcr.io` and its layer host
+  `pkg-containers.githubusercontent.com`), Docker Hub (`registry-1.docker.io`, `auth.docker.io`,
+  `production.cloudfront.docker.com`), Hugging Face (the published mock trust data) and the OS,
+  Docker and uv package sources. The runbook's table was measured behind a deny-all Azure
+  Firewall. The FL endpoint must be exempt from TLS inspection: a proxy that re-signs it breaks
+  its certificate check.
 - **No `SUBNET_ID`.** For a standalone or trial node: the tree creates a VNet whose subnet
   leaves through its own NAT gateway. The gateway's IP is created and destroyed with the node.
 
