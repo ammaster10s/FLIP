@@ -255,6 +255,7 @@ version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "highdicom" },
+    { name = "numpy" },
     { name = "requests" },
     { name = "simpleitk" },
 ]
@@ -267,6 +268,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "highdicom", specifier = ">=0.28" },
+    { name = "numpy", specifier = ">=2" },
     { name = "requests", specifier = ">=2.32" },
     { name = "simpleitk", specifier = ">=2.5.2" },
 ]
