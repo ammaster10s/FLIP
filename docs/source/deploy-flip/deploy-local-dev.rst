@@ -127,12 +127,13 @@ placeholders:
    * - ``NLB_SUBDOMAIN``
      - Leave the placeholder. A local stack never uses it, but the variable
        must exist.
-   * - ``DEMO_*_PASSWORD``
-     - Only for ``make demo-video``; any value.
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
-production only) and the object-store keys (defaults are in the Makefile).
+production only), the object-store keys (defaults are in the Makefile) and
+``DEMO_*_PASSWORD`` (read only by ``make demo-users``, the demo-video recorder's
+setup; set them to passwords your identity provider's policy accepts if you
+record one).
 
 .. warning::
 
