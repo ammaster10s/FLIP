@@ -39,19 +39,8 @@ variable "name_prefix" {
   }
 }
 
-variable "egress_public_ip_id" {
-  description = "The bootstrap output egress_public_ip_id."
-  type        = string
-}
-
-variable "egress_mode" {
-  description = "public_ip, nat or none (validated by the network module)."
-  type        = string
-  default     = "public_ip"
-}
-
 variable "existing_subnet_id" {
-  description = "A subnet the site supplies; empty creates the network. With the kit drop on, it needs the Microsoft.Storage service endpoint, or the storage firewall refuses the node (403)."
+  description = "A subnet the site supplies; outbound traffic then follows the site's routes. Empty creates the network, which leaves through its own NAT gateway. With the kit drop on, a site subnet needs the Microsoft.Storage service endpoint, or the storage firewall refuses the node (403)."
   type        = string
   default     = ""
 }

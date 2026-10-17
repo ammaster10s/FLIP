@@ -185,10 +185,24 @@ def test_destroy_bootstrap_refuses_while_the_node_exists():
     assert recipe.index("az group exists") < recipe.index("destroy"), "the check comes before the destroy"
 
 
-def test_bootstrap_keeps_its_region_and_puts_the_ip_with_the_node():
+def test_bootstrap_keeps_its_own_region():
     recipe = _recipe("bootstrap")
     assert "location=$(BOOTSTRAP_LOCATION)" in recipe, "bootstrap's own region must not move with the node"
-    assert "egress_location=$(LOCATION)" in recipe, "the outbound IP must sit in the node's region"
+
+
+def test_only_the_created_networks_nat_gateway_owns_a_public_ip():
+    # The hub admits a trust by its credentials, never by source IP (#199 added a trust IP, #251
+    # removed it), and many trust estates forbid public IPs. The one exception is the NAT gateway
+    # of a network this tree creates, which lives and dies with the node.
+    owners = sorted(
+        str(p.relative_to(AZURE_DIR))
+        for p in AZURE_DIR.rglob("*.tf")
+        if ".terraform" not in p.parts and 'resource "azurerm_public_ip"' in p.read_text()
+    )
+    assert owners == ["modules/network/main.tf"], owners
+    nic = hcl_block((AZURE_DIR / "vm" / "main.tf").read_text(), 'resource "azurerm_network_interface" "node"')
+    assert nic, "the node's NIC block was not found"
+    assert "public_ip_address_id" not in nic, "the node's NIC must never carry a public IP"
 
 
 def test_plan_lets_the_operator_through_the_kit_drop_firewall():
@@ -218,12 +232,12 @@ def _target(name: str) -> str:
     return MAKEFILE.read_text().split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
 
 
-def test_aks_apply_asks_first_and_refuses_while_the_vm_holds_the_outbound_ip():
+def test_aks_apply_asks_first_and_refuses_while_the_vm_exists():
     body = _target("aks-apply")
     assert "show aks.tfplan" in body
     assert 'read -r -p "Apply this plan?' in body
-    assert "az group exists" in body, "the VM's NIC holds the bootstrap IP"
-    assert "$(NODE_RG)" in body, "the VM's NIC holds the bootstrap IP"
+    assert "az group exists" in body, "the VM holds the trial's vCPUs"
+    assert "$(NODE_RG)" in body, "the VM holds the trial's vCPUs"
 
 
 def test_aks_plan_admits_only_the_operator():

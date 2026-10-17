@@ -33,3 +33,8 @@ output "kit_drop_url" {
   description = "Where kit-upload puts kits and flip-node fetches them (empty when the kit drop is off)."
   value       = local.kit_drop_url
 }
+
+output "outbound_ip" {
+  description = "The NAT gateway's address on a created network; empty on a site subnet, whose egress the site owns."
+  value       = module.network.nat_public_ip_address
+}

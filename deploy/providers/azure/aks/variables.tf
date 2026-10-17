@@ -18,7 +18,7 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  description = "Azure region; the cluster and the bootstrap's outbound IP must share it."
+  description = "Azure region."
   type        = string
   default     = "uksouth"
 }
@@ -29,9 +29,10 @@ variable "name_prefix" {
   default     = "flipaz"
 }
 
-variable "egress_public_ip_id" {
-  description = "The bootstrap's static public IP: the cluster load balancer's only outbound address."
+variable "existing_subnet_id" {
+  description = "A subnet the site supplies, whose route table sends outbound traffic through the site's firewall (AKS userDefinedRouting refuses a subnet without one). Empty creates a network that leaves through its own NAT gateway."
   type        = string
+  default     = ""
 }
 
 variable "operator_ip" {
