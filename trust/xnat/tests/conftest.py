@@ -137,6 +137,35 @@ def _phi_study() -> Dataset:
     ds.add_new(0x00090010, "LO", "GEMS_IDEN_01")
     ds.add_new(0x00091002, "LO", "PRIV-MRN-PHI")
 
+    # Dates, times and patient characteristics: OMOP holds these, so the script drops them
+    ds.StudyDate = "20240315"
+    ds.SeriesDate = "20240315"
+    ds.AcquisitionDateTime = "20240315101512"
+    ds.StudyTime = "101512"
+    ds.PatientAge = "043Y"
+    ds.PatientSex = "F"
+    ds.PatientSize = "1.68"
+    ds.PatientWeight = "61.5"
+
+    # Free text and other IDs a PACS fills in
+    ds.StudyDescription = "CT CHEST FOR MRN-12345-PHI"
+    ds.SeriesDescription = "SERIES-DESC-PHI"
+    ds.StudyID = "STUDY-ID-PHI"
+    ds.add_new(0x60004000, "LT", "OVERLAY-PHI")  # Overlay Comments, group 6000
+    ds.add_new(0x60024000, "LT", "OVERLAY-PHI")  # ...and the next overlay group
+    ds.add_new(0x50000022, "LO", "CURVE-PHI")  # Curve Description
+
+    # Other UIDs: hashed at the top level, removed where nested (DicomEdit cannot assign there).
+    # Referenced Series Sequence is not in Table E.1-1, so it survives with its UIDs gone.
+    ds.FrameOfReferenceUID = "1.2.3.4.5.6.7.8.9.12"
+    instance = Dataset()
+    instance.ReferencedSOPClassUID = CTImageStorage
+    instance.ReferencedSOPInstanceUID = "1.2.3.4.5.6.7.8.9.13"
+    series = Dataset()
+    series.SeriesInstanceUID = "1.2.3.4.5.6.7.8.9.11"
+    series.ReferencedInstanceSequence = [instance]
+    ds.ReferencedSeriesSequence = [series]
+
     return ds
 
 

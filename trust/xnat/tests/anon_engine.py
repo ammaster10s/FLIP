@@ -21,10 +21,11 @@ Supported grammar (line-oriented; comments via `//`, blank lines ignored):
     version "<string>"                       # ignored; documents the file
     (gggg,eeee) := "<literal>"               # assign string literal; \\ separates values
     (gggg,eeee) := <variable>                # assign value of project|subject|session
-    (gggg,eeee) := hashUID[(gggg,eeee)]      # replace with deterministic hash UID
+    (gggg,eeee) := hashUID[(gggg,eeee)]      # replace with deterministic hash UID; no-op if absent
     - (gggg,eeee)                            # remove tag at the top level
     - */(gggg,eeee)                          # remove tag at any depth
     - +/(gggg,eeee)                          # remove tag inside sequences only
+    - */(60X@,4000)                          # in removals, X is any hex digit and @ an even one
     removeAllPrivateTags                     # remove private tags at any depth
 
 Anything else raises ``UnsupportedRuleError`` so unexpected new syntax in the
@@ -42,10 +43,13 @@ from typing import Literal, Union
 
 from pydicom.dataset import Dataset
 
-# (gggg,eeee) - case insensitive, exactly 4 hex digits each
-_TAG_RE = re.compile(r"\(\s*([0-9A-Fa-f]{4})\s*,\s*([0-9A-Fa-f]{4})\s*\)")
+# (gggg,eeee) - case insensitive, exactly 4 hex digits each; DicomEdit rejects spaces inside the brackets
+_TAG_RE = re.compile(r"\(([0-9A-Fa-f]{4}),([0-9A-Fa-f]{4})\)")
+# A removed tag may use X (any hex digit) and @ (an even one), but not in the group's last digit:
+# DicomEdit rejects `(60XX,4000)`, which would also match the odd (private) groups
+_TAG_PATTERN = r"\(([0-9A-Fa-fX@]{3}[0-9A-Fa-f@]),([0-9A-Fa-fX@]{4})\)"
 # Optional sequence wildcard before a removed tag: `*/` any depth, `+/` nested only
-_REMOVE_RE = re.compile(r"(?:([*+])\s*/\s*)?" + _TAG_RE.pattern)
+_REMOVE_RE = re.compile(r"(?:([*+])\s*/\s*)?" + _TAG_PATTERN)
 _VARIABLE_NAMES = frozenset({"project", "subject", "session"})
 _HASH_UID_RE = re.compile(r"hashUID\[\s*" + _TAG_RE.pattern + r"\s*\]")
 _LITERAL_RE = re.compile(r'"([^"]*)"')
@@ -59,6 +63,20 @@ def _parse_tag(group_hex: str, element_hex: str) -> int:
     return (int(group_hex, 16) << 16) | int(element_hex, 16)
 
 
+def _parse_tag_pattern(group: str, element: str) -> tuple[int, int]:
+    """``(value, mask)`` for a removal tag: a tag matches when ``tag & mask == value``."""
+    value = mask = 0
+    for digit in group + element:
+        value <<= 4
+        mask <<= 4
+        if digit == "@":
+            mask |= 0x1
+        elif digit != "X":
+            value |= int(digit, 16)
+            mask |= 0xF
+    return value, mask
+
+
 Scope = Literal["top", "any", "nested"]
 _SCOPES: dict[str | None, Scope] = {None: "top", "*": "any", "+": "nested"}
 
@@ -68,6 +86,10 @@ class RemoveRule:
     tag: int
     line_no: int
     scope: Scope = "top"
+    mask: int = 0xFFFFFFFF
+
+    def matches(self, tag: int) -> bool:
+        return tag & self.mask == self.tag
 
 
 @dataclass(frozen=True)
@@ -130,8 +152,9 @@ def _parse_line(body: str, line_no: int) -> Rule:
         match = _REMOVE_RE.fullmatch(rest)
         if not match:
             raise UnsupportedRuleError(f"line {line_no}: cannot parse remove rule: {body!r}")
-        wildcard, group_hex, element_hex = match.groups()
-        return RemoveRule(tag=_parse_tag(group_hex, element_hex), line_no=line_no, scope=_SCOPES[wildcard])
+        wildcard, group, element = match.groups()
+        tag, mask = _parse_tag_pattern(group, element)
+        return RemoveRule(tag=tag, line_no=line_no, scope=_SCOPES[wildcard], mask=mask)
 
     lhs_match = _TAG_RE.match(body)
     if not lhs_match:
@@ -202,8 +225,8 @@ def apply_rules(dataset: Dataset, rules: Iterable[Rule], labels: XnatLabels) -> 
     for rule in rules:
         if isinstance(rule, RemoveRule):
             for ds in _datasets(dataset, rule.scope):
-                if rule.tag in ds:
-                    del ds[rule.tag]
+                for tag in [elem.tag for elem in ds if rule.matches(elem.tag)]:
+                    del ds[tag]
         elif isinstance(rule, RemoveAllPrivateRule):
             dataset.remove_private_tags()  # walks into sequences
         elif isinstance(rule, AssignLiteralRule):
@@ -212,8 +235,8 @@ def apply_rules(dataset: Dataset, rules: Iterable[Rule], labels: XnatLabels) -> 
             _assign(dataset, rule.tag, labels.lookup(rule.variable))
         elif isinstance(rule, HashUidRule):
             current = dataset.get(rule.source_tag, None)
-            source_value = current.value if current is not None else ""
-            _assign(dataset, rule.tag, hash_uid(str(source_value)))
+            if current is not None:  # DicomEdit adds nothing when the source is absent
+                _assign(dataset, rule.tag, hash_uid(str(current.value)))
         else:  # pragma: no cover - exhaustive over Rule union
             raise UnsupportedRuleError(f"unhandled rule type: {type(rule).__name__}")
     return dataset
