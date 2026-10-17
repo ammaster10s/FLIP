@@ -37,7 +37,7 @@ run "created_network_leaves_through_its_own_nat_gateway" {
   command = plan
 
   assert {
-    condition     = length(azurerm_nat_gateway.this) == 1 && length(azurerm_subnet_nat_gateway_association.this) == 1
+    condition     = length(output.nat_gateway_ids) == 1 && length(azurerm_subnet_nat_gateway_association.this) == 1
     error_message = "A created network gets a NAT gateway on the node subnet."
   }
   assert {
@@ -66,7 +66,7 @@ run "existing_subnet_creates_nothing" {
     error_message = "The existing subnet is passed through."
   }
   assert {
-    condition     = length(azurerm_public_ip.nat) == 0 && length(azurerm_nat_gateway.this) == 0 && output.nat_public_ip_address == ""
+    condition     = length(azurerm_public_ip.nat) == 0 && length(output.nat_gateway_ids) == 0 && output.nat_public_ip_address == ""
     error_message = "On a site subnet the module creates no public IP and no NAT gateway: the site's egress applies."
   }
 }
