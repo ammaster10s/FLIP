@@ -747,7 +747,7 @@ files once:
   two names for one kit stop make. A site renames only once it will not roll back past this release, whose
   predecessors know only the old names.
 
-On GitHub, add `TF_HUB` to `aws-stag` / `aws-prod` before the merge. Delete `TF_PROD`, `FLIP_BUCKET_NAME`, `LOCAL_TRUST_PUBLIC_IPS`,
+On GitHub, add `TF_HUB` to `aws-stag` / `aws-prod` before the merge. Delete `TF_PROD`, `LOCAL_TRUST_PUBLIC_IPS`,
 `K8S_TRUST_PUBLIC_IPS`, `LZA_ELB_ACCESS_LOGS_BUCKET` and any `RELEASE_WEB_ALIAS` from `aws-stag` once this is on `develop`, but from `aws-prod`
 only once the release containing it reaches `main`: `main`'s apply and drift workflows read them until then.
 
