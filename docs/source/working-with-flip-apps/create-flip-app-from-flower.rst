@@ -240,7 +240,7 @@ FLIP touchpoints live in the ``ServerApp`` function, not in the strategy. You ca
 
 On the platform, though, the strategy is the template's ``FedAvgWithClientMetrics``, built on
 ``flip.flower.strategy.FlipFedAvg``. ``FlipFedAvg`` forwards each client's metrics and errors to the hub and reports
-round progress to the Live activity feed (see :ref:`flip-fl-nets`). A strategy built on stock ``FedAvg`` trains
+round progress to the Live activity feed (see :ref:`fl-jobs`). A strategy built on stock ``FedAvg`` trains
 correctly but reports nothing. Base your local strategy on ``FlipFedAvg`` too, so the UI shows what the platform
 will:
 
@@ -414,7 +414,7 @@ On each SuperNode, the mod clips the local update to ``dp-clipping-norm`` and ad
 or off. The template declares all four keys, so you can override them per run in ``config.toml``.
 
 Integer buffers, such as BatchNorm's ``num_batches_tracked`` counters, pass through untouched. See *Privacy filters
-on shared model updates* on :ref:`flip-fl-nets` for how it works and its caveats.
+on shared model updates* on :ref:`fl-update-privacy` for how it works and its caveats.
 
 .. warning::
 

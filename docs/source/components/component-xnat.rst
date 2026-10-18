@@ -355,7 +355,7 @@ Training code can use these methods from the :gh:`flip-utils package <flip-utils
     can read, and returns its path. Takes the project ID, an accession ID (from ``get_dataframe``) and an optional
     ``resource_type`` (one value or a list).
 
-See :doc:`/components/component-fl-nets` for every ``flip.*`` call available to training code.
+See :ref:`fl-jobs` for every ``flip.*`` call available to training code.
 
 ***************
 For maintainers

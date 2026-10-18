@@ -52,7 +52,7 @@ Can a Trust decline a project?
 Can a Trust apply stricter privacy rules than the platform defaults?
    Yes. The Trust sets its disclosure threshold in its own kit file, and an optional governance document can add
    access rules and an NVIDIA FLARE privacy filter. Both are enforced on the Trust's own deployment, and the document
-   can only tighten its posture. See "Trust governance document (per trust)" on :ref:`flip-fl-nets`.
+   can only tighten its posture. See "Trust governance document (per trust)" on :ref:`fl-update-privacy`.
 
 Does the hub need inbound access to the Trust?
    No. The Trust polls the Central Hub over HTTPS, so all traffic to the hub is outbound and no inbound port is

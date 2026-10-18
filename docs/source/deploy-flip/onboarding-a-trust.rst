@@ -291,7 +291,7 @@ To change or remove the policy later, edit the kit file and apply it the same wa
 
 .. seealso::
 
-   :doc:`../components/component-fl-nets`, "Site-enforced privacy policy", for the parameters and how they are
+   :doc:`../components/component-fl-privacy`, "Site-enforced privacy policy", for the parameters and how they are
    enforced. A trust's governance document can set the same filter instead; set it in one place only.
 
 **********************************

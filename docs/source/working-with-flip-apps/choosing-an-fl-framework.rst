@@ -126,7 +126,7 @@ If the Trusts in your project require a site-enforced policy, use NVIDIA FLARE.
 
 .. seealso::
 
-   *Privacy filters on shared model updates* on :ref:`flip-fl-nets` covers both mechanisms, their parameters and
+   *Privacy filters on shared model updates* on :ref:`fl-update-privacy` covers both mechanisms, their parameters and
    their caveats.
 
 

@@ -107,11 +107,11 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
 
    You do **not** write ``config_fed_server.json`` or ``config_fed_client.json``. They come from the platform's
    template for the job type, and an uploaded copy is ignored. You cannot change the server side — see *Job types*
-   in :ref:`flip-fl-nets`.
+   in :ref:`fl-jobs`.
 
    ``meta.json`` is optional. Upload one to declare the job's GPUs, for example
    ``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``. FLIP keeps its ``resource_spec`` and ``custom_props`` and
-   writes the rest — see *NVFLARE meta.json* in :ref:`flip-fl-nets`.
+   writes the rest — see :ref:`fl-nvflare-meta-json`.
 
 .. note::
 
@@ -145,7 +145,7 @@ Central Hub for you. What matters to you as an app author:
   ``NUM_STEPS_CURRENT_ROUND`` each client reports, and adds the result to the global model. This fixes what your
   trainer must return (see :ref:`the diff warning below <flare-return-diff>`).
 - **Privacy filter.** Every training result passes through a privacy filter before it leaves the Trust. You register
-  nothing. See *Privacy filters on shared model updates* on :ref:`flip-fl-nets` for how it works and its caveats.
+  nothing. See *Privacy filters on shared model updates* on :ref:`fl-update-privacy` for how it works and its caveats.
 
 .. seealso::
 
@@ -492,7 +492,7 @@ settings **and** anything your own code reads:
      "net_config": { "spatial_dims": 3 }
    }
 
-- ``job_type`` selects the template (``standard`` here; see *Job types* on :ref:`flip-fl-nets`).
+- ``job_type`` selects the template (``standard`` here; see *Job types* on :ref:`fl-jobs`).
 - ``GLOBAL_ROUNDS`` is read by the platform. It is the only way to set the number of rounds for a platform run.
 - ``LOCAL_ROUNDS`` is read by your trainer (``config["LOCAL_ROUNDS"]``), not by the server. FLIP still checks it at
   submit time:
@@ -731,6 +731,5 @@ Common pitfalls
   points at the data-enrichment step rather than letting the DataLoader fail on ``num_samples=0``.
 - **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are
   ignored on the platform; the template's copies are used. Only the files in ``app_files/`` matter. The exception is
-  ``meta.json``: an uploaded one declares the job's resources, and one carrying anything beyond what *NVFLARE
-  meta.json* in :ref:`flip-fl-nets` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at
+  ``meta.json``: an uploaded one declares the job's resources, and one carrying anything beyond what :ref:`NVFLARE meta.json <fl-nvflare-meta-json>` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at
   Initiate Training.

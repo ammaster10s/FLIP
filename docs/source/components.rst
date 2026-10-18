@@ -11,6 +11,8 @@ to where it runs and how they connect.
    components/overview
    components/component-central-hub
    components/component-fl-nets
+   components/component-fl-jobs
+   components/component-fl-privacy
    components/component-trust-apis
    components/component-omop-database
    components/component-xnat

@@ -273,4 +273,4 @@ training runs. The usual mistakes are listed in :ref:`ts-k8s-governance`.
 
 .. seealso::
 
-   "Trust governance document (per trust)" on :ref:`flip-fl-nets`.
+   "Trust governance document (per trust)" on :ref:`fl-update-privacy`.
