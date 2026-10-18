@@ -28,7 +28,7 @@ who acts, and what stays inside each trust. The step-by-step instructions for th
    * - `Job start`_
      - Researcher
      - The code is running at every approving trust, on that trust's data.
-   * - `Job finish`_
+   * - `Training and results`_
      - Automatic
      - A trained model and its metrics are ready to download.
 
@@ -296,9 +296,9 @@ processed images, back to the XNAT project for later runs.
 
    :ref:`initiate-training`.
 
-**********
-Job finish
-**********
+********************
+Training and results
+********************
 
 *Who: automatic; the researcher collects the results*
 
@@ -306,7 +306,7 @@ Federated training runs in **rounds**. Each trust trains on its own data, and on
 hub, where they are combined into one model.
 
 .. mermaid::
-   :caption: Training rounds and job finish.
+   :caption: Training rounds and results.
 
    sequenceDiagram
        autonumber
