@@ -2,14 +2,45 @@
 FLIP workflow
 ##############
 
-This page follows one project from cohort query to trained model. Each section names who acts and links to the
-step-by-step guide in :doc:`user-guides`.
+This page follows one project from the first cohort query to a trained model. It explains what happens at each stage,
+who acts, and what stays inside each trust. The step-by-step instructions for the web interface are in
+:doc:`user-guides`.
 
-Each diagram is a swimlane: one column per person or service, time running downwards.
+.. list-table::
+   :header-rows: 1
+   :widths: 22 30 48
 
-.. contents:: On this page
-   :local:
-   :depth: 1
+   * - Stage
+     - Who acts
+     - Outcome
+   * - `Cohort query`_
+     - Researcher
+     - The researcher knows how many matching patients each trust holds.
+   * - `Project approval`_
+     - Researcher, then each trust
+     - Approving trusts fix the cohort and pull its images into their own XNAT.
+   * - `Image enrichment`_
+     - Project members (optional)
+     - Images carry the labels or segmentations the model needs.
+   * - `File uploads`_
+     - Researcher
+     - The model's code and configuration are on the hub, checked.
+   * - `Job start`_
+     - Researcher
+     - The code is running at every approving trust, on that trust's data.
+   * - `Job finish`_
+     - Automatic
+     - A trained model and its metrics are ready to download.
+
+**How to read the diagrams.** Each diagram is a swimlane: one column per person or service, with time running
+downwards. The numbers on the arrows match the numbered steps in the text. Services on the left run in the Central
+Hub; services on the right run inside each trust.
+
+.. important::
+
+   **Nothing connects into a trust.** A trust's services fetch their work from the Central Hub by polling it, and its
+   FL client opens its own connection to the FL server. Patient-level data never leaves the trust; only aggregate
+   statistics, filtered model updates, training metrics and status information reach the hub.
 
 ************
 Cohort query
@@ -17,14 +48,11 @@ Cohort query
 
 *Who: researcher*
 
-The researcher creates a project, adds its members and writes an SQL cohort query against the :term:`OMOP` data model.
-FLIP runs the query at every registered Trust. Each Trust returns aggregate statistics only, and hides any count
-below its own minimum group size. The researcher can refine and re-run the query until the cohort is large enough.
-
-See :ref:`create-cohort-query`.
+Before asking any trust to take part, the researcher checks that enough suitable patients exist. They describe the
+cohort as an SQL query against the :term:`OMOP` data model, and FLIP runs it at every registered trust.
 
 .. mermaid::
-   :caption: Cohort query. The trust polls the hub; nothing connects into the trust.
+   :caption: Cohort query.
 
    sequenceDiagram
        autonumber
@@ -49,27 +77,31 @@ See :ref:`create-cohort-query`.
        TA->>Hub: Post results
        Hub-->>R: Cohort size per trust
 
+**1–2.** The researcher creates a project, adds its members, writes the cohort query and runs it on all trusts.
+
+**3–5.** The hub queues one task per trust. Each trust picks up its task the next time it polls the hub, a few seconds
+later.
+
+**6–8.** At the trust, ``data-access-api`` checks the query (a single read-only ``SELECT`` on the OMOP schema) and runs
+it against the trust's own OMOP database.
+
+**9–11.** The trust sends back **aggregate statistics only**, never patient rows. Any count below the trust's own minimum
+group size is hidden. The researcher sees the cohort size per trust and can refine and re-run the query until the
+cohort is large enough.
+
+.. seealso::
+
+   :ref:`create-cohort-query`.
 
 ****************
 Project approval
 ****************
 
-*Who: researcher, then each Trust's* :term:`Trust Admin` *or a FLIP admin*
+*Who: the researcher stages the project; each trust's* :term:`Trust Admin` *(or a FLIP admin, if the trust has
+none) approves or declines it*
 
-The researcher chooses the Trusts whose data they need and **stages** the project. Staging locks the project details
-and cohort query.
-
-Each staged Trust then approves or declines the project in its own time. The decision is agreed offline with the
-Trust's information governance team and recorded in FLIP by the Trust's own Trust Admin, or by a FLIP admin if the
-Trust has none. FLIP records who decided and when.
-
-- The project is **approved** as soon as one Trust approves it. A Trust that approves later joins the project then.
-- A Trust that **declines** takes no further part: its data is never imported or trained on.
-- If every Trust declines, the project stays staged. A FLIP admin can unstage it so the researcher can amend it.
-
-When a Trust approves, it fixes the project's cohort: from then on, training sees only the patients and studies the
-approved query returned. The Trust's XNAT then retrieves those studies from the Trust's :term:`PACS`, and each project
-member is given access to the project in that XNAT.
+Every trust decides for itself whether its patients' data may be used. Approval is also the moment the cohort is fixed
+and, for imaging projects, the images are fetched.
 
 .. mermaid::
    :caption: Project approval and image retrieval at one trust.
@@ -105,14 +137,39 @@ member is given access to the project in that XNAT.
        TA->>Hub: Import progress (on later polls)
        Hub-->>R: Imaging status on the project page
 
+**1.** The researcher chooses the trusts whose data they need and **stages** the project. Staging locks the project details
+and the cohort query.
+
+**2.** Each staged trust decides in its own time. The decision is agreed offline with the trust's information governance
+team, then recorded in FLIP. FLIP records who decided and when.
+
+**3–5.** On approval, the hub queues two tasks for that trust, which it runs in order on its next poll.
+
+**6–8.** **The cohort is frozen.** The trust runs the approved query once and stores the list of patients and studies it
+returned, at the trust. From now on, training sees only those patients and studies: a patient removed from OMOP drops
+out, but no new patient can join.
+
+**9–14.** **The images are fetched.** ``imaging-api`` creates a project in the trust's :term:`XNAT` and gives each project
+member access to it. It then asks XNAT to retrieve the cohort's studies from the trust's :term:`PACS`, using their
+accession numbers. The images stay in that trust's XNAT.
+
+**15–16.** The trust reports import progress on its later polls, and the researcher follows it on the project page.
+
+How the decisions combine:
+
+- The project is **approved** as soon as one trust approves it. A trust that approves later joins at that point.
+- A trust that **declines** takes no further part: its data is never imported or trained on.
+- If every trust declines, the project stays staged. A FLIP admin can unstage it so the researcher can amend it.
 
 .. note::
 
-   **Tabular-only projects.** A project created with 'Includes imaging data' turned off skips every imaging step:
-   approval creates no XNAT project and pulls nothing from PACS, there is nothing to enrich, and training reads the
-   OMOP cohort data alone. You still switch on the 'Dataset enriched' confirmation before training; for these
-   projects it confirms that the data is ready. Like 'Convert DICOMs to NIfTI', this option is fixed when the project
-   is created.
+   **Tabular-only projects.** A project created with **Includes imaging data** turned off skips steps 9–16: approval
+   creates no XNAT project and pulls nothing from PACS, there is nothing to enrich, and training reads the OMOP cohort
+   data alone. Like **Convert DICOMs to NIfTI**, this option is fixed when the project is created.
+
+.. seealso::
+
+   :ref:`stage-project`, :ref:`project-approval` and :ref:`imaging-status`.
 
 ****************
 Image enrichment
@@ -120,16 +177,12 @@ Image enrichment
 
 *Who: project members (optional)*
 
-Once a Trust's XNAT has retrieved the images, project members can log in to that XNAT and segment, label or
-otherwise annotate them before training. Only members of the FLIP project can see its images in XNAT. The project
-page shows each Trust's import progress.
+Trust PACS hold images, not the labels or segmentations a model may learn from. Enrichment is where project members add
+them, inside each trust's XNAT.
 
-Enrichment is needed only when the model uses data that is **not in OMOP**, such as segmentation masks and other
-image-derived annotations. Labels that are already in OMOP, such as a lab result or a coded report finding, reach
-the model as a column of the cohort query and need no enrichment.
-
-See :ref:`data-enrichment` for both routes, and for uploading labels by hand in the XNAT web UI or by script across a
-whole cohort.
+**Do you need it?** Only when the model uses data that is **not in OMOP**, such as segmentation masks or other
+annotations drawn on the images. Labels that are already in OMOP, such as a lab result or a coded report finding,
+reach the model as a column of the cohort query and need no enrichment.
 
 .. mermaid::
    :caption: Image enrichment, inside each trust's XNAT.
@@ -146,8 +199,17 @@ whole cohort.
        Hub-->>M: Images imported (project page)
        M->>X: Sign in with the XNAT credentials FLIP sent
        M->>X: Add segmentations, labels or annotations
-       M->>Hub: Confirm the dataset is enriched
 
+**1.** When the project page shows a trust's images as imported, enrichment can start there.
+
+**2.** Project members sign in to that trust's XNAT with the credentials FLIP emailed them. Only members of the FLIP
+project can see its images.
+
+**3.** They add the annotations, either by hand in the XNAT web interface or by script across the whole cohort.
+
+.. seealso::
+
+   :ref:`data-enrichment` covers both routes.
 
 ************
 File uploads
@@ -155,8 +217,7 @@ File uploads
 
 *Who: researcher*
 
-The researcher creates a model in the project and uploads its training and validation code, with any other files
-the code needs. See :doc:`working-with-flip-apps` for how to write the code and which files a job requires.
+The model is the code FLIP will run at each trust. The researcher writes it as an FL app and uploads it to the hub.
 
 .. mermaid::
    :caption: File uploads.
@@ -172,6 +233,18 @@ the code needs. See :doc:`working-with-flip-apps` for how to write the code and 
        Hub->>Hub: Check required files and scan uploads
        Hub-->>R: Files listed on the model page
 
+**1.** The researcher creates a model in the approved project. A project can hold several models.
+
+**2.** They upload the training code, its configuration and any other files the code needs.
+
+**3.** The hub checks that every file the job type requires is present and scans each upload.
+
+**4.** The files are listed on the model page, ready for training.
+
+.. seealso::
+
+   :doc:`working-with-flip-apps` for how to write the code and which files each job type requires, and
+   :ref:`upload-model-files`.
 
 *********
 Job start
@@ -179,17 +252,11 @@ Job start
 
 *Who: researcher*
 
-When the images are ready and the code is uploaded, the researcher confirms that the dataset is enriched and starts
-training. FLIP queues the job until a training net is free, then sends the uploaded code to every approving Trust.
-
-At each Trust, the code receives the approved cohort as a dataframe and downloads the images it needs from that
-Trust's XNAT. Training code can also write derived files, such as processed images, back to the XNAT project for
-later runs.
-
-See the *Training* section of :doc:`user-guides/user-common`.
+Training starts once the images are in place and the code is uploaded. FLIP sends the same code to every approving
+trust, where it runs next to the data.
 
 .. mermaid::
-   :caption: Job start. FL clients hold an outbound connection to the FL server.
+   :caption: Job start.
 
    sequenceDiagram
        autonumber
@@ -204,7 +271,7 @@ See the *Training* section of :doc:`user-guides/user-common`.
            participant IA as imaging-api
            participant X as XNAT
        end
-       R->>Hub: Start training at chosen trusts
+       R->>Hub: Confirm dataset enriched, start training
        Hub->>Hub: Queue until an FL net is free
        Hub->>S: Submit job with the uploaded code
        S->>C: Send the app to each trust
@@ -213,16 +280,30 @@ See the *Training* section of :doc:`user-guides/user-common`.
        IA->>X: Download study
        IA-->>C: Image files
 
+**1.** On the model page, the researcher switches on **Dataset enriched** (required even when no enrichment was needed),
+picks the participating trusts and starts training.
+
+**2.** FLIP queues the job until one of its training networks (*FL nets*) is free.
+
+**3–4.** The hub's FL server receives the job and sends the code to the FL client at each participating trust.
+
+**5.** At each trust, the code receives the frozen cohort as a table of rows from OMOP.
+
+**6–8.** It downloads the images it needs from that trust's XNAT. The code can also write derived files, such as
+processed images, back to the XNAT project for later runs.
+
+.. seealso::
+
+   :ref:`initiate-training`.
 
 **********
 Job finish
 **********
 
-Training runs in rounds. After each round, every Trust sends its filtered model update to the Central Hub, which
-combines the updates and sends the combined model back out for the next round.
+*Who: automatic; the researcher collects the results*
 
-When the last round finishes, the final model and any metrics the code recorded are available to project members in
-the FLIP UI. See :ref:`view-results`.
+Federated training runs in **rounds**. Each trust trains on its own data, and only the model changes travel to the
+hub, where they are combined into one model.
 
 .. mermaid::
    :caption: Training rounds and job finish.
@@ -247,3 +328,18 @@ the FLIP UI. See :ref:`view-results`.
        S->>Hub: Final model and results
        Hub-->>R: Metrics charts, Download Results
 
+**1–2.** The FL server sends the current model to each trust, which trains it on local data.
+
+**3.** Each trust sends back its **model update**, filtered before it leaves the trust, together with the metrics the
+code recorded.
+
+**4–5.** The FL server combines the updates into the next global model and passes the metrics to the hub, where they
+appear as charts on the model page while training runs.
+
+**6–7.** After the last round, the final model and results are stored on the hub. Project members download them with
+
+**Download Results**.
+
+.. seealso::
+
+   :ref:`training-metrics` and :ref:`view-results`.
