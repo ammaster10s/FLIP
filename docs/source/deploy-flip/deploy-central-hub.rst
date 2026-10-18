@@ -49,6 +49,18 @@ open-source project targets. See :doc:`deploy-central-hub-aws`.
 the network, the guardrails and a shared edge. FLIP uses the network it is given instead of building one, so you must
 coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
 
+.. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
+   :align: center
+   :width: 100%
+   :alt: Left, a standalone AWS account holding its own CloudFront and WAF, a public FL NLB, and a VPC with an
+         internet gateway and NAT around the FLIP hub, FL server, RDS, S3 and VPC endpoints. Right, on the Landing
+         Zone Accelerator: a networking account owned by the platform team with CloudFront and WAF, an edge NLB,
+         a Network Firewall and a Transit Gateway, and a workload account with no internet gateway or NAT holding
+         the FLIP hub, FL server, ECR pull-through cache, isolated RDS, S3 with KMS and Session Manager access.
+
+   The same FLIP stack in each mode. Self-contained, one account owns its own edge and outbound route.
+   Platform-managed, the platform team owns and inspects the edge, and the hub account has no internet route.
+
 .. toctree::
    :maxdepth: 1
 

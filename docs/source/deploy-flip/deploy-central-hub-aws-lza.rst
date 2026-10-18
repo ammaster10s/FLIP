@@ -27,6 +27,18 @@ This page explains **what the mode changes, what the estate must provide, and ho
 Architecture
 ************
 
+.. figure:: ../assets/deploy/central-hub-lza-overview.svg
+   :align: center
+   :width: 100%
+   :alt: Three zones. A Trust site makes outbound connections only: its Trust API polls over HTTPS and its FL
+         client connects over mutual-TLS gRPC. In the networking account, CloudFront with WAF and an edge NLB
+         feed a Network Firewall and a Transit Gateway. In the workload account, with no internet gateway or NAT,
+         the FLIP hub and FL server run on ECS Fargate next to Cognito, RDS PostgreSQL, S3 with KMS and an ECR
+         pull-through cache.
+
+   At a glance: three zones and two paths. Every request crosses the platform team's inspected edge, and the
+   workload account has no internet route of its own. The generated diagrams below show every resource.
+
 The diagrams are generated from the same source as those on :doc:`deploy-central-hub-aws`, showing only the
 resources this mode deploys. The networking account's edge and the Transit Gateway belong to the platform team and
 are drawn from the handoff contract, not from FLIP's Terraform.
