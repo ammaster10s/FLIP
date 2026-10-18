@@ -38,7 +38,16 @@ other call stays on the Trust's private container network:
    fl-client-net-N ---- TRUST_INTERNAL_SERVICE_KEY ---->  imaging-api / data-access-api
                         (no hub URL, no hub credential)
 
-Two keys protect two boundaries:
+All of a Trust's configuration comes from one kit file, ``trust/.env.<CODE>.<env>``, written when the Trust is
+registered.
+
+.. _trust-authentication:
+
+Trust authentication
+====================
+
+The hub identifies a Trust by its **API key**, not by IP address or hostname: any host whose kit file holds a
+Trust's credentials can act as that Trust. Two keys protect two boundaries:
 
 - The **Trust API key** authenticates the Trust to the hub. It lives only in the Trust's kit file, and as a hash
   on the hub.
@@ -46,8 +55,33 @@ Two keys protect two boundaries:
   ``data-access-api``. It never leaves the Trust. Only ``/health`` endpoints are exempt. The threat model is on
   :ref:`trust-internal-service-authentication`.
 
-All of a Trust's configuration comes from one kit file, ``trust/.env.<CODE>.<env>``, written when the Trust is
-registered.
+The kit file carries these settings for it:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Setting
+     - Purpose
+   * - ``TRUST_API_KEY``
+     - The Trust API key, sent on every call to the hub.
+   * - ``TRUST_API_KEY_HEADER``
+     - The header it is sent in. It must match the hub's; the platform default is ``Authorization``.
+   * - ``CENTRAL_HUB_API_URL``
+     - The public hub URL the Trust polls, e.g. ``https://app.flip.aicentre.co.uk``.
+   * - ``AES_KEY_BASE64``
+     - The key shared with the hub for task payloads (AES-256-GCM). It must match the hub's key exactly; a mismatch
+       fails every task with ``failed authentication``. Payloads in the older CBC format are not accepted, so a
+       hub and its Trusts move across that change together.
+   * - ``TRUST_INTERNAL_SERVICE_KEY``
+     - The Trust-internal service key.
+   * - ``EXPECTED_TRUST_ID`` (optional)
+     - A self-check: if the hub resolves this host's API key to a different Trust, trust-api stops instead of acting
+       as the wrong one (see `Task poller`_).
+
+A Trust must be **registered on the hub** before it can connect, by step 2 of :doc:`/deploy-flip/onboarding-a-trust`
+or through the Add-Trust admin flow. Registration writes the API key and internal service key into the kit file. No
+hub redeploy is needed: the hub reads its Trust list live on every request.
 
 *********
 Trust API
@@ -213,8 +247,7 @@ write. Rule 5 is enforced separately, on top of the role's limits.
 
 .. seealso::
 
-   The full rationale is in the `data-access-api README
-   <https://github.com/londonaicentre/FLIP/blob/develop/trust/data-access-api/README.md#cohort-query-validation>`_
+   The full rationale is in the :gh:`data-access-api README <trust/data-access-api/README.md#cohort-query-validation>`
    and on :ref:`security`.
 
 Disclosure threshold
@@ -266,10 +299,10 @@ AWS-hosted mock Trusts).
 Further reading
 ***************
 
-- `trust/README.md <https://github.com/londonaicentre/FLIP/blob/develop/trust/README.md>`_ — bringing a Trust
+- :gh:`trust/README.md` — bringing a Trust
   up, the kit file, standalone operation
-- `trust-api <https://github.com/londonaicentre/FLIP/blob/develop/trust/trust-api/README.md>`_,
-  `imaging-api <https://github.com/londonaicentre/FLIP/blob/develop/trust/imaging-api/README.md>`_ and
-  `data-access-api <https://github.com/londonaicentre/FLIP/blob/develop/trust/data-access-api/README.md>`_
+- :gh:`trust-api <trust/trust-api/README.md>`,
+  :gh:`imaging-api <trust/imaging-api/README.md>` and
+  :gh:`data-access-api <trust/data-access-api/README.md>`
   READMEs — deployment, configuration and troubleshooting per service
 - Module reference: :doc:`API reference </api-reference>`

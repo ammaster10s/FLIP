@@ -2,9 +2,10 @@
 Create a FLIP app from a Flower app
 ####################################
 
-.. important::
+.. admonition:: Before you start
+   :class: note
 
-   **Before you start**, you need:
+   You need:
 
    - a FLIP account with the ``researcher`` role;
    - an approved project with a saved cohort query;
@@ -430,7 +431,7 @@ Per-round, per-client metrics reach the FLIP UI in the reply ``Message``:
 - put the client's site name in a ``ConfigRecord`` under ``"config"``.
 
 The server-side ``FlipFedAvg`` strategy forwards every numeric metric to the Central Hub on the client's behalf.
-They populate the graphs on the model page (see the "Metrics" section of :doc:`/user-guides/user-common`).
+They populate the graphs on the model page (see :ref:`training-metrics`).
 
 .. code-block:: python
 

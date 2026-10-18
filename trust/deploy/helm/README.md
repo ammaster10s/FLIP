@@ -29,193 +29,33 @@ server; no inbound ports are exposed from the K8s cluster.
 > [known limitations](#known-limitations), particularly storage and Pod Security
 > constraints, before selecting it for a production Trust.
 
-## Prerequisites
-
-- **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
-- **Helm** 4.x (the CI-tested version; 3.16+ also works)
-- **kubectl** configured with cluster access
-- **Python 3** with **PyYAML** (`pip install pyyaml`) on whichever host runs `sync-kit` /
-  `patch-kit-secrets` — those realign `values-secrets.yaml` and verify the result by
-  parsing it, and refuse to write the file if they cannot
-- **NVIDIA GPU Operator** (if GPU workloads are enabled)
-- **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
-  production secrets management)
-
-> **Helm 4 readiness semantics.** Helm 4 reimplemented `--wait` on top of
-> [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
-> which is stricter than Helm 3's readiness check — an install that Helm 3 called
-> ready can now block until the workloads genuinely settle, and time out if they
-> never do. `make deploy` does **not** pass `--wait` (it relies on
-> `--timeout $(HELM_TIMEOUT)` alone), so this only bites if you add `--wait` to your
-> own `helm upgrade` invocation; if you do, size `--timeout` for the slowest service
-> to become ready rather than for the API call to return.
-
-> **`HELM_TIMEOUT` (default `30m`).** The one budget for every wait on the `xnat-init`
-> job — `make deploy` waits on it as a post-upgrade Helm hook, `make xnat-init` waits on
-> it directly with `kubectl wait`, and both read this variable. Raise it per site rather
-> than editing the Makefile:
->
-> ```bash
-> make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
-> ```
->
-> Set it below the job's real duration and the upgrade reports
-> `resource Job/... not ready` *after* it has already applied the new pod spec, so the
-> failure names Helm and not the wait that expired. That is how a corrected plugin roster
-> sat un-deployed across five consecutive upgrades in FLIP#1228 — see
-> [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
-> Time one run (`kubectl get job -n flip-trust -w`) before choosing a value.
+> **Deploying a trust?** The operator guide — prerequisites, staging the FL kit, deploying,
+> the `HELM_TIMEOUT` wait budget, verifying, upgrading and uninstalling — is
+> [Deploy a FLIP node on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> This README is the chart's reference: values, secrets, internals and development notes.
 
 ## Quickstart
 
-A K8s trust is registered with the hub **exactly like any other trust** — by a
-CODE-named *kit*. Registration is done once, centrally, by the DB-backed
-`register_trust` CLI (it mints the per-trust credentials and claims an FL kit
-slot); the chart never registers anything itself. The flow is:
-
-```
- hub side (once)            cluster side (this chart)
- ─────────────────          ─────────────────────────
- new-trust ─► register ─► sync-trust-kit ─► sync-kit ─► up ─► (add-k8s-trust)
-            writes trust/.env.<CODE>.<env>   patches Secret + writes override
-```
-
-### 1. Register the trust on the hub (produces the kit)
+The full walkthrough, with who runs each step, is in the
+[operator guide](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+The commands, from the repo root:
 
 ```bash
-# From the repo root. <CODE> is this trust's name, e.g. Trust_K8s.
+# Hub side, once (FLIP admin) — produces trust/.env.<CODE>.<env>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>"
-make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=stag   # mints creds + claims FL slot
-make sync-trust-kit KIT=<CODE> PROD=stag                            # fills the Hub-shared block
-```
+make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>
+make sync-trust-kit KIT=<CODE> PROD=<env>
 
-This writes `trust/.env.<CODE>.stag` containing the per-trust keys
-(`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`) and the Hub-shared block
-(`AES_KEY_BASE64`, `CENTRAL_HUB_API_URL`, FL settings). The hub stores only the
-SHA-256 hash of the API key — re-running registration is idempotent.
-
-### 2. Provide the infrastructure secrets
-
-The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
-Orthanc, Grafana) are deployment-specific — supply them
-via the chart's built-in Secret template (`secrets.create=true` + a
-`values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
-the Secret externally.
-
-> **`values-secrets.yaml` is generated, gitignored, and must never be committed.**
-> It carries live trust credentials. The tracked `values-secrets.yaml.example` is a
-> field reference with every slot empty — not a working file.
-
-Generate it from the repo root:
-
-```bash
+# Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
-  --env-file trust/.env.<CODE>.<env> \
-  --output-dir trust/deploy/helm
+  --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm   # then hand-fill orthanc-registered-users
+make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
+
+# FL training only (FLIP admin)
+make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=<env>
 ```
-
-That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
-beside it). One slot it **cannot** fill, because no trust kit carries the source
-env var: `orthanc-registered-users`. Hand-fill it before deploying Orthanc. There
-are no AWS slots — the fl-client never fetches its own kit (see step 4). An empty slot
-is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
-then fails with `CreateContainerConfigError` — deliberate (it is why copying the
-example into place does not deploy), and also why Orthanc will not start until
-`orthanc-registered-users` is filled.
-
-`make sync-kit` (next step) patches the per-trust keys *on top* of this Secret
-without touching the infra keys.
-
-### 3. Sync the kit into the cluster
-
-```bash
-make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=stag
-```
-
-This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
-(`trust-api-key`, `trust-internal-service-key[-header]`, `aes-key-base64`) into
-the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
-secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
-backend, AWS region, and `flClient.kitHostPath` (taken from the kit's
-`FL_KIT_DIR`). Plaintext keys go straight into the Secret over kubectl's TLS
-channel — never to disk.
-
-### 4. Stage the FL participant kit onto the node
-
-```bash
-make -C trust/deploy/helm stage-kit \
-  KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
-```
-
-**The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
-clients have none by design — and the kit reaches the operator out-of-band (see
-[`trust/README.md`](../../README.md)). It is placed on the node *before*
-the workload starts, which is also what a real trust does, so what is deployed
-here is what is deployed in production.
-
-`KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
-`transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
-credential. That shape is also how the target picks the uid the staged kit is
-chowned to — 1000 for an NVFLARE kit, 49999 (the SuperNode's `app` user) for a
-Flower one — so the command above is complete for either backend with no
-`FL_BACKEND` to remember. A directory with neither shape, or both, is refused
-before anything is copied; `FL_BACKEND=nvflare|flower` overrides the detection.
-`KUBE_CONTEXT` is required — this writes to a node's filesystem, and on a host
-running several clusters, defaulting to the current context stages into
-whichever one `kubectl` happens to point at.
-
-The target implements the kind case (`docker cp` into the node). On a managed
-cluster, place the kit by whatever means the site allows and pass the resulting
-path as `flClient.kitHostPath`; nothing else changes.
-
-Skipping this step leaves the fl-client pod `Pending` with a `hostPath type check
-failed` event naming the missing path.
-
-**Upgrading an install that fetched its kit from S3:** the chart no longer holds AWS
-credentials or fetches the kit itself, so a values file written for the previous version
-will fail to render. The kit is staged onto the node out-of-band instead, by step 4 above.
-Removed values — delete them from your overrides, they no longer exist:
-
-| Removed | Replacement |
-| ------- | ----------- |
-| `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
-| `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
-| `flClient.s3EndpointOverride` | none |
-| the `s3-access-key-id` / `s3-secret-access-key` / `aws-session-token` secret keys | none — drop them from your generated `values-secrets.yaml` and from any existing Secret |
-| `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
-
-The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
-Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
-reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
-
-### 5. Install / upgrade the chart
-
-```bash
-make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
-```
-
-With `KIT=` this first regenerates `k8s-trust-<CODE>.yaml` from the kit
-(`sync-kit-override`, so a hand edit to that file does not survive), then runs
-`helm upgrade --install` with it and then `patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
-restarts the API deployments). `deploy` depends on `preflight`, so every install
-first runs `scripts/preflight.sh` — five sections covering required tools and
-versions, cluster reachability, the chart files, the trust kit (only when `KIT=`
-is given) and a `helm lint` — and aborts the install if a required check fails.
-Run it on its own to check a host before deploying:
-
-```bash
-make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
-```
-
-`PROD` takes the platform's five tokens — unset (development), `stag`, `true`,
-`lza`, `lza-stag` — and the Makefile resolves the kit-file suffix through
-`deploy/env_mode.mk`, the single source of truth (`lza` → `trust/.env.<CODE>.lza-prod`,
-`lza-stag` → `.lza-stag`). That resolved token is injected into `scripts/preflight.sh`
-as `KIT_ENV` (not `ENV` — that is the POSIX shell's own startup-file variable) and into
-`sync_k8s_kit.py` as `--env`, so the checklist looks for the kit an LZA
-site actually has. Neither script keeps its own copy of that map: run bare with `PROD` set
-and no token, each refuses and names the Makefile target to use, rather than quietly
-reading a `development` kit. With `PROD` unset they still default to development.
 
 Equivalent raw Helm for the install step:
 
@@ -227,12 +67,47 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   -f trust/deploy/helm/k8s-trust-<CODE>.yaml
 ```
 
-`sync-kit` stamps a newly created Secret with Helm ownership metadata so the
-first install can adopt it. It also regenerates the FL-server egress port from
-the kit on every run, so upgrades do not lose the fl-client gRPC allowance, and,
-for a Flower trust, `flClient.flower.superlink`.
+## How the Make targets work
 
-#### Secret field ownership under Helm 4 (server-side apply)
+- **`sync-kit`** reads `trust/.env.<CODE>.<env>`, patches the per-trust keys (`trust-api-key`,
+  `trust-internal-service-key[-header]`, `aes-key-base64`) into the chart's Secret
+  (`trust-release-flip-trust-secrets`) over kubectl's TLS channel — never to disk — and writes the
+  secret-free override `k8s-trust-<CODE>.yaml` (hub URL, FL backend, AWS region, `flClient.kitHostPath`
+  from the kit's `FL_KIT_DIR`). It stamps a newly created Secret with Helm ownership metadata so the
+  first install can adopt it, and regenerates the FL-server egress port (and, for Flower,
+  `flClient.flower.superlink`) on every run so upgrades never lose them. `sync-kit-override` writes only
+  the override; `patch-kit-secrets` only patches the Secret and restarts the three API deployments.
+- **`deploy-trust-k8s KIT=`** runs `sync-kit-override`, then `deploy` with that override, then
+  `patch-kit-secrets` — even when `deploy` failed, so trust-api never polls with a stale key (#595) — and
+  exits with the deploy status. Without `KIT=` it is plain `deploy`, which is also all the repo-root
+  `make deploy-trust-k8s` forwards to.
+- **`deploy`** depends on `preflight` (`scripts/preflight.sh`: tools and versions, cluster reachability,
+  the chart files, the kit when `KIT=` is given, `helm lint`) and passes `--timeout $(HELM_TIMEOUT)` but
+  **not** `--wait`. Helm 4 reimplemented `--wait` on
+  [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus), which is stricter than
+  Helm 3's readiness check; size `--timeout` for the slowest service if you add `--wait` yourself.
+- **`HELM_TIMEOUT`** (default `30m`) is the one budget for both ways of waiting on the `xnat-init` job:
+  `deploy` (a post-upgrade hook) and `xnat-init` (`kubectl wait`). It bounds the wait, not the Job — the
+  hook has no `activeDeadlineSeconds`, so when it expires Helm marks the release failed while the Job
+  keeps running. Raising one of the job's internal budgets (`templates/xnat-init-job.yaml`) without this
+  changes nothing. Set too low it reports `resource Job/... not ready` after the new pod spec is already
+  applied, which is how a corrected plugin roster sat undeployed across five upgrades in FLIP#1228 — see
+  [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+- **`PROD`** takes the platform's five tokens — unset (development), `stag`, `true`, `lza`, `lza-stag` —
+  resolved to the kit-file suffix once, in `deploy/env_mode.mk` (`lza` → `trust/.env.<CODE>.lza-prod`).
+  The token reaches `scripts/preflight.sh` as `KIT_ENV` (not `ENV` — the POSIX shell's own startup-file
+  variable) and `sync_k8s_kit.py` as `--env`. Neither script keeps its own copy of the map: run bare with
+  `PROD` set and no token, each refuses and names the Makefile target to use.
+- **`stage-kit`** detects the backend from the kit's shape (NVFLARE `startup/`, Flower `certificates/` +
+  `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before `docker cp` so a
+  re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. It
+  implements the kind case only.
+- **`undeploy`** (aliases `down`, `undeploy-trust-k8s`) is `helm uninstall`. Every standalone PVC in the
+  chart has no `helm.sh/resource-policy: keep`, so uninstall deletes them (orthanc, xnat-web,
+  data-access-api's cohort snapshots, grafana, shared images); only StatefulSet `volumeClaimTemplates`
+  (`omop-db`, `xnat-db`, `loki`) survive.
+
+### Secret field ownership under Helm 4 (server-side apply)
 
 Helm 4 applies the release **server-side**, so the API server tracks which manager owns
 each field. `patch-kit-secrets` writes the kit's three per-trust keys
@@ -276,28 +151,10 @@ If you hit the conflict on a deployment that predates this change, re-run
 values file with the live keys — then redeploy. Helm 3 never applies server-side and is
 unaffected either way; the chart needs no version switch.
 
-### 6. Verify the trust is polling
+### Verify the DICOM ingest path
 
-```bash
-kubectl get pods -n flip-trust
-kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
-# Expect: POST .../api/trust/heartbeat "HTTP/1.1 200 OK"
-#         GET  .../api/tasks/pending   "HTTP/1.1 200 OK"
-```
-
-A `401 "API key is missing"` means the API-key **header** is mismatched — the
-chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
-override it only if your hub uses a different header.
-
-### 6a. Verify the DICOM ingest path
-
-Polling green does not mean imaging works: the two share no code. Run both checks —
-neither implies the other.
-
-```bash
-make -C trust/deploy/helm status         # includes the plugin-roster comparison below
-make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's prearchive
-```
+How `make status` and `make smoke-cstore` decide. Polling green does not mean imaging works: the two
+share no code, so the operator guide has operators run both.
 
 `status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
 against the release's own `xnat.web.plugins.urls`, failing with both versions named when
@@ -334,46 +191,6 @@ context and is never a success route. The importer-crash signatures still fail t
 from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
-### 7. (FL training only) Open the FL-server NLB
-
-Polling needs nothing more. For FL *training*, the K8s node's FL client must
-reach the hub's FL server. Add the node's public/egress IP to
-`K8S_TRUST_PUBLIC_IPS` in the hub env file (an HCL list, e.g.
-`K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB:
-
-```bash
-make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
-```
-
-This is a normal `terraform apply` (no `-target`), so re-running with an
-already-listed IP is a no-op (idempotent — #596).
-
-### Inspecting and tearing down the release
-
-```bash
-make -C trust/deploy/helm list       # helm list in the namespace
-make -C trust/deploy/helm status     # helm status + check_status.py smoke tests
-make -C trust/deploy/helm undeploy   # helm uninstall the release
-```
-
-`undeploy` is `helm uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)`; `down`
-and `undeploy-trust-k8s` are aliases for it, and the repo root forwards
-`make undeploy-trust-k8s` here. It removes the Helm release and **everything the
-release owns — including the standalone PVCs and their data**: Orthanc's PACS store
-(`templates/orthanc.yaml`), XNAT's archive, prearchive, build and cache
-(`templates/xnat-web.yaml`), Grafana's state (`templates/grafana.yaml`) and the
-shared images cache (`templates/shared-images-pvc.yaml`) are plain
-`kind: PersistentVolumeClaim` release resources with no
-`helm.sh/resource-policy: keep`, so `helm uninstall` deletes them, and the bound
-volumes go with them under the cluster default storage class's usual `Delete`
-reclaim policy. Only the PVCs created from StatefulSet `volumeClaimTemplates`
-— `omop-db`, `xnat-db`, `loki` — survive, as do the namespace itself and the FL kit
-staged on the node by `stage-kit`. A re-`deploy` therefore comes back with the OMOP
-and XNAT databases but an empty PACS and an empty XNAT archive — and an `xnat-db`
-whose sessions point at archive files that no longer exist. Snapshot or back up
-those PVs before uninstalling if the data matters; delete the surviving StatefulSet
-PVCs explicitly if you want a clean slate.
-
 ## Configuration Reference
 
 ### Global Settings
@@ -388,7 +205,7 @@ PVCs explicitly if you want a clean slate.
 | `governance.document` | `""` | The trust's governance policy document — the TOML itself, not a path (FLIP#1259). Empty = no document: the platform defaults apply and nothing is mounted. See [Trust governance policy](#trust-governance-policy-flip1259) |
 | `awsRegion` | `eu-west-2` | AWS region for S3 access |
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
-| `namespace.create` | `true` | Whether to create the namespace |
+| `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
 | `trustData.version` | `20261014` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
@@ -451,6 +268,24 @@ The hook needs egress to `huggingface.co` (the dataset), `github.com` / `raw.git
 `omop-db` and `orthanc` services. It runs after the vocab-load hook (weight 6 after 5); on a
 cluster that never loads the licensed vocabulary the rows still land — the DICOM vocabulary is
 loaded first so their imaging concepts resolve.
+
+#### Upgrading: the chart no longer fetches the FL kit
+
+The chart holds no AWS credentials and never fetches the FL participant kit; it is staged onto the
+node out-of-band (`make stage-kit`, see the operator guide). A values file written for the S3-fetch
+version fails to render. Delete the removed values from your overrides:
+
+| Removed | Replacement |
+| ------- | ----------- |
+| `flClient.kitFromS3`, `flClient.nvflare.kitFromS3.*`, `flClient.flower.kitFromS3.*` | `flClient.kitHostPath` (now **required** when `flClient.enabled`) |
+| `flClient.hostAwsMount.enabled` / `.readOnly` | none — the fl-client mounts no AWS credentials |
+| `flClient.s3EndpointOverride` | none |
+| the `s3-access-key-id` / `s3-secret-access-key` / `aws-session-token` secret keys | none — drop them from your generated `values-secrets.yaml` and from any existing Secret |
+| `make patch-aws-creds` | `make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>` |
+
+The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
+Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
+reached the node leaves the pod `Pending` on a `hostPath type check failed` event.
 
 ### Secrets
 
@@ -793,7 +628,14 @@ For the full audit of what egress is allowed and why, the residual risk (notably
 ## Secrets Reference
 
 The following keys must be present in the Secret (either created by the chart
-with `secrets.create=true` or pre-created externally):
+with `secrets.create=true` or pre-created externally).
+
+`scripts/generate_values.py` writes them from the kit into `values-secrets.yaml` (mode `0600`,
+`secrets.create: true`; gitignored — the tracked `values-secrets.yaml.example` is a field
+reference with every slot empty). It cannot fill `orthanc-registered-users`, which no kit carries.
+An empty slot is omitted from the Secret by `templates/secrets.yaml`, so the pod that mounts it
+fails with `CreateContainerConfigError` — deliberate, and why copying the example into place does
+not deploy. `sync-kit` patches the per-trust keys on top without touching the others.
 
 | Secret Key | Used By | Description |
 | ----------- | --------- | ------------- |
@@ -1116,8 +958,8 @@ make -C trust/deploy/helm xnat-init
 
 It re-renders only the `xnat-init` job from the chart (`--set
 xnat.initJob.enabled=true`, applied with the
-`app.kubernetes.io/component=xnat-init` selector), waits up to 15 minutes for it
-to complete, and on failure tails the job's logs before exiting non-zero.
+`app.kubernetes.io/component=xnat-init` selector), waits up to `HELM_TIMEOUT` (default
+`30m`) for it to complete, and on failure tails the job's logs before exiting non-zero.
 
 ### CI Validation
 

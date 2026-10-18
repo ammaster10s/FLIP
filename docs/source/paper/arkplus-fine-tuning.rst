@@ -15,10 +15,11 @@
 Ark+ chest X-ray classification on FLIP
 ============================================
 
-.. warning::
+.. admonition:: Before you start
+   :class: note
 
-   This page assumes you know the common FLIP workflow in :doc:`/user-guides/user-common` and have a FLIP account
-   with the ``researcher`` role.
+   You need a FLIP account with the ``researcher`` role, and should know the common FLIP workflow in
+   :doc:`/user-guides/user-common`.
 
 This guide runs **federated fine-tuning of an Ark+ Swin Transformer foundation model** for chest X-ray classification
 on FLIP. It is a complete worked example of the FLIP lifecycle — project, cohort query, model upload, training and
@@ -60,7 +61,7 @@ Training at a glance:
 
 The source is in ``fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/``. For the model architecture,
 fine-tuning mechanisms and ``job.py`` see the
-`tutorial README <https://github.com/londonaicentre/FLIP/blob/develop/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/README.md>`_.
+:gh:`tutorial README <fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/README.md>`.
 
 *************
 Prerequisites
@@ -71,7 +72,7 @@ Prerequisites
 * For local testing: Linux with an NVIDIA GPU, `uv <https://docs.astral.sh/uv/>`_ on your ``PATH``, ~15 GB free disk
   and internet access.
 * The Ark+ backbone checkpoint, requested via `this form <https://forms.gle/qkoDGXNiKRPTDdCe8>`_ (see
-  `process_tools/README.md <https://github.com/londonaicentre/FLIP/blob/develop/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/process_tools/README.md>`_).
+  :gh:`process_tools/README.md <fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/process_tools/README.md>`).
 
 .. _arkplus-dataset-setup:
 

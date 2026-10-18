@@ -2,9 +2,10 @@
 Create a FLIP app from a FLARE app
 ###################################
 
-.. important::
+.. admonition:: Before you start
+   :class: note
 
-   **Before you start**, you need:
+   You need:
 
    - a FLIP account with the ``researcher`` role;
    - an approved project with a saved cohort query;
@@ -361,8 +362,7 @@ trainer.py: sending per-epoch metrics
 
 Publish per-epoch, per-site metrics with NVFLARE's own tracking API, ``SummaryWriter.add_scalar`` (``flare.log``
 works too). The FLIP template forwards them from the Trust to the FL server, and the server sends them to the
-Central Hub. They populate the graphs on the model page (see the "Metrics" section of
-:doc:`/user-guides/user-common`).
+Central Hub. They populate the graphs on the model page (see :ref:`training-metrics`).
 
 .. code-block:: python
 

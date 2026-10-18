@@ -9,8 +9,8 @@ builds the network as well as the services. It is the default mode and the one t
 
 .. seealso::
 
-   - :ref:`deploy-central-hub` — prerequisites, IAM permissions, service authentication, schema changes and email
-     setup, shared by both modes.
+   - :ref:`deploy-central-hub` — prerequisites, IAM permissions, registering trusts, deploys and rollback, schema
+     changes and email setup, shared by both modes.
    - :doc:`deploy-central-hub-aws-lza` — the platform-managed alternative for a Landing Zone Accelerator estate.
 
 .. contents:: On this page
@@ -89,13 +89,21 @@ Full-stack deployment
 
    - **The Terraform state bucket.** It is not created here; it comes from the ``terraform_ci_bootstrap`` module,
      together with the CI roles and the permissions boundary. In AI Centre's accounts the platform repositories
-     apply it. In your own account, apply ``deploy/providers/AWS/ci`` first (see its ``README.md``).
+     apply it. In your own account, apply ``deploy/providers/AWS/ci`` first (see
+     :gh:`deploy/providers/AWS/ci/README.md`).
    - **The internal service key** (FL server to hub) in the env file. The AWS Makefile will not run without it.
      Mint it from the repository root:
 
      .. code-block:: shell
 
         make generate-internal-service-key ENV_FILE=$(pwd)/.env.<env>
+
+   Create each trust's kit file before the run too, so ``register-trusts`` has something to register (see
+   :ref:`deploy-central-hub-register-trusts`).
+
+.. note::
+
+   Every ``make`` command on this page runs from ``deploy/providers/AWS`` unless it says otherwise.
 
 Run the whole pipeline with one target:
 
@@ -131,27 +139,63 @@ turns on RDS deletion protection and a final snapshot.
    * - ``ssh-config``
      - Add SSM-based SSH entries to ``~/.ssh/config``.
    * - ``ansible-init``
-     - Set up the hub bastion, and Docker, CloudWatch and FL assets on the cloud Trust EC2.
+     - Patch both hosts, install ``psql`` on the hub bastion, and install Docker, the AWS CLI, CloudWatch and the
+       FL assets on the cloud Trust EC2. The FL kit is staged as ``Trust_1`` for now, because no slot has been
+       assigned yet.
    * - ``deploy-centralhub``
      - Deploy the hub's Fargate services at the tip of the environment's branch, and publish the UI.
    * - ``register-trusts``
-     - Register the trust roster on the hub and write each trust's credentials into its kit file.
+     - Register every kit file present for the environment on the hub, and write each trust's credentials into it.
    * - ``deploy-trust``
-     - Deploy the AWS-hosted trust, if any. Skip it when all trusts are on-prem.
+     - Re-stage the FL kit for the slot the hub assigned, seed the cloud trust's mock data, and start its services
+       (see `Cloud trust data`_).
    * - ``status``
      - Run the health checks (see `Status check`_).
 
-Each hub deploy pins an immutable image tag (``sha-<short7>``). To undo one, repoint the services at the
-previous revision:
+After ``register-trusts``, fill in the rest of each kit's hub-shared settings with ``make sync-trust-kit`` (see
+:ref:`deploy-central-hub-register-trusts`).
+
+Each hub deploy pins an immutable image tag. To redeploy, pin a specific build or roll back, see
+:ref:`deploy-central-hub-deploys`.
+
+.. tip::
+
+   After a targeted Terraform change to the bastion alone, ``make provision-bastion PROD=<env>`` reinstalls its
+   tooling without touching the Trust EC2.
+
+.. _deploy-central-hub-aws-hub-only:
+
+Hub-only deployment
+===================
+
+Use this when every trust runs on-prem, typically because the FL workloads need hardware the cloud Trust EC2 lacks
+(it is a ``t3.xlarge`` with no GPU):
 
 .. code-block:: shell
 
-   make rollback-centralhub
+   cd deploy/providers/AWS
+   make full-deploy-hub-only PROD=<stag|true>
 
-.. seealso::
+It runs the same chain as ``full-deploy`` without the cloud-trust steps, and Terraform creates **no Trust EC2**.
+``ssh-config`` adds no ``flip-trust`` entry, and the cloud-trust targets refuse to run against this environment.
 
-   "Central Hub deploys and rollback" in ``deploy/providers/AWS/README.md`` — tag resolution, the ``TAG=``
-   override and production rollout timing.
+.. warning::
+
+   On an environment previously deployed with ``full-deploy``, the hub-only apply **destroys the existing Trust
+   EC2**, and its data volumes are not kept. Re-run with ``DEPLOY_TRUST_EC2=true`` (the default) to bring one back.
+
+Each on-prem trust then joins as described in :doc:`onboarding-a-trust`: register its kit
+(:ref:`deploy-central-hub-register-trusts`), add its public IP to ``LOCAL_TRUST_PUBLIC_IPS`` and run
+``make -C deploy/providers/AWS allow-local-trust-nlb PROD=<env>``, then start the stack on the trust host.
+
+.. important::
+
+   Register on-prem trusts with ``make -C deploy/providers/AWS register-trusts``, not the root
+   ``make register-trust``. The root target runs inside a local ``flip-api`` container and cannot reach the hub's
+   ECS task.
+
+Several on-prem trusts can share one host if each kit uses its own ports and data directories. The shipped
+``trust/.env.*.development.example`` kits show a working two-trust allocation.
 
 UI-only deploys
 ===============
@@ -198,6 +242,30 @@ After ``register-trusts``, fill the rest of each kit file's hub-shared settings 
 
    make sync-trust-kit KIT=<CODE> PROD=<env>
 
+``update-env`` writes the database host, the database secret ARN and the two Cognito IDs into your env file.
+
+Cloud trust data
+================
+
+``deploy-trust`` is more than one action. It re-stages the FL kit for the slot the hub assigned, stops the trust's
+services, **seeds** the Trust EC2 with that trust's mock OMOP and Orthanc data, then starts the services again.
+Seeding downloads about 1 GB from Hugging Face, at the data version pinned in ``trust/.data_version``, then loads the
+OMOP vocabulary. It reads the slot number and database passwords from the kit file, which is why it must follow
+``register-trusts``.
+
+**The seed runs on every** ``deploy-trust``. A routine redeploy therefore downloads and loads the mock data again.
+That costs minutes, not correctness: only the listed projects' rows are replaced, and Orthanc skips images it
+already holds.
+
+- To re-seed after a data version bump without a full redeploy:
+
+  .. code-block:: shell
+
+     make seed-trust-data KIT=<CODE>
+
+- If an interrupted run left the DICOM vocabulary half-loaded, add ``FORCE_DICOM_VOCAB=1``. Otherwise the vocabulary
+  reports itself present and is never reloaded.
+
 ************
 Status check
 ************
@@ -207,26 +275,131 @@ Status check
    make status
 
 This checks Terraform state and outputs, the network, EC2 health, database connectivity, Secrets Manager, S3,
-Cognito, containers, the public endpoints, SSH access and CloudWatch logging.
+Cognito, the Docker services on the Trust EC2 and the ECS services, the public endpoints, SSH access and CloudWatch
+logging.
+
+.. _deploy-central-hub-aws-ssm:
 
 ******************
 SSH access via SSM
 ******************
 
-Once ``make ssh-config`` has run, connect directly:
+The hub bastion and the cloud Trust EC2 sit in private subnets with **no inbound ports**; port 22 is never open.
+SSH runs through an AWS Systems Manager Session Manager tunnel instead.
+
+Install the Session Manager plugin
+==================================
+
+You need version 1.2.319.0 or later.
 
 .. code-block:: shell
 
-   ssh flip          # Central Hub
+   # macOS
+   brew install session-manager-plugin     # or: brew upgrade session-manager-plugin
+
+   # Ubuntu / Debian
+   curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+     -o session-manager-plugin.deb
+   sudo dpkg -i session-manager-plugin.deb
+
+   session-manager-plugin --version
+
+For other systems, see the `AWS installation guide
+<https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html>`_.
+
+Connect
+=======
+
+Sign in to the account and region the instances run in, then write the SSH entries:
+
+.. code-block:: shell
+
+   export AWS_PROFILE=<profile> AWS_REGION=<region>
+   aws sso login --profile $AWS_PROFILE
+   make ssh-config
+
+``ssh-config`` reads the instance IDs from Terraform and adds ``Host flip`` and ``Host flip-trust`` entries to
+``~/.ssh/config``, using ``~/.ssh/host-aws``. Run it again after an ``apply`` that replaces an instance.
+
+.. code-block:: shell
+
+   ssh flip          # Central Hub bastion
    ssh flip-trust    # cloud trust, if deployed
 
-To open the trust's web UIs (XNAT, Orthanc, API docs, Grafana), forward their ports over SSM:
+To test the tunnel without SSH, ``aws ssm start-session --target $(terraform output -raw Ec2InstanceId)`` should
+open a shell on the bastion.
+
+Open the trust's web UIs
+========================
 
 .. code-block:: shell
 
    make forward-trust
 
-It prints the local URLs to open in your browser. Press ``Ctrl+C`` to close all forwards.
+This forwards the cloud trust's web UIs over SSM and prints their local URLs. Press ``Ctrl+C`` to close all
+forwards.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - Service
+     - Local URL
+     - Notes
+   * - XNAT
+     - ``http://localhost:8105``
+     - Web UI
+   * - Orthanc
+     - ``http://localhost:8042``
+     - Sign in with ``ORTHANC_USERNAME`` / ``ORTHANC_PASSWORD`` from the kit file
+   * - trust-api docs
+     - ``http://localhost:8020/docs``
+     -
+   * - imaging-api docs
+     - ``http://localhost:8001/docs``
+     -
+   * - data-access-api docs
+     - ``http://localhost:8010/docs``
+     -
+   * - Grafana
+     - ``http://localhost:3000``
+     - Observability dashboards
+
+The hub's own UI and API need no forwarding: they are served through CloudFront.
+
+.. note::
+
+   ``forward-trust`` always forwards port 8105 for XNAT, the shipped default for ``XNAT_WEB_PORT``. ``XNAT_PORT``
+   (the DICOM receiver) and ``XNAT_WEB_PORT`` must differ, and a kit from before the two were split sets only
+   ``XNAT_PORT``: the next ``deploy-trust`` on it is refused with a message naming both. Add ``XNAT_WEB_PORT`` to the
+   kit file and deploy again.
+
+If SSH fails
+============
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Symptom
+     - Fix
+   * - ``Unable to locate credentials``
+     - Your SSO session has expired: ``aws sso login --profile $AWS_PROFILE``.
+   * - ``SessionManagerPlugin not found`` or ``is not installed``
+     - Install or upgrade the plugin (see above).
+   * - ``InvalidInstanceID.NotFound``
+     - Check the instance exists: ``terraform output Ec2InstanceId`` or ``terraform output TrustEc2InstanceId``,
+       then run ``make ssh-config`` again.
+   * - ``AccessDeniedException`` from ``aws ssm start-session``
+     - Check the Session Manager permissions: your role needs ``ssm:StartSession``, and the instance's role needs
+       the Session Manager policy, which Terraform attaches.
+   * - The connection hangs
+     - Check ``aws ssm describe-instance-information`` reports the instance ``Online`` and that it is running. No
+       inbound SSH rule is needed.
+   * - ``Unable to connect to SSM endpoint``
+     - ``AWS_REGION`` does not match the region the instances run in.
+   * - ``Bad ProxyCommand``
+     - Regenerate the entries with ``make ssh-config``.
 
 ***************************
 Destroy infrastructure
@@ -242,6 +415,10 @@ Destroy infrastructure
    **Cognito**, **Secrets Manager** and the **S3 buckets** are kept. In production, RDS deletion protection is on
    and a final snapshot is taken before deletion is allowed; staging is disposable.
 
+It removes the Trust EC2 and the hub bastion, the ECS cluster and its EFS file systems, both load balancers,
+CloudFront and its WAF, the Cloud Map namespace, the VPC with its subnets, endpoints and NAT gateway, the IAM roles,
+the Parameter Store entries and the Elastic IPs.
+
 ***************
 Troubleshooting
 ***************
@@ -251,5 +428,6 @@ usage.
 
 .. seealso::
 
-   ``deploy/providers/AWS/TROUBLESHOOTING.md`` — Terraform state drift, ECS service errors, CloudFront cache
-   invalidation, RDS connectivity and SSM Session Manager issues.
+   - :ref:`ts-central-hub-aws` — common Central Hub problems and their fixes.
+   - :gh:`deploy/providers/AWS/README.md` — maintainer notes: how the stack is built, the Terraform CI pipeline, the
+     test suites and the design rationale.

@@ -16,7 +16,5 @@ FLIP components
 
 .. note::
 
-   Trust-side services can also be deployed on **Kubernetes** via the Helm chart
-   at ``trust/deploy/helm/``. See the
-   `K8s README <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_
-   for details.
+   Trust-side services can also be deployed on **Kubernetes** with the Helm chart: see
+   :ref:`deploy-flip-node-kubernetes`.

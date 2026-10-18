@@ -4,7 +4,11 @@
 Data Enrichment
 ################
 
-.. warning:: Must be logged into FLIP, be assigned to the project, and have access to the :term:`XNAT` instance at each participating Trust. See :ref:`receiving-xnat-credentials`.
+.. admonition:: Before you start
+   :class: note
+
+   You need to be signed in to FLIP, be a member of the project, and have access to the :term:`XNAT` instance at each
+   participating Trust (see :ref:`receiving-xnat-credentials`).
 
 *Data enrichment* is where you add whatever your app needs on top of the images FLIP has pulled into each Trust's XNAT
 — segmentation masks, ROI annotations, contours. Trust :term:`PACS` supply images only, so anything else has to be added

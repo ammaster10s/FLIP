@@ -89,7 +89,7 @@ service:
 
    **For maintainers:** the three APIs share the ``log_config`` library in ``trust/observability/log_config/``.
    Each service sets it up once at start-up with its own name and its ``LOG_LEVEL`` setting. See the
-   `observability README <https://github.com/londonaicentre/FLIP/blob/develop/trust/observability/README.md>`_.
+   :gh:`observability README <trust/observability/README.md>`.
 
 *************************
 Infrastructure Components
@@ -205,9 +205,9 @@ services:
 In production, Loki and Grafana keep their data in persistent volumes. On hosts provisioned with Ansible (AWS
 EC2 or on-prem), these are ``/opt/flip/volumes/loki`` and ``/opt/flip/volumes/grafana``.
 
-**************************
-Operations & Querying Logs
-**************************
+****************************
+Querying logs and operations
+****************************
 
 Accessing Grafana
 =================

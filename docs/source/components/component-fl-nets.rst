@@ -67,7 +67,7 @@ Hub API and the FL API are not on it, and an FL client has no hub URL or hub cre
    public internet: on a platform-managed estate the server's egress passes a firewall that allows only the
    platform's own endpoints, and Trust hosts sit behind the Trust's firewall. Everything an app needs (weights,
    checkpoints, auxiliary networks) must arrive as uploaded model files, never as a run-time download (see
-   *Model Files* in the :doc:`user guide <../user-guides/user-common>`).
+   *Model files* in the :ref:`user guide <model-files>`).
 
    A ``pretrained=True`` or ``torch.hub`` call hangs the job on the server. On NVFLARE the Trust then reports
    ``cannot sync with server Runner``; on Flower the run never starts a round. Either way the model stays
@@ -247,14 +247,14 @@ uploaded files together with the job type's static (non-modifiable) template fil
 
    Workflow of how the user uploads files for a specific job type.
 
-The per-job-type templates are under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
+The per-job-type templates are under :gh:`fl-apps/ <fl-apps>`.
 The NVFLARE tutorials show them in use:
 
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_ (job type ``standard``)
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type ``standard``)
-- `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type ``evaluation``)
-- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type ``diffusion_model``)
-- `ehr_risk_prediction <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>`_ (job type ``standard``)
+- :gh:`xray_classification <fl-tutorials/nvflare/image_classification/xray_classification>` (job type ``standard``)
+- :gh:`3d_spleen_segmentation <fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>` (job type ``standard``)
+- :gh:`3d_spleen_segmentation_evaluation <fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>` (job type ``evaluation``)
+- :gh:`latent_diffusion_model <fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>` (job type ``diffusion_model``)
+- :gh:`ehr_risk_prediction <fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>` (job type ``standard``)
 
 The three ``standard`` tutorials show one job type running very different apps: each is supervised federated
 averaging, but the data, architecture and training configuration differ. The EHR one has no imaging at all. A
@@ -271,7 +271,7 @@ runs on CPU:
 
 .. seealso::
 
-   The `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README.
+   The :gh:`fl-tutorials/ <fl-tutorials/nvflare>` README.
 
 .. _fl-required-files:
 
@@ -447,7 +447,7 @@ would for ``nvflare job submit``. FLIP keeps two keys and writes the rest from t
      ``mem_per_gpu_in_GiB``, which NVFLARE's portable block does not accept.
 
    A researcher can override the GPU count for one run when starting training (see the
-   :doc:`user guide <../user-guides/user-common>`).
+   :ref:`user guide <initiate-training>`).
 
    *Default = the platform's* ``JOB_RESOURCE_SPEC_NUM_GPUS`` *(0 unless the deployment changes it), when the
    job's* ``resource_spec`` *gives no GPU count. FLIP's templates ship an empty one.*
@@ -480,7 +480,7 @@ job directory) automatically.
 
 .. seealso::
 
-   The Flower tutorials under `fl-tutorials/flower/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/flower>`_
+   The Flower tutorials under :gh:`fl-tutorials/flower/ <fl-tutorials/flower>`
    and :doc:`/working-with-flip-apps/create-flip-app-from-flower` for worked examples of both files.
 
 ****************************************************
@@ -488,7 +488,7 @@ Data access and communication with external services
 ****************************************************
 
 You upload the training script that runs on the client, but it must access data through the **FLIP package**
-(`flip-utils/flip/ <https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip>`_), which is installed on
+(:gh:`flip-utils/flip/ <flip-utils/flip>`), which is installed on
 every client and server.
 
 **Data access** (these calls go through the Imaging API to the project's XNAT, among others):
@@ -736,6 +736,6 @@ Two facts about how an app is assembled are easy to miss:
 - **For every NVFLARE job type, your upload is intentionally minimal** (see :ref:`fl-required-files`). The rest of
   the app comes from the static (non-modifiable) templates baked into the flip-api image, at the directory
   ``FL_APP_BASE_DIR`` points to. To see what a fully bundled app looks like, browse the per-job-type templates
-  under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
+  under :gh:`fl-apps/ <fl-apps/nvflare>`.
 - **Every NVFLARE job type takes a plain training or evaluation script** that calls ``nvflare.client`` directly
   (``fed_opt`` reuses the ``standard`` trainer contract unchanged).

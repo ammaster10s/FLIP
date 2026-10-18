@@ -300,8 +300,8 @@ per-site differences down to hardware rather than software.
    :doc:`arkplus-fine-tuning`
       The full Ark+ application guide — project setup, cohort query, file upload, and training.
 
-   `arkplus_fine_tuning README <https://github.com/londonaicentre/FLIP/blob/develop/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/README.md>`_
+   :gh:`arkplus_fine_tuning README <fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/README.md>`
       Technical reference for the app internals (model architecture, finetuning mechanisms, ``job.py``).
 
-   `scripts/fl_round_metrics/extract_platform_round_timings.sh <https://github.com/londonaicentre/FLIP/blob/develop/scripts/fl_round_metrics/extract_platform_round_timings.sh>`_
+   :gh:`scripts/fl_round_metrics/extract_platform_round_timings.sh`
       The CloudWatch extraction script used in Step 3.

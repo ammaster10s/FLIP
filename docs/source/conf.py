@@ -89,9 +89,46 @@ extensions = [
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
     "sphinx.ext.ifconfig",
+    "sphinx.ext.extlinks",
     "sphinxcontrib.bibtex",
+    "sphinxcontrib.mermaid",
     "sphinx_reredirects",
 ]
+
+# :gh:`path` links a repo file at the ref this build is of: the PR commit on a PR preview, the branch or tag
+# ReadTheDocs built otherwise, develop locally.
+if os.environ.get("READTHEDOCS_VERSION_TYPE") == "external":
+    _gh_ref = os.environ.get("READTHEDOCS_GIT_COMMIT_HASH", "develop")
+else:
+    _gh_ref = os.environ.get("READTHEDOCS_GIT_IDENTIFIER", "develop")
+extlinks = {"gh": (f"https://github.com/londonaicentre/FLIP/blob/{_gh_ref}/%s", "%s")}
+
+# Swimlane diagrams (sphinxcontrib-mermaid) in the FLIP design-system colours of _static/style.css.
+mermaid_light_theme = "base"
+mermaid_dark_theme = "base"  # the docs theme has no dark mode, so keep the same colours
+mermaid_init_config = {
+    "startOnLoad": False,
+    # Counter-based SVG ids: time-based ones can collide when several diagrams render in one millisecond.
+    "deterministicIds": True,
+    "themeVariables": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": "14px",
+        "actorBkg": "#F7F3F9",
+        "actorBorder": "#61366E",
+        "actorTextColor": "#61366E",
+        "actorLineColor": "#B88AC6",
+        "signalColor": "#2C3E6B",
+        "signalTextColor": "#333333",
+        "labelBoxBkgColor": "#F7F3F9",
+        "labelBoxBorderColor": "#872B6E",
+        "labelTextColor": "#872B6E",
+        "loopTextColor": "#872B6E",
+        "noteBkgColor": "#F7F3F9",
+        "noteBorderColor": "#B88AC6",
+        "sequenceNumberColor": "#FFFFFF",
+    },
+    "sequence": {"mirrorActors": False, "showSequenceNumbers": True},
+}
 
 # Renamed or moved pages keep their old URLs as HTML redirect stubs (target is relative to the old page).
 redirects = {
@@ -99,26 +136,19 @@ redirects = {
     "components/component-fl-nodes": "component-fl-nets.html",
     "user-guides/arkplus-fine-tuning": "../paper/arkplus-fine-tuning.html",
     "user-guides/reproducing-platform-overhead": "../paper/reproducing-platform-overhead.html",
+    "working-with-flip-apps/package-model-as-map": "wrap-model-for-deployment.html",
 }
 
 autoapi_type = "python"
 
 # autoapi
-autoapi_dirs = [
-    "../../flip-api/src",
-    "../../trust/data-access-api",
-    "../../trust/imaging-api",
-    "../../trust/trust-api",
-    # include flip-utils package for API docs
-    "../../flip-utils/flip",
-]
+# Only flip-utils is a public Python API (the package model developers import). The hub and trust
+# services are applications, not libraries; their REST endpoints are described on the component pages.
+autoapi_dirs = ["../../flip-utils/flip"]
 autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
-    # Alembic scripts are one-shot upgrade/downgrade pairs, not public API. They also carry no
-    # __init__.py, so AutoAPI would emit each as a revision-hash-named top-level module.
-    "*/migrations/*",
 ]
 
 # Optional:

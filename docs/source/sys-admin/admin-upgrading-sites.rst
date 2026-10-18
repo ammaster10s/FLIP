@@ -461,5 +461,5 @@ What can go wrong
 
 .. seealso::
 
-   - Onboarding an on-premises site: :doc:`/deploy-flip/deploy-flip-node-on-prem`
-   - Deployment Mode and the FL quiesce gate: :doc:`/sys-admin/admin-platform-support`
+   - Onboarding a site: :doc:`/deploy-flip/onboarding-a-trust`
+   - Deployment mode and the FL quiesce gate: :ref:`deployment-mode`

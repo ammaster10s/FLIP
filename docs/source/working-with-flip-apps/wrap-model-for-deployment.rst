@@ -1,12 +1,14 @@
-##############################################
-Packaging a trained model for inference (MAP)
-##############################################
+.. _wrap-model-for-deployment:
+
+####################################
+Wrapping a FLIP model for deployment
+####################################
 
 .. note::
 
    This page is a **working draft from a design spike**. The commands have been verified end to end on a
-   development workstation, and the app-contract decisions they rely on are in :ref:`map-open-questions`.
-   Deployment is **not** settled yet (see :ref:`map-deepcos`): treat this as a route that works locally, not as a
+   development workstation, and the app-contract decisions they rely on are in :ref:`wrap-open-questions`.
+   Deployment is **not** settled yet (see :ref:`wrap-deepcos`): treat this as a route that works locally, not as a
    deployment procedure.
 
 .. contents:: On this page
@@ -45,7 +47,7 @@ Bundle or MAP? They are different things
 -----------------------------------------
 
 Two MONAI artefacts are easily confused, and this guide produces **both**: a bundle in
-:ref:`Step 3 <map-export-bundle>`, then a MAP in :ref:`Step 4 <map-package>`.
+:ref:`Step 3 <wrap-export-bundle>`, then a MAP in :ref:`Step 4 <wrap-package>`.
 
 .. list-table::
    :header-rows: 1
@@ -79,9 +81,9 @@ manual; the MAP is the deployable service around it that speaks the hospital's p
 .. note::
 
    A bundle does not have to be a directory. It can be a **single TorchScript file** with ``inference.json`` and
-   ``metadata.json`` embedded in it. That is what :ref:`Step 3 <map-export-bundle>` produces by default, and what the
+   ``metadata.json`` embedded in it. That is what :ref:`Step 3 <wrap-export-bundle>` produces by default, and what the
    MONAI Deploy App SDK's own reference models use: the MAP then needs exactly one file passed to ``--models``.
-   :ref:`Both forms are available <map-bundle-forms>`; the directory form avoids ``torch.jit``.
+   :ref:`Both forms are available <wrap-bundle-forms>`; the directory form avoids ``torch.jit``.
 
 Where the boundary sits
 =======================
@@ -115,45 +117,22 @@ authoring the app.
 Prerequisites
 =============
 
-Pin these versions. The MONAI Deploy tooling has changed a lot between releases, and unpinned instructions break
-quickly.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 22 46
-
-   * - Component
-     - Version
-     - Notes
-   * - ``monai-deploy-app-sdk``
-     - ``4.0.0``
-     - The CUDA-13 generation. Requires ``holoscan-cu13``.
-   * - ``holoscan`` / ``holoscan-cli``
-     - ``4.2.0``
-     - Install **both**: the packager refuses to run with only the CLI. Pin the CLI explicitly —
-       ``holoscan-cli`` **4.3.0 removed MAP packaging**, and the App SDK does not pin it, so an unconstrained install
-       gives you a CLI without ``holoscan package --models``.
-   * - ``monai``
-     - ``>=1.6.0``
-     - What FLIP trains with; 1.6.0 also patches four high-severity advisories. **Not** ``1.5.0``, which caps torch
-       below 2.7 and so cannot use Blackwell GPUs.
-   * - ``torch``
-     - ``2.13.0``
-     - PyPI's default wheel (CUDA 13.0).
-   * - **NVIDIA driver**
-     - **>= 580**
-     - Required on the packaging host **and** on every host that runs the MAP. Check with ``nvidia-smi`` before you
-       start.
-   * - Python
-     - ``3.12``
-     - The MAP base image must be Ubuntu 24.04 to match.
-
-You also need Docker with the NVIDIA Container Toolkit.
+* **A GPU host with NVIDIA driver 580 or later**, the same on every host that will run the MAP. Check with
+  ``nvidia-smi`` before you start.
+* **Docker with the NVIDIA Container Toolkit.**
+* **A Python 3.12 environment with the pinned MONAI Deploy toolchain**: ``monai-deploy-app-sdk`` 4.0.0, ``holoscan``
+  and ``holoscan-cli`` 4.2.0, ``monai>=1.6.0`` and ``torch`` 2.13.0. The MONAI Deploy tooling changes a lot between
+  releases, so pin every version; :ref:`map-toolchain-pins` explains each one.
 
 .. important::
 
-   **If a deployment site's driver is below 580**, do not loosen these pins one at a time. Use the previous
-   generation as a whole set (listed under :ref:`map-maintainers`); it produces the same DICOM SEG.
+   **If a deployment site's driver is below 580**, do not loosen these pins one at a time. Use the
+   :ref:`previous generation <map-previous-generation>` as a whole set; it produces the same DICOM SEG.
+
+.. seealso::
+
+   :doc:`map-toolchain-reference` — the full version table, the error messages you may hit while installing,
+   packaging or running a MAP, and the GPU compatibility measurements behind the pins.
 
 
 Step 1 — Obtain the aggregated checkpoint
@@ -191,14 +170,14 @@ The script reports the checkpoint's structure, then loads it strictly into ``get
    unaffected — but if you read the raw dictionary yourself, do not assume dtypes survive aggregation.
 
 
-.. _map-export-bundle:
+.. _wrap-export-bundle:
 
 Step 3 — Export a MONAI Bundle
 ==============================
 
 By default the export is a single ``model.ts``: the TorchScript-compiled network with ``inference.json`` and
 ``metadata.json`` embedded. A MAP built from it needs **no FLIP application code** — not even ``models.py``.
-:ref:`A second form <map-bundle-forms>` writes a bundle directory instead and needs no ``torch.jit``.
+:ref:`A second form <wrap-bundle-forms>` writes a bundle directory instead and needs no ``torch.jit``.
 
 Run :mod:`flip.export` from the command line:
 
@@ -248,9 +227,9 @@ What the exporter does and does not do:
    not, the MAP still runs and still produces a plausible-looking result — it is simply wrong, and nothing warns you.
    For example, the FLIP spleen tutorial windows CT intensity at ``a_max=250``, while the MONAI Model Zoo spleen
    bundle uses ``a_max=164``. Copying the zoo config unchecked would silently degrade the output. See
-   :ref:`map-inference-transforms`.
+   :ref:`wrap-inference-transforms`.
 
-.. _map-bundle-forms:
+.. _wrap-bundle-forms:
 
 Two bundle forms, and why the default is the one it is
 ------------------------------------------------------
@@ -293,7 +272,7 @@ the default: a MAP built from it needs no FLIP application code at all.
 
    **A directory bundle does not work with the segmentation template today.** Packaging succeeds and the MAP starts,
    but inference fails with ``ItemNotExistsError: A predictor of the model is not set``. The cause is in the MONAI
-   Deploy App SDK (unchanged in 4.0.0), not in the bundle — see :ref:`map-maintainers`.
+   Deploy App SDK (unchanged in 4.0.0), not in the bundle — see :ref:`map-directory-bundle-limitation`.
 
    Use the TorchScript form for a segmentation MAP. The directory form currently suits a model that will not script,
    driving a bundle directly from Python, and the **classification** template.
@@ -351,7 +330,7 @@ which produces::
    runs on the Python versions where ``torch.jit`` warns it may break.
 
 
-.. _map-inference-transforms:
+.. _wrap-inference-transforms:
 
 Finding your inference transforms
 ---------------------------------
@@ -426,7 +405,7 @@ architecture is identical — as the spleen intensity window above shows.
    the same check for the tutorial apps, run in CI.
 
 
-.. _map-package:
+.. _wrap-package:
 
 Step 4 — Package the MAP
 ========================
@@ -473,7 +452,7 @@ exit code**: confirm ``Modality``, the segment coding, that ``ReferencedSeriesSe
 that the frame of reference matches.
 
 
-.. _map-view-result:
+.. _wrap-view-result:
 
 Step 6 — View the result
 ========================
@@ -561,7 +540,7 @@ API (or interactively, in the Orthanc Explorer 2 tag browser):
         "http://localhost:8142/dicom-web/studies/<study>/series/<series>/instances/<instance>/frames/1"
 
 
-.. _map-dicom-gap:
+.. _wrap-dicom-gap:
 
 From NIfTI training to DICOM deployment
 ========================================
@@ -599,7 +578,7 @@ Operators the MAP needs that training never touched
        arrays.
    * - ``DICOMTextSRWriterOperator``
      - The classification equivalent: a DICOM Structured Report. See
-       :ref:`the classification section <map-classification>`.
+       :ref:`the classification section <wrap-classification>`.
 
 Concepts that only exist on the deployment side
 ------------------------------------------------
@@ -616,22 +595,22 @@ code:
 * **Coded terminology.** Segments and findings carry SNOMED CT concepts. A mislabelled segment looks identical to a
   correct one unless you read the codes.
 * **Character sets.** DICOM defaults to a restricted character set, so non-ASCII text is silently mangled — see
-  :ref:`the classification section <map-classification>`.
+  :ref:`the classification section <wrap-classification>`.
 
 The practical consequence
 --------------------------
 
 **A model that trains perfectly can still deploy wrongly, and the failure will not look like one.** The MAP runs,
-exits zero and writes well-formed DICOM. That is why :ref:`Step 6 <map-view-result>` insists on inspecting the
+exits zero and writes well-formed DICOM. That is why :ref:`Step 6 <wrap-view-result>` insists on inspecting the
 result rather than trusting the exit code, and why the overlay check is worth doing even when every tag is correct:
 geometry errors are obvious to the eye and invisible in a tag dump.
 
-It is also why the preprocessing transcription in :ref:`Step 3 <map-export-bundle>` matters so much. Training's
+It is also why the preprocessing transcription in :ref:`Step 3 <wrap-export-bundle>` matters so much. Training's
 NIfTI arrived already resampled; at inference, the bundle's ``Spacingd`` and ``Orientationd`` transforms must
 reproduce that from whatever geometry the source study has.
 
 
-.. _map-classification:
+.. _wrap-classification:
 
 Classification models produce a different artefact
 ==================================================
@@ -670,67 +649,7 @@ What this means for you:
              print(item.TextValue)
 
 
-.. _map-environment-traps:
-
-Environment traps
-=================
-
-All of these came up while establishing the steps above, and none is documented upstream.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - Symptom
-     - Cause and remedy
-   * - ``nvidia-container-cli: unsatisfied condition: cuda>=13.0``
-     - The host driver is below 580 and cannot run the CUDA-13 MAP. Upgrade it, or build the previous generation
-       (see :ref:`map-maintainers`).
-   * - ``monai-deploy: command not found``
-     - App SDK 4.x has no command-line tool; packaging moved to the ``holoscan`` CLI. The 4.x documentation has not
-       caught up.
-   * - ``holoscan package`` has no ``--models`` flag, or ``holoscan package: error: unrecognized arguments:
-       --models`` (or a ``package`` subcommand that talks about DEB/WHEEL generators)
-     - ``holoscan-cli`` 4.3.0 or later, which removed MAP packaging. An unconstrained install gives you this, because
-       the App SDK does not pin the CLI. Pin ``holoscan-cli==4.2.0`` (or 3.x for the previous generation).
-   * - ``# of series: 0``, then ``Missing expected input 'study_selected_series_list'``
-     - The loader dropped every instance. If ``Error parsing SOP Instance: int() argument must be ... not
-       'NoneType'`` appears just above, a numeric tag is **present but empty**. **FLIP's mock CT data before version
-       20260821 has this**: every spleen series seeded from ``aicentreflip/trust-data`` carries an empty
-       ``SeriesNumber`` and ``AcquisitionNumber``. (The mock radiograph data omits these tags altogether, so it is
-       not affected.) Version 20260821 fills both; on older data, stamp them before packaging::
-
-           import glob
-
-           import pydicom
-
-           for path in glob.glob("input/*.dcm"):
-               ds = pydicom.dcmread(path)
-               ds.AcquisitionNumber = 1
-               ds.SeriesNumber = 1
-               ds.save_as(path, enforce_file_format=True)
-
-   * - ``No installed Holoscan PyPI package found``
-     - The packaging host needs the Holoscan **SDK**, not only the CLI. Install ``holoscan-cu13==4.2.0`` in the same
-       environment; ``holoscan version`` should then stop reporting ``Holoscan SDK: N/A``.
-   * - ``ManifestDownloadError ... 404``
-     - The CLI downloads the base-image manifest from GitHub, where only version 4.2.0's is published — one reason
-       for the pin. On any other CLI version, write the manifest yourself and pass it with ``--source``.
-   * - ``E: Version '3.12.3-*' for 'python3' was not found``
-     - The CLI pins Ubuntu 24.04 package versions, so the base image in the manifest must be Ubuntu 24.04.
-   * - ``ModuleNotFoundError`` inside the MAP
-     - The build and run users differ. Pass ``--uid`` / ``--gid`` when packaging.
-   * - ``undefined symbol: cudaGetDriverEntryPointByVersion``
-     - Mixed CUDA generations — a CUDA-12 torch under a CUDA-13 base image, or the reverse. Keep ``torch``,
-       ``holoscan-cu13`` and ``--cuda`` in agreement.
-   * - ``no kernel image is available for execution on the device``
-     - torch below 2.7 cannot use a Blackwell GPU, yet ``torch.cuda.is_available()`` still returns ``True``, so it
-       fails late. Caused by ``monai<=1.5.0``, which caps torch below 2.7; use ``monai>=1.6.0``.
-   * - ``The NVIDIA driver on your system is too old``
-     - The driver is below 580. Upgrade it, or build the previous generation (see :ref:`map-maintainers`).
-
-
-.. _map-config-enforcement:
+.. _wrap-config-enforcement:
 
 What FLIP actually validates in ``config.json``
 ================================================
@@ -763,7 +682,7 @@ It is easy to assume FLIP checks more of ``config.json`` than it does. What is c
    - On Flower the typo behaviour is reversed. Run-config overrides live in ``config.toml``, and Flower **rejects**
      any key the app's ``pyproject.toml`` does not declare, failing the run at submission.
 
-.. _map-open-questions:
+.. _wrap-open-questions:
 
 The FLIP app contract for export
 ================================
@@ -779,17 +698,17 @@ reads. Worked examples sit beside each tutorial in ``fl-tutorials/<backend>/<tut
 **Inference transforms are declared by convention, in** ``transforms.py``. A free-form Python module can build its
 transforms however it likes, so the inference chain cannot be derived automatically, and any rule strict enough to
 make that safe would be too restrictive for app authors. FLIP standardises *where to look* instead; the person
-exporting the model transcribes the validation chain from there. See :ref:`map-inference-transforms` for the
+exporting the model transcribes the validation chain from there. See :ref:`wrap-inference-transforms` for the
 procedure.
 
 .. note::
 
    **MONAI Deploy Express is not currently a safe dependency.** Its repository (``Project-MONAI/monai-deploy``) and
    workflow manager have had no commits since March 2025, though the App SDK itself is actively maintained. To
-   validate a MAP, use the SDK plus a standalone Orthanc, as in :ref:`Step 6 <map-view-result>`.
+   validate a MAP, use the SDK plus a standalone Orthanc, as in :ref:`Step 6 <wrap-view-result>`.
 
 
-.. _map-deepcos:
+.. _wrap-deepcos:
 
 Deploying to deepcOS
 ====================
@@ -855,7 +774,7 @@ units, optionally with regions of interest for display. The SEG carries the pixe
 
 **Set the job status deliberately**, not to success by default at the end. The vendor notes that a process exit
 code does not reliably show whether the *analysis* succeeded — the same failure as in
-:ref:`Step 6 <map-view-result>`, where a MAP whose series selection matched nothing exits zero with no output. Use
+:ref:`Step 6 <wrap-view-result>`, where a MAP whose series selection matched nothing exits zero with no output. Use
 the coded messages field to report that kind of condition.
 
 The vendor's tooling includes a validator for completed engine reports. Run it before any submission.
@@ -874,7 +793,7 @@ What this changes for FLIP
 * **Classification is close to mechanical.** ``map-apps/classification`` already produces what a finding needs: a
   per-label probability and a present/absent decision against a threshold. What remains is assigning coded
   concepts to the FLIP label names — a clinical terminology task, not an engineering one.
-* **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <map-view-result>` checks, what any
+* **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <wrap-view-result>` checks, what any
   platform in the AIDE lineage consumes, and deepcOS forwards it as-is.
 * **Segmentation needs a derived quantity it does not compute yet.** The SEG writer outputs pixels only, so a
   deepcOS submission also needs the segmented volume — voxel counting against the volume's spacing. Small, but new
@@ -920,97 +839,7 @@ That is a platform feature: the MAP's job ends at a well-formed DICOM object.
 AIDE's documentation also recommended MONAI Deploy Express for local testing, with Orthanc standing in for the Trust
 PACS — the same shape as the workflow on this page.
 
-
-.. _map-maintainers:
-
-For maintainers
-===============
-
-Background behind the version pins and the directory-bundle limitation. App authors do not need it to package a
-model.
-
-Previous toolchain generation
------------------------------
-
-For a deployment site whose NVIDIA driver is below 580, use the previous generation **as a complete set**:
-``monai>=1.6.0``, ``torch==2.11.0+cu128``, ``holoscan-cu12==3.11.0``, App SDK 3.5.0, ``holoscan-cli==3.11.0`` with a
-local ``--source`` manifest, and ``--cuda 12``. It is one commit back in this file's history and produces the same
-DICOM SEG. Do not mix it with the current pins.
-
-App SDK 3.5.0 requires Holoscan 3.x; 4.0.0 requires ``holoscan-cu13``.
-
-Why these versions
-------------------
-
-The templates originally carried ``monai<=1.5.0`` on the CUDA-12 toolchain, copied from the App SDK's
-``ai_spleen_seg_app`` example. Nothing required it — the App SDK does not depend on MONAI directly — and 1.5.0 is
-the only nearby release that still caps ``torch<2.7.0``. Measured on an RTX 5090:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 22 14 14 16
-
-   * - requirements
-     - resolves to
-     - ``is_available()``
-     - a real kernel
-     - the MAP's DICOM SEG
-   * - ``monai<=1.5.0`` + ``torch``
-     - torch 2.6.0+cu124
-     - ``True``
-     - **fails**, no ``sm_120``
-     - never produced
-   * - ``monai>=1.5.2`` + ``torch``, driver 575
-     - torch 2.13.0+cu130
-     - ``False``
-     - fails, driver < 580
-     - never produced
-   * - ``monai>=1.5.2`` + ``torch==2.11.0+cu128``
-     - torch 2.11.0+cu128
-     - ``True``
-     - works
-     - 73 frames, 212,808 voxels
-   * - ``monai>=1.6.0`` + ``torch==2.11.0+cu128``
-     - torch 2.11.0+cu128
-     - ``True``
-     - works
-     - **identical, voxel for voxel**
-   * - **the current pins**, driver 580
-     - torch 2.13.0+cu130
-     - ``True``
-     - works
-     - **identical, voxel for voxel**
-
-- **MONAI 1.6.0 changes nothing about what the MAP computes**: same 73 frames, 212,808 foreground voxels and 278 mL
-  against the published tutorial checkpoint and a 168-slice spleen CT. ``UNet`` and ``DenseNet121``, the two
-  tutorial architectures, have identical state-dict keys and shapes in 1.5.2 and 1.6.0, so the directory form's
-  MONAI coupling does not affect them — a fact about those two releases, not a guarantee for the next.
-- **The CUDA-13 move costs a driver floor and buys a torch line that still moves.** PyTorch publishes no CUDA-12.8
-  wheel above 2.11.0, so the previous pins were a permanent ceiling: a torch advisory fixed in 2.12 or later would
-  have forced this migration under time pressure.
-
-Why a directory bundle fails in the segmentation template
----------------------------------------------------------
-
-The packager copies the bundle into ``/opt/holoscan/models``. The App SDK's ``ModelFactory`` does not recognise that
-layout — ``NamedModel`` expects exactly one item per model folder, and a bundle has three — yet still returns a
-placeholder ``Model`` with ``predictor = None``, so ``app_context.models`` is truthy. ``MonaiBundleInferenceOperator``
-checks ``app_context.models`` *before* its own directory-bundle branch, takes the placeholder, and fails much later
-inside the inferer. ``core/models/named_model.py`` and ``core/models/factory.py`` are byte-identical in App SDK 3.5.0
-and 4.0.0.
-
-The classification template is unaffected because its operator loads the bundle itself and checks that the model has
-a predictor. If ``torch.jit`` is ever removed, the SDK's own ``torch.jit.load`` breaks at the same time, so this has
-to be fixed upstream regardless.
-
-Other notes
------------
-
-- TorchScript is deprecated from torch 2.5 and reports itself unsupported on Python 3.14+. The App SDK declares
-  ``requires-python = ">=3.10,<3.14"``.
-- The empty ``SeriesNumber`` in the old mock CT data fails first, in ``populate_series_attributes``; the empty
-  ``AcquisitionNumber`` is reached only where two instances share a position.
-
 .. seealso::
 
-   ``map-apps/README.md`` and ``flip-utils/flip/export/README.md`` carry the template and exporter detail.
+   :doc:`map-toolchain-reference` for the version pins, environment traps and GPU measurements;
+   :gh:`map-apps/README.md` and :gh:`flip-utils/flip/export/README.md` for the template and exporter detail.

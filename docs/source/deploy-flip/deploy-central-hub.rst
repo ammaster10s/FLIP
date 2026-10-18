@@ -9,7 +9,7 @@ and serves the web UI. It runs on AWS and is provisioned with Terraform (or Open
 ``deploy/providers/AWS/``, in one of **two deployment modes**.
 
 This page covers what the two modes share. Each mode has its own page with its architecture and runbook. To deploy a
-trust, see :doc:`deploy-flip-node-on-prem` or :doc:`deploy-flip-node-in-tre`.
+trust, see :doc:`deploy-trust-node`.
 
 .. contents:: On this page
    :local:
@@ -107,18 +107,44 @@ Everything below applies to both modes.
 Prerequisites
 *************
 
-1. **AWS CLI with SSO access**. See `deploy/README.md
-   <https://github.com/londonaicentre/FLIP/blob/main/deploy/README.md>`_.
+1. **AWS CLI with SSO access.** Configure it once with ``aws configure sso``, then sign in with
+   ``aws sso login --profile <profile>`` whenever the session expires.
 2. **Terraform >= 1.13.1** (or OpenTofu).
 3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
-4. **GitHub CLI**, to authenticate against GitHub Container Registry for image pulls.
+4. **GitHub CLI** (``gh``), and a **GitHub Container Registry login** to pull the pre-built images. Create a GitHub
+   personal access token with the ``read:packages`` scope, then:
+
+   .. code-block:: shell
+
+      echo <GITHUB_PAT> | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
+
 5. **An environment file** in the project root for your environment (see the table below).
 6. **AWS profiles** in ``~/.aws/config`` named after each environment (see the table below). The Makefile refuses to
-   run if the active profile does not match the chosen environment.
+   run if the active profile does not match the chosen environment. Use short aliases that point at your SSO
+   accounts, one block per environment:
+
+   .. code-block:: ini
+
+      [profile stag]
+      sso_session = <sso-session>
+      sso_account_id = <staging-account-id>
+      sso_role_name = <sso-role-name>
+      region = <aws-region>
+      output = json
+
+   If your profile names differ, set ``STAG_AWS_PROFILE``, ``PROD_AWS_PROFILE``, ``LZA_STAG_AWS_PROFILE`` or
+   ``LZA_AWS_PROFILE`` to them, in the env file or on the ``make`` command line.
 7. Self-contained mode only:
 
-   - an **SSH key pair** at ``~/.ssh/host-aws``, uploaded to AWS and used for SSH over SSM;
-   - the **AWS Session Manager plugin**, needed for ``ssh flip`` and ``make forward-trust``.
+   - an **SSH key pair** at ``~/.ssh/host-aws``. Terraform uploads the public key as the EC2 key pair, and you use
+     it for SSH over SSM:
+
+     .. code-block:: shell
+
+        ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
+
+   - the **AWS Session Manager plugin**, needed for ``ssh flip`` and ``make forward-trust``. See
+     :ref:`deploy-central-hub-aws-ssm`.
 
    The platform-managed mode has no SSH or Ansible step.
 
@@ -156,39 +182,77 @@ Prerequisites
 
 Production environments get the production-only database safeguards (RDS deletion protection and a final snapshot).
 The mode and the environment are independent: ``PROD=lza`` keeps every production control, while ``PROD=lza-stag`` is
-staging on the platform-managed network.
+staging on the platform-managed network. If you leave ``PROD`` unset, the targets in ``deploy/providers/AWS`` use
+staging (``PROD=stag``).
 
 ************************
 Required IAM permissions
 ************************
 
-The operator role that provisions the infrastructure needs these managed policies, or equivalent custom permissions:
+The operator role that provisions the infrastructure needs these managed policies, or custom permissions covering
+the same ground:
 
-- ``AmazonEC2FullAccess``
-- ``AmazonECS_FullAccess``
-- ``AmazonRDSFullAccess``
-- ``AmazonElasticFileSystemFullAccess``
-- ``CloudWatchLogsFullAccess``
-- ``SecretsManagerReadWrite``
-- ``IAMFullAccess``
-- ``ElasticLoadBalancingFullAccess`` (covers ALB and NLB)
-- ``CloudFrontFullAccess``
-- ``AWSWAFFullAccess``
-- ``AWSCertificateManagerFullAccess``
-- ``AmazonRoute53FullAccess``
-- ``AWSCloudMapFullAccess``
-- ``AmazonSSMFullAccess``
-- ``AmazonSESFullAccess`` (optional, for email)
+.. list-table::
+   :header-rows: 1
+   :widths: 22 46 32
 
-The deployed services themselves run with scoped, least-privilege roles, not these broad permissions.
+   * - Service
+     - Needed for
+     - Managed policy
+   * - EC2 and VPC
+     - The VPC, subnets, NAT gateway, VPC endpoints, security groups, instances, key pairs and Elastic IPs
+     - ``AmazonEC2FullAccess``
+   * - ECS and Fargate
+     - The cluster, task definitions and services
+     - ``AmazonECS_FullAccess``
+   * - RDS
+     - The database, its subnet group and parameter group
+     - ``AmazonRDSFullAccess``
+   * - EFS
+     - The shared FL workspace volumes
+     - ``AmazonElasticFileSystemFullAccess``
+   * - CloudWatch Logs
+     - ECS task logs and WAF logs
+     - ``CloudWatchLogsFullAccess``
+   * - Secrets Manager
+     - Database credentials and API secrets
+     - ``SecretsManagerReadWrite``
+   * - IAM
+     - Roles for the EC2 hosts and the ECS tasks
+     - ``IAMFullAccess``
+   * - Load balancing
+     - The application load balancer (API) and network load balancer (FL traffic)
+     - ``ElasticLoadBalancingFullAccess``
+   * - CloudFront and WAF
+     - The UI distribution and the web ACL attached to it
+     - ``CloudFrontFullAccess``, ``AWSWAFFullAccess``
+   * - Certificate Manager
+     - Certificates in ``eu-west-2`` (load balancer) and ``us-east-1`` (CloudFront)
+     - ``AWSCertificateManagerFullAccess``
+   * - Route 53
+     - DNS records for the UI name and the FL load balancer
+     - ``AmazonRoute53FullAccess``
+   * - Cloud Map
+     - The private DNS namespace the ECS tasks use to find each other
+     - ``AWSCloudMapFullAccess``
+   * - Systems Manager
+     - AMI lookups and the Parameter Store entries the ECS tasks read
+     - ``AmazonSSMFullAccess``
+   * - SES (optional)
+     - Email templates
+     - ``AmazonSESFullAccess``
+
+No container-registry permissions are needed in the self-contained mode: images come from GHCR.
+
+The deployed hosts and services do not get these broad permissions; each runs with a scoped role:
+
+- **Central Hub bastion:** Session Manager access only. It cannot read FLIP secrets or buckets.
+- **Cloud trust EC2:** Session Manager and CloudWatch, plus read-only access to the bucket holding the FL participant
+  kits. No access to Cognito, SES, Secrets Manager or the FLIP application buckets.
+- **ECS tasks:** each service has its own task role with the application permissions it needs.
 
 On a **platform-managed** estate, the workload account's Identity Center permission set replaces this list, bounded by
 the estate's service control policies. Creating network resources is denied there by design.
-
-.. seealso::
-
-   "Required IAM permissions" in `deploy/providers/AWS/README.md
-   <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md>`_ holds the canonical list.
 
 ***********************
 Service authentication
@@ -220,12 +284,198 @@ Generate the internal service key into the active environment file. Existing key
 
    make generate-internal-service-key
 
-Register trusts from ``deploy/providers/AWS``, one kit at a time or every kit file present for the environment:
+The two per-trust keys are minted when you register the trust; see :ref:`deploy-central-hub-register-trusts`.
+
+.. _deploy-central-hub-register-trusts:
+
+******************
+Registering trusts
+******************
+
+*Who: FLIP admin, with AWS access to the hub's account.* The hub must already be deployed: registration runs as a
+one-off task inside it.
+
+A trust's **kit file**, ``trust/.env.<CODE>.<suffix>``, is its identity and its configuration. The suffix follows
+``PROD``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - ``PROD``
+     - Kit file
+   * - ``true``
+     - ``trust/.env.<CODE>.production``
+   * - ``stag``
+     - ``trust/.env.<CODE>.stag``
+   * - ``lza``
+     - ``trust/.env.<CODE>.lza-prod``
+   * - ``lza-stag``
+     - ``trust/.env.<CODE>.lza-stag``
+
+1. **Create the kit file.** From the repository root:
+
+   .. code-block:: shell
+
+      make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=<env>
+
+   The trust's name, code and region are read from this file, never from environment variables.
+
+2. **Register the trust on the hub.**
+
+   .. code-block:: shell
+
+      make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>
+
+   Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
+   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file. Of the hub-shared
+   settings, only the API key header name and the FL backend are filled in.
+
+3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<env>`` present:
+
+   .. code-block:: shell
+
+      make sync-trust-kit KIT=<CODE> PROD=<env>
+
+   ``make sync-trust-kits`` does the same for every local kit file.
+
+   .. important::
+
+      Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
+      and the trust can neither reach the hub nor decrypt a task.
+
+4. **Mint the XNAT passwords.** These are trust-side runtime secrets and are not part of the hub's kit:
+
+   .. code-block:: shell
+
+      make generate-xnat-credentials KIT=<CODE> PROD=<env>
+
+Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
+maps onto the matching NVFLARE participant kit or Flower SuperNode key.
+
+**Registration is idempotent.** Running it again for a trust that is already registered issues no new credentials,
+because the hub keeps only hashes of them; it logs *already registered* and refreshes the hub-shared settings.
+Credentials are written into the kit file on first registration only, and any host-specific edits you made to the
+file are kept.
+
+**Getting the kit to the trust host** is a separate, explicit step; nothing copies the kit file anywhere.
+
+- For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> PROD=<env>`` reads the kit
+  locally and passes its values to the containers on the host.
+- For an on-prem trust, see :doc:`onboarding-a-trust`. Note that
+  ``make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>`` packages the slot-named file
+  ``trust/.env.<slot>`` (for example ``trust/.env.Trust_2``), not the ``trust/.env.<CODE>.<suffix>`` file above,
+  and refuses to run unless that file's ``FL_KIT_SLOT`` equals ``KIT``. Fill that file first, as the target's help
+  describes: paste the credential lines from the UI's *Add Trust* dialog, then run
+  ``make sync-trust-kit KIT=<slot> PROD=true`` from the repository root.
+
+If registration fails
+=====================
+
+- **The error is printed for you.** The command collects the ``ERROR`` and ``WARNING`` lines from the task's log
+  and prints them before cleaning up. That is where the remedy is, for example that the FL kit slots have run out.
+- **A run over several kits tries every kit** and exits non-zero if any failed, so one bad kit never blocks the
+  rest and a partial failure never looks like success.
+- **"No trust/.env.*.<suffix> kits found"** means no kit file exists for this environment (``.example`` templates
+  do not count). Run ``make new-trust`` first. This is only a warning, so a ``full-deploy`` carries on past it.
+
+.. _deploy-central-hub-kit-slots:
+
+Running out of FL kit slots
+===========================
+
+Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
+slot left. One command adds more (NVFLARE only):
 
 .. code-block:: shell
 
-   make register-trusts KIT=<CODE>   # one trust
-   make register-trusts              # every trust/.env.*.<env> kit file
+   make -C deploy/providers/AWS add-fl-kits N=2 PROD=<stag|true>
+
+``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
+activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
+certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
+the NVFLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+
+It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
+and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
+slots without a restart, so the next ``register-trusts`` can claim one.
+
+.. warning::
+
+   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots PROD=<env>``. Do not
+   re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
+
+.. seealso::
+
+   :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
+
+.. _deploy-central-hub-deploys:
+
+**********************************
+Deploying and rolling back the hub
+**********************************
+
+*Who: FLIP admin.* This redeploys the hub's three services (``flip-api``, ``fl-api-net-1``, ``fl-server-net-1``)
+and publishes the UI, in either mode. Every deploy pins an immutable image tag.
+
+1. **Pause FL activity.** Replacing the FL server kills any training run in progress and leaves its model stuck at
+   ``TRAINING_STARTED``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
+   needs to finish. Wait until ``GET /fl/quiesce`` reports ``deployment_mode: true`` and ``fl_quiesced: true``.
+
+2. **Deploy.** From a clean checkout of the branch you are deploying:
+
+   .. code-block:: shell
+
+      make -C deploy/providers/AWS deploy-centralhub PROD=<env>
+
+   This deploys the build of the tip of ``origin/main`` (production: ``PROD=true`` or ``lza``) or
+   ``origin/develop`` (staging: ``PROD=stag`` or ``lza-stag``), tagged ``sha-<short7>``. It checks that every
+   service has an image at that tag **before** changing anything, so a missing image deploys nothing. With
+   ``PROD=true`` it asks you to confirm first. It finishes by building the UI from your working tree and publishing
+   it.
+
+3. **Resume.** Disable Deployment Mode.
+
+To deploy a specific build, pass ``TAG=sha-<short7>`` or a release tag, ``TAG=v<X.Y.Z>``. To deploy a feature
+branch, first build its images with ``gh workflow run <workflow>.yml --ref <branch>``, wait for the run to pass,
+then deploy its ``sha-`` tag.
+
+**If the deploy stops on a missing image**, the build for that commit has not been published. The image builds only
+run for the services a merge touched, and the ``flip-api`` build waits for its tests, so right after a merge an image
+may be missing or still building. The message names the workflow: run it with ``gh workflow run`` as above, then
+deploy again. If the message reports a registry error rather than a missing image (an outage, or an authentication
+failure), do not trigger rebuilds. The platform-managed mode pulls through its ECR cache and skips this check.
+
+Rolling back
+============
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS rollback-centralhub PROD=<env>
+
+This points each service back at its previous revision in seconds, with no rebuild, and retires the revision it
+rolled away from so a later Terraform apply cannot bring it back.
+
+- **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui PROD=<env>`` from the matching commit if
+  it must.
+- **On an NVFLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
+  minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
+
+.. warning::
+
+   Do not roll back after a **partial** deploy (some services moved before a failure). A rollback moves every
+   service down one revision, including the ones the failed deploy never touched. Publish the missing build and
+   deploy again instead.
+
+.. note::
+
+   **Laptop Terraform applies and deploys interact.** Terraform owns the task-definition skeleton, but a routine
+   apply leaves the deployed image in place. Two exceptions:
+
+   - If an apply registers a new task definition, it goes live with the bootstrap image tags from the env file
+     (``DOCKER_TAG``, ``DOCKER_FL_TAG``). Run ``deploy-centralhub`` again afterwards.
+   - ``make apply`` applies the saved plan. A plan made **before** a ``deploy-centralhub`` rolls the image back, so
+     run ``make plan`` again after every deploy.
 
 **********************************************
 Upgrading across the payload-encryption change
@@ -239,8 +489,9 @@ one maintenance window.
 
 1. **Pause FL activity.** In the UI, enable Deployment Mode (*Admin → Deployments*). Wait until ``GET /fl/quiesce``
    reports ``deployment_mode: true`` and ``fl_quiesced: true``.
-2. **Redeploy the hub and every trust** in the same window: ``make deploy-centralhub`` for the hub, and
-   ``make deploy-trust``, the on-prem playbook or the Kubernetes chart for each trust.
+2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
+   :ref:`deploy-central-hub-deploys`), and ``deploy-trust``, the on-prem playbook or the Kubernetes chart for each
+   trust.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::
@@ -252,9 +503,14 @@ one maintenance window.
 
 .. important::
 
-   ``AES_KEY_BASE64`` must be identical on the hub and on every trust. On staging and production, the hub's value is
-   the one CI wrote into Secrets Manager, which may differ from your checked-out ``.env.<env>``. Recover the deployed
-   value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py``.
+   ``AES_KEY_BASE64`` must be identical on the hub and on every trust, and decode to exactly 32 bytes. On staging and
+   production, the hub's value is the one CI wrote into Secrets Manager, which may differ from your checked-out
+   ``.env.<env>``. Recover the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` before you
+   create or refresh trust kits.
+
+   A mismatched key fails closed: the trust reports every task as ``Invalid payload: failed authentication``, and
+   the trust's imaging and data-access services answer the FL client with a 400. A 500 from either is a different
+   fault (the key could not be loaded, for example), not a mismatch.
 
 ***********************
 Applying schema changes
@@ -275,8 +531,7 @@ the hub database in routine operation.
 .. note::
 
    For developers: every change to the hub's database models must ship an Alembic revision in the same PR, and CI
-   fails otherwise. How to author and review one is in `flip-api/README.md
-   <https://github.com/londonaicentre/FLIP/blob/develop/flip-api/README.md>`_.
+   fails otherwise. How to author and review one is in :gh:`flip-api/README.md`.
 
 **********************************
 FL image compatibility on upgrade
@@ -308,6 +563,12 @@ FLIP sends its own emails through Amazon SES. Before the first deploy:
 If SES is still in its sandbox, request production access from the SES console. Until then you can only send to
 verified addresses.
 
+**If the verification link has expired**, delete the FLIP identity in the SES console (*Configuration → Identities*),
+then run ``make -C deploy/providers/AWS plan apply PROD=<env>`` to create it again and send a new link.
+
+**To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
+comes from Cognito, so this tests the invitation templates in a real mail client.
+
 .. note::
 
    SES carries only the emails FLIP itself sends: access-request notifications and XNAT credential emails.
@@ -320,3 +581,53 @@ verified addresses.
    Development uses neither service. Emails are written to the ``flip-api`` log instead of being sent, and a local
    Keycloak replaces Cognito for sign-in. The dev Keycloak has no mail server, so a new user gets the shared dev
    password (``ADMIN_USER_PASSWORD``) as a temporary password instead of an invitation. See :doc:`deploy-local-dev`.
+
+.. _deploy-central-hub-mfa-recovery:
+
+*******************************************
+Recovering an administrator's lost MFA
+*******************************************
+
+Every hub user must sign in with a TOTP authenticator. To reset another user's MFA, use *Reset MFA* in the Admin
+area (see :doc:`/sys-admin/admin-project-and-user-management`). That needs a signed-in session, so an administrator
+who has lost their **own** authenticator cannot use it.
+
+*Who: another operator with AWS credentials for the hub's account, and permission for*
+``cognito-idp:AdminSetUserMFAPreference`` *and* ``cognito-idp:AdminUserGlobalSignOut``.
+
+1. **Find the user pool ID.** It is ``AWS_COGNITO_USER_POOL_ID`` in the environment file (written by
+   ``make update-env``), or:
+
+   .. code-block:: shell
+
+      cd deploy/providers/AWS
+      USER_POOL_ID=$(terraform output -raw CognitoUserPoolId)
+
+2. **Clear the administrator's TOTP setting.**
+
+   .. code-block:: shell
+
+      aws cognito-idp admin-set-user-mfa-preference \
+        --user-pool-id "$USER_POOL_ID" \
+        --username <admin email> \
+        --software-token-mfa-settings Enabled=false,PreferredMfa=false
+
+3. **Sign out every existing session**, so no session from before the reset keeps working.
+
+   .. code-block:: shell
+
+      aws cognito-idp admin-user-global-sign-out \
+        --user-pool-id "$USER_POOL_ID" \
+        --username <admin email>
+
+4. **The administrator signs in with their existing password.** FLIP sends them to the MFA enrolment page to
+   register a new authenticator. Their password does not change.
+
+.. warning::
+
+   These commands have the same effect as *Reset MFA* in the Admin area, but they bypass FLIP, so the reset is
+   **not recorded in FLIP's logs**. Use them only for an administrator locked out of FLIP; for anyone else, use the
+   Admin area.
+
+On a local development stack, sign-in uses Keycloak instead: clear the user's OTP credential in the Keycloak admin
+console (``http://localhost:8180/admin``).

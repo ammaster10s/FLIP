@@ -12,16 +12,12 @@ allowed to create network resources.
 It uses the same Terraform as the self-contained mode, selected with ``PROD=lza`` (production) or
 ``PROD=lza-stag`` (staging). Self-contained environments are unaffected by this mode.
 
-This page explains **what the mode changes and what the estate must provide**.
+This page explains **what the mode changes, what the estate must provide, and how to bring a workload account up**.
 
 .. seealso::
 
-   - `Deploying onto an LZA estate
-     <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_
-     in ``deploy/providers/AWS/README.md`` — the operator runbook: the env file, the out-of-band prerequisites and
-     their commands, and the apply sequence.
-   - :ref:`deploy-central-hub` — prerequisites, IAM permissions, service authentication, schema changes and email
-     setup, shared with the self-contained mode.
+   :ref:`deploy-central-hub` — prerequisites, IAM permissions, registering trusts, deploys and rollback, schema
+   changes and email setup, shared with the self-contained mode.
 
 .. contents:: On this page
    :local:
@@ -133,7 +129,7 @@ Before the first ``plan``, provide:
   port for this environment, and firewall rules admitting the edge's address ranges to the workload load
   balancer's web and FL ports.
 - **ECR pull-through cache rules:** ``ghcr/`` (backed by a read-only GHCR token in Secrets Manager) and
-  ``ecr-public/``.
+  ``ecr-public/``. See :ref:`deploy-central-hub-aws-lza-account`.
 - **Terraform CI bootstrap:** the state bucket, the GitHub OIDC provider and the CI plan and apply roles, applied
   from FLIP's ``terraform_ci_bootstrap`` module pinned to a FLIP commit. FLIP's roles carry the accelerator's own
   permissions boundary, ``AICentre-WorkloadRoleBoundary``, which an SCP requires and the LZA modes use by
@@ -144,6 +140,131 @@ Before the first ``plan``, provide:
 
 This platform layer (Transit Gateway, central firewall, endpoints, NAT and edge) is a shared cost billed to the
 platform team's accounts, not the workload account. :ref:`deploy-central-hub-costs` gives its rough size.
+
+.. _deploy-central-hub-aws-lza-account:
+
+****************************
+Preparing a workload account
+****************************
+
+*Who: whoever administers the workload account, before its first* ``plan``.
+
+1. **Create the GHCR credential secret first.** The account has no internet egress, so images come from in-account
+   ECR mirrors. The ``ghcr/`` mirror authenticates to GHCR with a read-only GitHub token kept in the
+   ``ecr-pullthroughcache/ghcr`` secret. Never echo the token; write it through a private temporary file. To copy
+   the token from another account you administer:
+
+   .. code-block:: shell
+
+      TMP=$(mktemp) && chmod 600 "$TMP"
+      aws secretsmanager get-secret-value --profile <source-profile> \
+        --secret-id ecr-pullthroughcache/ghcr --query SecretString --output text > "$TMP"
+      aws secretsmanager create-secret --profile <target-profile> \
+        --name ecr-pullthroughcache/ghcr --secret-string "file://$TMP" --query ARN --output text
+      shred -u "$TMP"
+
+   Or mint a fresh read-only token for each account, for tighter isolation.
+
+   .. important::
+
+      Create this secret **before the first** ``plan``. On an account that has never held a secret, the plan
+      computes cleanly and then fails with ``reading KMS Alias (alias/aws/secretsmanager): empty result``. AWS
+      creates that key the first time the account uses Secrets Manager, so creating any secret fixes it.
+
+2. **Create the two pull-through cache rules**, using the secret's ARN from step 1:
+
+   .. code-block:: shell
+
+      aws ecr create-pull-through-cache-rule --profile <target-profile> \
+        --ecr-repository-prefix ghcr --upstream-registry-url ghcr.io --credential-arn <secret-arn>
+      aws ecr create-pull-through-cache-rule --profile <target-profile> \
+        --ecr-repository-prefix ecr-public --upstream-registry-url public.ecr.aws
+
+   Nothing is pre-populated: the first pull of each image fetches it from upstream. Cached mutable tags can be up
+   to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags.
+
+3. **Add the operator profile.** Run ``aws configure sso`` against the account's Identity Center permission set and
+   rename the profile ``lza-prod`` or ``lza-stag`` (override with ``LZA_AWS_PROFILE`` / ``LZA_STAG_AWS_PROFILE``).
+
+The Terraform state bucket comes from the platform's CI bootstrap; there is nothing to create for it here.
+
+The environment file
+====================
+
+``.env.lza-prod`` (or ``.env.lza-stag``) carries the same keys as ``.env.production``; start from that file. These
+values must differ, or exist only in this mode:
+
+.. code-block:: shell
+
+   # Terraform backend and region
+   FLIP_TFSTATE_BUCKET_NAME=<state bucket from the CI bootstrap>
+   AWS_REGION=eu-west-2
+
+   # Images come from the ghcr/ pull-through cache, never ghcr.io directly
+   DOCKER_REGISTRY=<account-id>.dkr.ecr.<region>.amazonaws.com/ghcr/londonaicentre/
+   EFS_PROVISION_IMAGE=<account-id>.dkr.ecr.<region>.amazonaws.com/ecr-public/aws-cli/aws-cli:<version>
+
+   # Bucket names are global: give this account its own names
+   FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=<name>
+   FLIP_FL_RESULTS_BUCKET_NAME=<name>
+   FLIP_APP_BUNDLES_BUCKET_NAME=<name>
+   AICENTRE_BUCKET_NAME=<name>
+   FLIP_UI_BUCKET_NAME=<name>
+   ACCESS_LOGS_BUCKET_NAME=<name>
+
+   # DNS: false until the account has a hosted zone (see below)
+   MANAGE_DNS=false
+   ALB_SUBDOMAIN=<ui name>
+   NLB_SUBDOMAIN=<fl name>
+
+   # From the networking account, passed straight to Terraform
+   export TF_VAR_networking_ingress_cidrs=["<ingress-vpc-cidr>"]
+   export TF_VAR_lza_elb_access_logs_bucket=<central load-balancer access-logs bucket>
+   # Empty on the first apply; filled in once the edge exists (see the edge handoff)
+   export TF_VAR_lza_web_edge_domain=
+   export TF_VAR_lza_web_edge_distribution_arn=
+
+   # Optional on PROD=lza, required on PROD=lza-stag
+   LZA_VPC_NAME=<Name tag of the accelerator VPC>
+
+- ``ALB_SUBDOMAIN`` and ``NLB_SUBDOMAIN`` keep their final values even while ``MANAGE_DNS=false``; they are also
+  used to name resources.
+- **Staging only:** the edge serves staging FL traffic on port 8003, while the staging FL server still listens on
+  8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.lza-stag``; ``sync-trust-kit`` copies
+  it into each kit and refuses to run on ``lza-stag`` without it. NVFLARE kits take the port from the staging
+  provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
+- Mint the secrets (``AES_KEY_BASE64``, the internal service key, ``ADMIN_USER_PASSWORD``) for the account. Do not
+  reuse another account's Secrets Manager secret.
+
+First bring-up without a hosted zone
+====================================
+
+With ``MANAGE_DNS=false``, Terraform skips the hosted-zone lookup, every Route 53 record and both DNS-validated
+certificates, so the stack applies in an account with no zone yet. Until the zone exists:
+
+- The UI is reached on the edge distribution's default ``*.cloudfront.net`` domain
+  (``TF_VAR_lza_web_edge_domain``). Bucket CORS and the Cognito sign-in URLs follow it automatically.
+- Build the UI with ``CENTRAL_HUB_API_URL`` pointing at that domain, and give trusts the same URL.
+- The leg from the edge's relay to the workload's internal load balancer is plain TCP rather than TLS, because a
+  certificate cannot be issued without DNS validation. Viewer traffic is still HTTPS at the edge, and that leg stays
+  on the Transit Gateway and central-firewall path.
+
+Once the zone lands, set ``MANAGE_DNS=true`` and apply again. Switching the web listener to TLS is a **two-sided
+change**: the edge's origin in the networking account must switch to HTTPS, with a host name matching the new
+certificate, at the same time.
+
+Attaching the real domain
+-------------------------
+
+*Who: platform team, in the networking account.* CloudFront is never addressed by IP, so the domain is wired up in
+DNS:
+
+1. Create a public Route 53 hosted zone for the FLIP subdomain in the networking account.
+2. Issue a DNS-validated ACM certificate for the names **in us-east-1** (a CloudFront requirement) and attach it to
+   the edge distribution as its alternate domain names.
+3. Add an alias record from the UI name to the distribution (an alias, never an IP address), and the same for the FL
+   name to the edge NLB.
+4. Delegate the subdomain from the parent domain to the zone's name servers.
 
 **********************
 Two-phase edge handoff
@@ -181,7 +302,7 @@ Deploying
 - a nightly plan reports drift.
 
 To point a GitHub environment at another account, change its values (the ``TF_PROD`` mode and the two role ARNs);
-see "Repointing CI at the LZA accounts" in the deployment README.
+see "Repointing CI at the LZA accounts" in :gh:`deploy/providers/AWS/README.md`.
 
 .. list-table::
    :header-rows: 1
@@ -222,10 +343,29 @@ Break-glass deploy from a laptop
    make deploy-centralhub
    make deploy-ui
 
+The Makefile refuses to run when ``AWS_PROFILE`` does not match ``PROD``, and needs that estate's env file locally.
+
 .. warning::
 
-   On an account CI applies, the next pipeline run reverts a laptop ``apply``, and it shows as drift until then. Use
-   it only to recover; "Break-glass" in the deployment README gives the conditions and per-estate commands.
+   On an account CI applies, the next pipeline run reverts a laptop ``apply``, and the nightly drift check reports
+   it until then. Apply from a laptop only when:
+
+   - **CI is broken**, for example its role. The CI roles belong to the platform repositories, so a bad apply here
+     cannot lock CI out; a broken role is fixed there.
+   - **The change must not go through CI**, such as a one-off targeted apply during account bring-up.
+
+.. note::
+
+   A laptop ``plan`` reads the EC2 key pair's public key from ``~/.ssh/host-aws.pub``. If yours is not this
+   account's key, the plan replaces the key pair and, with it, the bastion. CI uses the copy in Parameter Store
+   instead; to plan with it locally:
+
+   .. code-block:: shell
+
+      mkdir -p /tmp/lzakey
+      aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile <profile> \
+        --query Parameter.Value --output text > /tmp/lzakey/host-aws.pub
+      LOCK=false make plan TF_VAR_flip_keypair=/tmp/lzakey/host-aws TF_VAR_ec2_public_key_path=/tmp/lzakey/host-aws.pub
 
 .. note::
 
@@ -238,9 +378,8 @@ Break-glass deploy from a laptop
 Further reading
 ***************
 
-- `deploy/providers/AWS/README.md — Deploying onto an LZA estate
-  <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_
-  — the operator runbook.
+- :gh:`deploy/providers/AWS/README.md` — maintainer notes: how the mode is built, the Terraform CI pipeline and
+  the design rationale.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.
 - The AI Centre's estate configuration (``londonaicentre/lza``) and its edge stack
   (``londonaicentre/aicentre-lza-iac``) are private repositories.
