@@ -6,8 +6,8 @@ This page follows one project from the first cohort query to a trained model. It
 who acts, and what stays inside each trust. The step-by-step instructions for the web interface are in
 :doc:`user-guides`.
 
-The same flow covers **evaluating** an existing model at each trust instead of training one: the last stage then runs
-a single round and returns metrics only (see `Training and results`_).
+The same flow covers **evaluating** an existing model, a special case of training with a single round (see
+`Training and results`_).
 
 .. list-table::
    :header-rows: 1
@@ -348,5 +348,5 @@ appear as charts on the model page while training runs.
 
 .. note::
 
-   **Evaluation jobs.** To evaluate an existing model rather than train one, the same flow runs a single round with
-   no training: each trust runs the model on its own data and returns metrics only (step 3 carries no model update).
+   **Evaluation** is a special case of training: one round, in which each trust runs an existing model on its own
+   data and returns metrics only.
