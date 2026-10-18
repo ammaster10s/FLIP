@@ -654,7 +654,8 @@ named in the app's ``.env.app``:
    JOB_TYPE=standard
    DEV_IMAGES_DIR=../../../data/spleen/images
    DEV_DATAFRAME=../../../data/spleen/dataframe.csv
-   FLIP_PROJECT_ID=dev   # any non-empty token; LOCAL_DEV ignores it
+   # FLIP_PROJECT_ID: any non-empty token; LOCAL_DEV ignores it
+   FLIP_PROJECT_ID=dev
    FLIP_QUERY=
 
 .. code-block:: shell

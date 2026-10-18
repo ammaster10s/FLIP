@@ -120,9 +120,9 @@ Prerequisites
 * **A GPU host with NVIDIA driver 580 or later**, the same on every host that will run the MAP. Check with
   ``nvidia-smi`` before you start.
 * **Docker with the NVIDIA Container Toolkit.**
-* **A Python 3.12 environment with the pinned MONAI Deploy toolchain**: ``monai-deploy-app-sdk`` 4.0.0, ``holoscan``
-  and ``holoscan-cli`` 4.2.0, ``monai>=1.6.0`` and ``torch`` 2.13.0. The MONAI Deploy tooling changes a lot between
-  releases, so pin every version; :ref:`map-toolchain-pins` explains each one.
+* **A Python 3.12 environment with the pinned MONAI Deploy toolchain**: ``monai-deploy-app-sdk`` 4.0.0,
+  ``holoscan-cu13`` and ``holoscan-cli`` 4.2.0, ``monai>=1.6.0`` and ``torch`` 2.13.0. The MONAI Deploy tooling
+  changes a lot between releases, so pin every version; :ref:`map-toolchain-pins` explains each one.
 
 .. important::
 
@@ -138,15 +138,15 @@ Prerequisites
 Step 1 — Obtain the aggregated checkpoint
 =========================================
 
-A completed FLIP training run uploads its results as a zip containing ``FL_global_model.pt``. This is an FLARE
-checkpoint: a dictionary whose ``model`` key holds the state dict, alongside ``train_conf`` and optionally
-``meta_props``.
+A completed FLIP training run uploads its results as a zip containing ``FL_global_model.pt``. On FLARE this is a
+checkpoint dictionary whose ``model`` key holds the state dict, alongside ``train_conf`` and optionally
+``meta_props``. On Flower it is a plain state dict.
 
 .. warning::
 
    By default FLIP saves the **last** global model. ``best_FL_global_model.pt`` is written only when ``config.json``
-   sets ``BEST_MODEL_METRIC``. Without it, if the final round is not the best one, the exported model reflects the
-   final round.
+   sets ``BEST_MODEL_METRIC`` (on Flower, when ``config.toml`` sets ``best-model-metric``). Without it, if the final
+   round is not the best one, the exported model reflects the final round.
 
 
 Step 2 — Inspect and round-trip the checkpoint
@@ -656,8 +656,10 @@ What FLIP actually validates in ``config.json``
 
 It is easy to assume FLIP checks more of ``config.json`` than it does. What is checked:
 
-- **The Central Hub reads only** ``job_type``, to choose which template to bundle. An unknown ``job_type`` is
-  rejected; a missing one defaults to ``standard``.
+- **The Central Hub reads** ``job_type``, to choose which template to bundle. An unknown ``job_type`` is
+  rejected; a missing one defaults to ``standard``. On FLARE it also reads ``SERVER_CHECKPOINT`` (or, for
+  ``evaluation``, each ``models[*].checkpoint``) to keep those checkpoints on the server instead of shipping them to
+  every client.
 - **On FLARE, FLIP validates a fixed set of platform keys** when it assembles the job. Some failures stop the job
   rather than falling back silently: an unknown ``AGGREGATOR``, an ``AGGREGATION_WEIGHTS`` value outside 0–1, an
   invalid ``AGGREGATE_ONLY_REGEX``, or ``BEST_MODEL_METRIC`` on a single-round job. The full set is under

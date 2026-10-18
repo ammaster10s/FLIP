@@ -61,7 +61,8 @@ You can edit a model until its training starts.
 Delete a model
 **************
 
-Only the project owner or a user with the ``admin`` role can delete a model. You can delete it at any time.
+Only the project owner, the user who created the model, or a user with the ``admin`` role can delete a model. You can
+delete it at any time.
 
 .. warning::
 
@@ -69,7 +70,7 @@ Only the project owner or a user with the ``admin`` role can delete a model. You
 
 1. Open the model from the project page.
 2. Click **Edit Model**.
-3. Under **Advanced Options**, click **Delete Model**.
+3. Under **Danger Zone**, click **Delete Model**.
 4. Enter the model name.
 5. Click **Continue**.
 
@@ -101,7 +102,8 @@ as federated averaging or evaluation), and on the platform's FL backend.
 **You do not need to look this up.** The model page tells you:
 
 - The **Model Files** panel shows the job type detected from your uploaded ``config.json``.
-- The **Training** panel lists the files that job type requires and highlights any still missing.
+- The **Model Files** panel lists the files that job type requires and marks any still missing, and the training
+  options on the right show a **Required files** summary.
 
 Both update as soon as you upload or replace ``config.json``. Training cannot start until every required file is
 uploaded.
@@ -168,7 +170,7 @@ server and the status is up to date when you return. **Training cannot start unt
 **How files are checked.** Every upload waits in a staging area until it has been checked. Until then it cannot be used
 for training and is never sent to a Trust.
 
-- Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``, ``.pickle``), including model checkpoints, are
+- Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``), including model checkpoints, are
   **scanned for unsafe content**, because loading one runs whatever it contains. A file that fails is marked with a
   red virus icon and deleted from storage. Delete the entry and upload a corrected file.
 - Python files are checked for type, then released and run as they are at every participating Trust (see the warning

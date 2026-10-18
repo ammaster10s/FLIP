@@ -251,7 +251,7 @@ replacing any value you set.
 FLARE ``meta.json``
 =====================
 
-An FLARE job's ``meta.json`` states what the job needs at each site. Upload a ``meta.json`` with your model files
+A FLARE job's ``meta.json`` states what the job needs at each site. Upload a ``meta.json`` with your model files
 and it replaces the template's. Write it by hand, or export it from a recipe or ``FedJob`` (``export_job``), as you
 would for ``nvflare job submit``. FLIP keeps two keys and writes the rest from the run:
 

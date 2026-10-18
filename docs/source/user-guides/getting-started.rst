@@ -40,7 +40,7 @@ You need the ``researcher`` role to create projects and train models; a ``viewer
 Step 2 — Create a project
 *************************
 
-On the Projects page, click **Create Project** and give it a name and description. Add the colleagues who will work
+On the Projects page, click **Create project** and give it a name and description. Add the colleagues who will work
 with you.
 
 Decide now whether the project **includes imaging data**: you cannot change it later. The X-ray tutorial uses images,
@@ -74,7 +74,7 @@ Choose the Trusts you want to take part, then click **Stage Project**. Staging l
 
 Each Trust approves or declines in its own time, and the project is approved as soon as one Trust approves it. For an
 imaging project, each approving Trust then imports the cohort's images into its XNAT; follow the progress under
-**Imaging Project Status**.
+**Imaging project status**.
 
 .. seealso::
 
@@ -118,7 +118,7 @@ Step 6 — Create a model and upload its files
 Once the project is approved, click **Create Model** on the project page. On the model page, drag your app's files
 into **Model Files**. Each file is checked before it can be used.
 
-The **Training** panel lists the files your app's job type requires and highlights any still missing.
+The **Model Files** panel lists the files your app's job type requires and marks any still missing.
 
 .. important::
 

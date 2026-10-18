@@ -55,9 +55,9 @@ Training at a glance:
   each client.
 * **Percentile privacy filter** (10th percentile, gamma 0.01) on head updates.
 * **Teacher–student EMA**, optional, for consistency regularisation.
-* **In-training validation** every ``validate_every`` steps within each round.
-* **Cross-site evaluation** once training ends: every site's final model is scored on every other site's data. This
-  runs once, not every round.
+* **In-training validation** every ``VALIDATE_EVERY`` local epochs within each round.
+* **Final evaluation** once training ends: each site scores the final aggregated model on its own data. This runs
+  once, not every round.
 
 The source is in ``fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/``. For the model architecture,
 fine-tuning mechanisms and ``job.py`` see the
@@ -150,36 +150,26 @@ the Ark+ app as the payload.
 ===================
 
 #. Log in to the `FLIP UI <https://app.flip.aicentre.co.uk>`_.
-#. On the Projects page, click **New Project**.
+#. On the Projects page, click **Create project**.
 #. Name the project and add any collaborators.
-#. Note the project ID; the cohort query needs it.
 
 .. _arkplus-cohort-query:
 
 2. Run the cohort query
 =======================
 
-In the project's **Cohort Query** tab, paste the SQL that defines the cohort. The app ships a reference query as
-``query.sql`` in the tutorial directory:
+On the project page, click **Create Cohort Query** and paste the SQL that defines the cohort. The app ships a
+reference query as ``query.sql`` in the tutorial directory:
 
 .. _arkplus-query-sql:
 
-.. code-block:: sql
+.. literalinclude:: ../../../fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/query.sql
+   :language: sql
    :caption: query.sql
-
-   SELECT
-       accession_id,
-       CASE WHEN effusion_label = 'Yes' THEN 1 ELSE 0 END AS "Effusion",
-       CASE WHEN consolidation_label = 'Yes' THEN 1 ELSE 0 END AS "Consolidation",
-       CASE WHEN infiltration_label = 'Yes' THEN 1 ELSE 0 END AS "Infiltration",
-       CASE WHEN lung_nodule_or_mass_label = 'Yes' THEN 1 ELSE 0 END AS "Lung Nodule or Mass",
-       CASE WHEN pneumothorax_label = 'Yes' THEN 1 ELSE 0 END AS "Pneumothorax",
-       CASE WHEN lungs_in_normal_arrangement_label = 'Yes' THEN 1 ELSE 0 END AS "Lungs in normal arrangement"
-   FROM
-       chest_xray_labels
+   :lines: 12-
 
 The query expects the five lesion columns plus the negative-override flag ``Lungs in normal arrangement``. Adapt it to
-your own OMOP schema if you use custom data. Click **Run Query** to see the cohort size at each trust, then decide
+your own OMOP schema if you use custom data. Click **Run on all trusts** to see the cohort size at each trust, then decide
 which trusts to include.
 
 .. _arkplus-stage-project:
@@ -188,12 +178,13 @@ which trusts to include.
 ===============================
 
 #. Select the trusts whose data you need.
-#. Click **Stage Project**. The project is locked until an administrator approves it.
-#. A FLIP administrator, or a trust's own Trust Admin, approves the project.
+#. Click **Stage Project**. This locks the project.
+#. Each staged trust's Trust Admin approves the project, or a FLIP administrator for a trust that has none. The
+   project stays locked after approval.
 
 **Approval starts the image pull**: each approving trust copies the cohort's DICOM studies from its PACS into its local
 XNAT. You cannot upload files or start training before approval. The pull takes minutes to hours depending on cohort
-size, and you are notified when it completes.
+size; follow it in the :ref:`imaging status <imaging-status>` on the project page.
 
 .. _arkplus-upload-files:
 
@@ -220,10 +211,10 @@ Upload these files:
      - The model factory and the Swin Transformer architecture.
    * - ``data_utils.py``
      - Data loading, per-site resolution and DICOM parsing.
-   * - ``query.sql``
-     - The cohort SQL. Used on the platform; not needed for local simulator runs.
-   * - ``requirements.txt``
-     - Extra Python dependencies (the model imports ``timm``).
+   * - ``loss_and_metrics.py``
+     - The loss and per-lesion metrics.
+   * - ``meta.json``
+     - Optional. The GPU request for each site.
 
 Upload the backbone checkpoint (``pretrained_weights.pt``, ~759 MiB) **as a separate file**. The platform stages it
 on the server and sends it to the clients at round 0, so it is never part of the client app bundle. Set
@@ -239,7 +230,9 @@ on the server and sends it to the clients at round 0, so it is never part of the
      "GLOBAL_ROUNDS": 50,
      "LOCAL_ROUNDS": 5,
      "BATCH_SIZE": 4,
-     "USE_TEACHER_STUDENT": false
+     "ARKPLUS": {
+       "USE_TEACHER_STUDENT": false
+     }
    }
 
 .. _arkplus-start-training:
@@ -247,10 +240,10 @@ on the server and sends it to the clients at round 0, so it is never part of the
 5. Start training
 =================
 
-#. On the model page, click **Start Training**.
+#. On the model page, click **Initiate Training**.
 #. The platform packages your app, deploys it to each selected trust and starts the rounds.
-#. Follow progress in the FLIP UI. The status moves through ``INITIATED`` → ``PREPARED`` → ``RUNNING`` →
-   ``RESULTS_UPLOADED``.
+#. Follow progress in the FLIP UI. The status moves through **Model Queued** → **Model Prepared** → **Running** →
+   **Results Uploaded**.
 #. Per-round metrics (loss, per-lesion AUC) appear in the UI as training runs.
 
 A 50-round, two-site run takes about **11–12 hours**, set by the slowest client's GPU. Round 0 adds a one-off
@@ -261,7 +254,7 @@ A 50-round, two-site run takes about **11–12 hours**, set by the slowest clien
 6. Download results
 ====================
 
-When the status reaches ``RESULTS_UPLOADED``, open the model page and click **Download Results**. You get the final
+When the status reaches **Results Uploaded**, open the model page and click **Download Results**. You get the final
 aggregated weights, per-round metrics and training logs.
 
 The trained classifier head can be loaded with the frozen backbone for inference or for further fine-tuning.

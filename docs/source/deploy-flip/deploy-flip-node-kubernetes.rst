@@ -222,14 +222,15 @@ the FL client starts.
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
-- The kit goes to ``/opt/flip/fl-kit`` on the node, which is what the chart mounts by default. Any previous kit there
-  is removed first.
+- The kit goes to ``KIT_DEST`` on the node (default ``/opt/flip/fl-kit``), and the deploy targets mount that same
+  path, whatever the kit's ``FL_KIT_DIR`` says. Any previous kit there is removed first. To use another path, pass
+  the same ``KIT_DEST=<path>`` to ``stage-kit`` and to the deploy.
 
 .. note::
 
    ``stage-kit`` copies into the node with ``docker cp``, which works for a **kind** cluster only. On any other
-   cluster, place the kit on the node by whatever means your site allows, at the path in the kit's ``FL_KIT_DIR``
-   (default ``/opt/flip/fl-kit``), readable by uid 1000 (FLARE) or 49999 (Flower).
+   cluster, place the kit on the node by whatever means your site allows, at ``/opt/flip/fl-kit`` (or the
+   ``KIT_DEST`` you deploy with), readable by uid 1000 (FLARE) or 49999 (Flower).
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.
@@ -339,7 +340,7 @@ After a default install, Helm prints a warning that it is not loaded. On Kuberne
 .. warning::
 
    The S3 load runs as a Helm hook. If the cluster cannot read the bucket, the hook fails and **the whole release
-   fails and rolls back**, not just the vocabulary load.
+   is marked failed**, not just the vocabulary load. The deploy does not roll it back.
 
 .. seealso::
 
@@ -363,9 +364,9 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - Default
      - What it does
    * - ``flClient.kitHostPath``
-     - from the kit
-     - Path **on the node** holding the FL kit. Required whenever the FL client is enabled. Comes from the kit's
-       ``FL_KIT_DIR`` (``/opt/flip/fl-kit``).
+     - ``/opt/flip/fl-kit``
+     - Path **on the node** holding the FL kit. Required whenever the FL client is enabled. The deploy targets set it
+       from ``KIT_DEST``, over the kit's ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit
      - ``nvflare`` or ``flower``.

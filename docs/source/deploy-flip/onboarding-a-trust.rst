@@ -80,23 +80,25 @@ including the encryption key and the hub URL, are still placeholders afterwards;
    (``make -C deploy/providers/AWS delete-trust NAME=<trust name>``, which also removes its history there) and
    registered afresh — see :doc:`/sys-admin/admin-backup-and-restore`.
 
-****************************************
-Step 3 — Fill in the hub-shared settings
-****************************************
+************************************************************
+Step 3 — Fill in the hub-shared settings and XNAT passwords
+************************************************************
 
 *Who: FLIP admin, from the repo root with your local* ``.env.production`` *present*
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> PROD=true
+   make generate-xnat-credentials KIT=<CODE> PROD=true
 
-This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
-untouched.
+The first command copies the hub-shared settings from your local env file into the kit and leaves the credentials
+from step 2 untouched. The second mints the XNAT database and message-broker passwords, which registration on the
+hub does not write.
 
 .. important::
 
-   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders, and the trust can
-   neither reach the hub nor decrypt a task.
+   Do not skip this step. Without it the kit's encryption key, hub URL and XNAT passwords stay as placeholders: the
+   trust can neither reach the hub nor decrypt a task, and the kit can be neither packaged nor started.
 
 .. seealso::
 

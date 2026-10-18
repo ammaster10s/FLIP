@@ -40,13 +40,17 @@ whether to take part:
   :ref:`admin-project-and-user-management`).
 - **A Central Hub administrator records it by default.** A trust that wants to record its
   own decisions has a **Trust Admin**. While it has one, only its Trust Admins can approve
-  or decline for it, and the hub cannot (see :ref:`trust-admin-guide`).
+  or decline for it (see :ref:`trust-admin-guide`). A hub administrator can still remove
+  the Trust Admin role, and removing a trust's last Trust Admin hands its decisions back
+  to the hub. Role changes and decisions are both recorded in the audit trail.
 
-**A trust that declines is simply not included.** The project proceeds with the trusts
+**A trust that declines contributes no data.** The project proceeds with the trusts
 that approved it. The declining trust will already have answered the project's cohort
 query: that query runs at every registered trust when it is submitted, before staging,
 and returns only the aggregate statistics described below. The declining trust's data,
-however, is never pulled at row level, never imported, and never trained on.
+however, is never pulled at row level, never imported, and never trained on. On Flower,
+every trust connected to the training network still receives and runs the researcher's
+code, including one that declined, but its trust services refuse that code any data.
 
 Three consequences matter for information governance:
 
@@ -78,10 +82,13 @@ Neither is copied to the Central Hub.
 
 **What leaves a trust** is limited to:
 
-- aggregate cohort statistics, subject to a minimum group size below which results are
-  suppressed;
-- model updates produced during federated training, which pass through a privacy filter
-  before transmission;
+- aggregate cohort statistics, suppressed whole when the cohort has fewer patients than
+  a minimum group size. Above it, the age, sex and modality breakdowns group small
+  categories, but per-column counts of present and missing values have no small-number
+  floor;
+- model updates produced during federated training. On FLARE these always pass through
+  a privacy filter before transmission; on Flower, only if the researcher's code enables
+  one;
 - operational telemetry such as task status.
 
 **Model updates deserve an honest treatment rather than a reassuring one.** They are
@@ -90,11 +97,13 @@ memorise fragments of its training data, and inference attacks against model upd
 an active research area. FLIP manages this as a residual risk rather than defining it
 away. The mitigations are:
 
-- a privacy filter applied to updates before they leave the trust;
+- a privacy filter on updates before they leave the trust: always applied on FLARE,
+  where a trust can also enforce its own, and opt-in on Flower, where the researcher's
+  code must enable it (see :ref:`fl-update-privacy`);
 - aggregation, so the model a researcher receives combines all participating trusts and
   no single trust's update is exposed to them;
-- the structural control: no update is ever produced for a project the trust has not
-  individually approved.
+- the structural control: a trust's data is released for training only for a project
+  it has individually approved.
 
 **A trust approving a project is approving the trained model's egress.** The trained
 model is the project's deliverable and does leave the platform to the research team.
@@ -211,7 +220,9 @@ Access governance
 **Role-based access control.** Users hold one of four defined roles: Admin, Researcher,
 Viewer, or Trust Admin. A Trust Admin is held for one trust, and its holder also has
 Researcher access. Each role has an explicit permission set, applied default-deny. Access to a
-specific project's data additionally requires membership of that project. See
+specific project's data additionally requires membership of that project, except that an
+Admin can access every project and a Trust Admin can read a project staged at their
+trust. See
 :ref:`User Roles <rbac-roles>` for the full permission matrix.
 
 **Multi-factor authentication is mandatory** for every user. Enrolment is verified at the
@@ -239,10 +250,15 @@ What happens to project artefacts at project end is a question every IG review a
 is the position, stated plainly, including where deletion is a decision rather than an
 automatism.
 
-**The cohort is held as a query, not an extract.** The hub stores the cohort definition as
-SQL text and re-executes it against the trust's own OMOP database at each stage that needs
-it. No row-level cohort data is retained on the hub. There is nothing hub-side to delete at
-project end beyond the query text and audit records.
+**On the hub, the cohort is held as a query, not an extract.** The hub stores the cohort
+definition as SQL text and re-executes it against the trust's own OMOP database at each
+stage that needs it. No row-level cohort data is retained on the hub. There is nothing
+hub-side to delete at project end beyond the query text and audit records.
+
+**Each approving trust keeps a record of the approved cohort.** At approval, the trust
+records the approved query and the patient and imaging-study identifiers it returned (no
+clinical values), so that training is limited to that cohort. The record stays on the
+trust and is not deleted at project end today.
 
 **Imaging pulled for a project stays in the trust's XNAT, deliberately.** Closing or
 deleting a project on the hub does **not** destroy the trust-side imaging. This is a
@@ -294,10 +310,11 @@ positions:
      - **90 days**
      -
    * - Edge access logs
-     - Deliberately the shortest
+     - **30 days**
      - CloudFront logs record request URIs, query strings and client IP addresses. Their
        window is therefore a disclosure decision before it is a cost or forensics one. It
-       is kept short on purpose rather than raised to match the infrastructure baseline.
+       is kept among the shortest on purpose rather than raised to match the
+       infrastructure baseline.
 
 **Audit records are not logs and are not on this clock.** The project, model, trust and
 user audit tables record who approved what and which data trained which model. That is
@@ -409,7 +426,8 @@ As noted above, it evidences supplier posture only and grants no DSPT exemption.
      - - Trust environments expose no inbound ports and poll outbound only.
        - Services run in private subnets with no public address.
        - A single hardened CloudFront edge fronts the hub, with an internal-only load
-         balancer behind it.
+         balancer behind it. In the self-contained AWS deployment, the FL server's load
+         balancer is also public but admits only allowlisted trust IP addresses.
        - AWS WAF managed rules are deployed.
      - Operational (WAF rules moving from monitoring to enforcement)
    * - **2. Secure configuration**
@@ -604,7 +622,8 @@ Objective B — Protecting against cyber attacks and data breaches
    * - **B2.d** Identity and access management (IdAM)
      - Shared
      - Default-deny RBAC across four defined roles; per-project membership re-checked on
-       every access. Periodic account review and dormant-account removal is an operating
+       every access, except for Admins and for a Trust Admin reading a project staged at
+       their trust. Periodic account review and dormant-account removal is an operating
        commitment of the organisation running the hub.
      - —
    * - **B3.a** Understanding data
@@ -666,9 +685,10 @@ Objective B — Protecting against cyber attacks and data breaches
      - —
    * - **B5.b** Design for resilience
      - Hub
-     - Private subnets with no public addresses; a single hardened edge; account
-       separation and centrally managed guardrails under the AWS Landing Zone
-       Accelerator.
+     - Private subnets with no public addresses; a single hardened hub edge (plus, in the
+       self-contained deployment, an FL server endpoint open only to allowlisted trust
+       IPs); account separation and centrally managed guardrails under the AWS Landing
+       Zone Accelerator.
      - LZA consolidation is in delivery, not complete.
    * - **B5.c** Backups
      - Shared
@@ -805,7 +825,8 @@ of FLIP's strongest governance material.
        organisations involved (see *Data protection roles* above). The per-project
        approval gate, recorded on the Central Hub, is where a trust's position takes
        effect. A trust that has not approved a project is never pulled from at row level,
-       imported from, or trained on for it.
+       imported from, or trained on for it. On Flower its FL client may still run the
+       project's code, but is refused the data.
      - —
    * - **E2.c** National data opt-out policy
      - Node
@@ -832,7 +853,8 @@ of FLIP's strongest governance material.
      - Shared
      - The retention position is stated plainly in *Retention and deletion* above:
 
-       - cohorts are held as queries, not extracts;
+       - on the hub, cohorts are held as queries, not extracts; each approving trust
+         keeps the approved query and cohort identifiers;
        - trust-side imaging outlives the project by design;
        - hub-side artefacts persist until removed.
 

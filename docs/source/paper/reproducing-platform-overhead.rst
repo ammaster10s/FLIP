@@ -105,7 +105,7 @@ When it finishes, the tutorial directory holds a bundle named
    * - ``round_timings_boxplot.png``
      - Box plots of the per-round timings.
    * - ``logs/``
-     - The simulator's logs, each capped at 64 MiB. No model files.
+     - The simulator's logs; any log of 64 MiB or more is left out. No model files.
    * - ``provenance/config.json``
      - The app configuration used.
    * - ``provenance/env.app.txt``
@@ -140,11 +140,13 @@ Follow the :ref:`Ark+ submission guide <arkplus-submit-to-flip>`. In brief:
 
 #. **Create a project** in the FLIP UI.
 #. **Paste the cohort SQL** from ``query.sql`` and run it against each trust.
-#. **Select trusts** and stage the project for administrator approval.
+#. **Select trusts** and stage the project; each trust's Trust Admin (or a FLIP administrator, for a trust with none)
+   approves it.
 #. **Upload the app files** — ``config.json``, ``trainer.py``, ``models.py``, ``arkplus_flat_models.py``,
-   ``data_utils.py``, ``query.sql``, ``requirements.txt`` — and the backbone checkpoint as a separate file.
-#. **Start training.** The model status moves through ``INITIATED`` → ``PREPARED`` → ``RUNNING`` →
-   ``RESULTS_UPLOADED``.
+   ``data_utils.py``, ``loss_and_metrics.py`` and optionally ``meta.json`` — and the backbone checkpoint as a
+   separate file.
+#. **Start training.** The model status moves through **Model Queued** → **Model Prepared** → **Running** →
+   **Results Uploaded**.
 
 .. note::
 
@@ -177,7 +179,7 @@ For example:
        -o round_metrics
 
 The script finds the run's time window itself by searching the last 7 days of hub logs for the model ID (CloudWatch
-keeps 7 days). To search further back use ``--search-days``; to set the window yourself pass ``--start`` and ``--end``
+keeps 365 days in production, 90 elsewhere). To search further back use ``--search-days``; to set the window yourself pass ``--start`` and ``--end``
 (ISO 8601).
 
 It writes these files under ``<output-directory>/<model_id>/``:

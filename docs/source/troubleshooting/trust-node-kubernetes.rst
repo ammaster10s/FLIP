@@ -167,9 +167,10 @@ wait budget. Helm has already applied the new spec by then, so the error names H
 .. code-block:: shell
 
    kubectl get job -n flip-trust -w
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
 
-If the job is wedged rather than slow, deploy with ``--set xnat.initJob.enabled=false`` and run
+If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
+"Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
 ``make -C trust/deploy/helm xnat-init`` on its own, where its logs are easy to read. "The wait budget" under Step 4
 of :doc:`../deploy-flip/deploy-flip-node-kubernetes` explains the setting.
 
@@ -214,7 +215,7 @@ duration:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
 
 If a stalled pod from reason 2 is still stuck, delete it (``kubectl -n flip-trust delete pod <pod>``) so the new one
 can take the volume. Then confirm the pod was replaced and send a test study:
@@ -562,16 +563,16 @@ Cohort queries return no patients and every pod is healthy
 **Fix.** Check whether the vocabulary load ran: see "Load the OMOP core vocabulary" on
 :doc:`../deploy-flip/deploy-flip-node-kubernetes`. If a seed job was killed part-way through the DICOM vocabulary
 (out of memory, evicted, a cancelled upgrade), the database can report the vocabulary as loaded while it is not, and
-every later upgrade skips it. Force one reload:
+every later upgrade skips it. Force one reload: set ``trustData.seed.forceDicomVocab: true`` in your values file
+(``VALUES_FILE``, see "Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`) and deploy:
 
 .. code-block:: shell
 
-   helm upgrade trust-release trust/deploy/helm -n flip-trust --reuse-values \
-     --set trustData.seed.forceDicomVocab=true
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> VALUES_FILE=<your values file>
 
 .. important::
 
-   Set it back to ``false`` afterwards. It reloads on every upgrade, and each reload duplicates rows in
+   Set it back to ``false`` afterwards and deploy again. It reloads on every upgrade, and each reload duplicates rows in
    ``concept_relationship``.
 
 .. _ts-k8s-query-failed:
@@ -613,14 +614,11 @@ The job that loads the mock data is kept when it fails, so its log is readable:
 - **No egress.** The job needs ``huggingface.co``, ``github.com`` / ``raw.githubusercontent.com`` and PyPI (see
   :gh:`trust/deploy/helm/NETWORK-POLICY.md`).
 - ``ModuleNotFoundError: No module named 'psycopg'``: ``trustData.seed.sourceRef`` names a FLIP ref whose data
-  loaders predate a database-driver fix. Point it at a newer ref, ideally the one your images were built from:
+  loaders predate a database-driver fix. Set it in your values file to a newer ref, ideally the release tag your
+  images were built from (the chart default, ``develop``, is a moving branch tip), and deploy again with
+  ``VALUES_FILE=<your values file>``.
 
-  .. code-block:: shell
-
-     helm upgrade trust-release trust/deploy/helm -n flip-trust --reuse-values \
-       --set trustData.seed.sourceRef=develop
-
-Re-running the upgrade is safe: it replaces only the listed projects' rows.
+Re-running the deploy is safe: it replaces only the listed projects' rows.
 
 *********************
 Hub connection and FL
@@ -702,7 +700,7 @@ silently dropped rule would be worse than none, because the operator would belie
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<CODE>
+   make -C trust check-governance KIT=<CODE> PROD=<env>
    make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
 
 .. _ts-k8s-governance-ignored:

@@ -374,12 +374,15 @@ file are kept.
 
 - For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> PROD=<env>`` reads the kit
   locally and passes its values to the containers on the host.
-- For an on-prem trust, see :doc:`onboarding-a-trust`. Note that
+- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. Note that
   ``make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>`` packages the slot-named file
   ``trust/.env.<slot>`` (for example ``trust/.env.Trust_2``), not the ``trust/.env.<CODE>.<suffix>`` file above,
-  and refuses to run unless that file's ``FL_KIT_SLOT`` equals ``KIT``. Fill that file first, as the target's help
-  describes: paste the credential lines from the UI's *Add Trust* dialog, then run
-  ``make sync-trust-kit KIT=<slot> PROD=true`` from the repository root.
+  and refuses to run unless that file's ``FL_KIT_SLOT`` equals ``KIT``. Copy the filled kit there first:
+
+  .. code-block:: shell
+
+     cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
+     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=<env>
 
 If registration fails
 =====================
@@ -470,7 +473,7 @@ rolled away from so a later Terraform apply cannot bring it back.
 
 - **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui PROD=<env>`` from the matching commit if
   it must.
-- **On an FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
+- **On a FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
   minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
 
 .. warning::
@@ -502,8 +505,9 @@ one maintenance window.
 1. **Pause FL activity.** In the UI, enable Deployment Mode (*Admin → Deployments*). Wait until ``GET /fl/quiesce``
    reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
-   :ref:`deploy-central-hub-deploys`), and ``deploy-trust``, the on-prem playbook or the Kubernetes chart for each
-   trust.
+   :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
+   ``upgrade-trust-k8s`` or ``upgrade-trust-ec2``; see :ref:`admin-upgrading-sites`). Do not use ``deploy-trust``
+   here: it is a first-install command that re-seeds the trust's data and resets XNAT.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::

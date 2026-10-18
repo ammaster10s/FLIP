@@ -22,6 +22,10 @@ Problems on a trust node that runs the Docker Compose stack: an on-prem host
 with ``sudo`` on an on-prem host. The AWS-hosted trust is reached with ``ssh flip-trust``, which
 ``make -C deploy/providers/AWS ssh-config PROD=<env>`` sets up.
 
+**Kit and environment.** On an on-prem host the kit file is ``trust/.env.<slot>``, so ``make -C trust …`` commands
+take ``KIT=<slot> PROD=true`` and, when they touch Docker, run with ``sudo -E``. Without ``PROD`` they fall back to
+the development setup. For the AWS-hosted trust they run on the workstation with ``KIT=<CODE> PROD=<env>``.
+
 **Container names.** A trust's containers are named ``trust<N>-<service>-1`` and its XNAT stack ``xnat<N>``,
 where ``<N>`` is the FL kit slot the hub assigned (``FL_KIT_SLOT_NUMBER`` in the kit file). ``sudo docker ps``
 lists them.
@@ -189,7 +193,7 @@ got the whole one.
 
    .. code-block:: shell
 
-      printf 'include trust/.env.<CODE>.<env>\nall:\n\t@echo "[$(XNAT_SERVICE_PASSWORD)]"\n' | make -f -
+      printf 'include trust/.env.<slot>\nall:\n\t@echo "[$(XNAT_SERVICE_PASSWORD)]"\n' | make -f -
 
    If the output stops at the first ``#``, this is the cause.
 #. Choose a password of letters, digits and ``-_=+!@`` only, and set it as ``XNAT_SERVICE_PASSWORD`` in the kit
@@ -199,10 +203,11 @@ got the whole one.
 
    .. code-block:: shell
 
-      make -C trust/xnat up-xnat KIT=<CODE> PROD=<env>
+      sudo -E make -C trust/xnat up-xnat KIT=<slot> PROD=true
 
    ``up-xnat`` deletes the XNAT archive and database and configures a new XNAT from the kit. For the AWS-hosted
-   trust, run it from the workstation with ``DOCKER_CONTEXT=flip-trust`` in front, as the deployment does.
+   trust, run it from the workstation with ``KIT=<CODE> PROD=<env>`` and ``DOCKER_CONTEXT=flip-trust`` in front, as
+   the deployment does.
 #. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment; see
    "Changing the log level" on :doc:`../components/component-logging-stack` for how to recreate one container.
 
@@ -243,8 +248,8 @@ or broken are never converted afterwards.
 
 .. code-block:: shell
 
-   make -C trust reconvert-nifti KIT=<CODE>                              # report only
-   make -C trust reconvert-nifti KIT=<CODE> PROJECT="<id>" LAUNCH=1      # convert and follow
+   sudo -E make -C trust reconvert-nifti KIT=<slot> PROD=true                           # report only
+   sudo -E make -C trust reconvert-nifti KIT=<slot> PROD=true PROJECT="<id>" LAUNCH=1   # convert and follow
 
 ``WAIT=<minutes>``, ``MAX_ATTEMPTS=<n>`` and ``RELAUNCH_UNFINISHED=1`` tune it. What it selects and its exit codes
 are explained in :ref:`ts-k8s-nifti-backlog`.
@@ -265,8 +270,8 @@ and say why in their logs: the FL client half prints ``[site-privacy] FATAL: <wh
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<CODE>
-   make -C trust reload-governance KIT=<CODE>
+   make -C trust check-governance KIT=<slot> PROD=true
+   sudo -E make -C trust reload-governance KIT=<slot> PROD=true
 
 ``reload-governance`` recreates data-access-api (and, on NVIDIA FLARE, the FL clients), so apply it between
 training runs. The usual mistakes are listed in :ref:`ts-k8s-governance`.

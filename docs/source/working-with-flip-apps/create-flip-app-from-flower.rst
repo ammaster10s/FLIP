@@ -161,7 +161,8 @@ The four lifecycle transitions
 ==============================
 
 Wrap your training entry point with four ``update_status`` calls. They drive the progress bar on the model page
-(see :ref:`view-results`).
+(see :ref:`view-results`). ``FlipFedAvg`` (see *Strategy considerations*) reports ``RUNNING`` from
+``strategy.start`` itself, so the explicit ``RUNNING`` call is only needed with stock ``FedAvg``, as here.
 
 .. code-block:: python
 
@@ -409,9 +410,10 @@ differential-privacy mod on your training handler:
    def train(msg: Message, context: Context) -> Message:
        ...
 
-On each SuperNode, the mod clips the local update to ``dp-clipping-norm`` and adds Gaussian noise calibrated to
-``dp-epsilon`` and ``dp-delta``, so the FL server only ever receives a privatised update. ``dp-enabled`` turns it on
-or off. The template declares all four keys, so you can override them per run in ``config.toml``.
+On each SuperNode, the mod clips the local update to ``dp-clipping-norm`` and adds Gaussian noise scaled by
+``dp-sensitivity``, ``dp-epsilon`` and ``dp-delta``, so the FL server only ever receives a privatised update.
+``dp-enabled`` turns it on or off. The template declares all five keys, so you can override them per run in
+``config.toml``.
 
 Integer buffers, such as BatchNorm's ``num_batches_tracked`` counters, pass through untouched. See *Privacy filters
 on shared model updates* on :ref:`fl-update-privacy` for how it works and its caveats.
@@ -486,9 +488,9 @@ They populate the graphs on the model page (see :ref:`training-metrics`).
    - a reply with no ``site`` at all is dropped.
 
    Read the name with ``client_identity(context)`` rather than from the environment. On a FLIP SuperNode it returns
-   ``SUPERNODE_NAME``, which FLIP sets to the kit slot. Under the simulator, where that variable is absent, it
-   derives a ``site-<n>`` name from the partition ID. One ``client_app.py`` then attributes its metrics correctly on
-   the platform, on the compose stack and under ``flwr run``. Both tutorials do this.
+   ``SUPERNODE_NAME``, which the Trust's deployment sets to its kit slot. Under the simulator, where that variable is
+   absent, it derives a ``site-<n>`` name from the partition ID. One ``client_app.py`` then attributes its metrics
+   correctly on the platform, on the compose stack and under ``flwr run``. Both tutorials do this.
 
 .. note::
 
@@ -607,13 +609,13 @@ whenever that metric improves, and records ``best_model``, ``best_round`` and ``
 ``cross_val_results.json``.
 
 - Set ``best-model-metric-minimize = true`` for loss-like metrics.
-- Selection needs at least two rounds.
+- With a single round, the best checkpoint just duplicates the final model; the run logs a warning but proceeds.
 - The evaluate phase then runs **every** round instead of only the last — one test-split inference pass per client
   per round.
 - The key must be one the clients actually report. Otherwise the run completes with no best model, logging a warning
   each round rather than failing.
 
-This is the Flower equivalent of ``BEST_MODEL_METRIC`` in an FLARE ``config.json``.
+This is the Flower equivalent of ``BEST_MODEL_METRIC`` in a FLARE ``config.json``.
 
 ************************************
 Submitting the app to FLIP
@@ -628,7 +630,6 @@ When you submit, FLIP:
 - injects ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query``, ``flip-min-clients`` (the number of
   participating Trusts) and ``flip-job-dir`` (the app directory, where an ``evaluation`` job finds its uploaded
   checkpoint) into the run config, on top of your ``config.toml``;
-- sets ``SUPERNODE_NAME`` on each participating Trust's SuperNode to its FL kit slot (for example ``Trust_1``);
 - starts the ``ServerApp`` on the Central Hub's SuperLink and the ``ClientApp`` on each approved Trust's SuperNode.
 
 ************************************
@@ -636,8 +637,8 @@ Local testing before upload
 ************************************
 
 There are two local ways to run an app: the flwr simulator, and the Flower containers. The app code is identical on
-both, because the site name comes from the Flower ``Context`` rather than the environment (see the
-``client_identity`` warning above).
+both, because ``client_identity`` reads ``SUPERNODE_NAME`` where it is set and otherwise falls back to the partition
+ID in the Flower ``Context`` (see the ``client_identity`` warning above).
 
 In ``LOCAL_DEV`` mode (the default outside the platform), ``get_dataframe`` reads the CSV named by
 ``DEV_DATAFRAME`` and ``get_by_accession_number`` reads the directory named by ``DEV_IMAGES_DIR``. Both local paths

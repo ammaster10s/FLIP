@@ -21,7 +21,7 @@ site pins that tag in its kit and moves between releases with one command.
 
 Two rules apply throughout:
 
-- **A site runs the release its hub runs.** The hub and its sites must agree on the FL framework version (an FLARE
+- **A site runs the release its hub runs.** The hub and its sites must agree on the FL framework version (a FLARE
   2.9 client cannot join a 2.8 server), the payload encryption and the task contract. The upgrade therefore defaults
   to the release the hub reports, and stops if the hub cannot say. It tells you when a newer release exists, but
   offers it only once the hub runs it.
@@ -217,7 +217,8 @@ The upgrade never re-seeds data and never resets XNAT.
      - The checkout is not at the target tag, or git could not read the checkout.
      - Check out the tag (step 3), or apply the printed ``safe.directory`` fix.
 
-Exit codes 2 to 6 all mean **nothing was changed**.
+Exit codes 2 to 6 all mean **nothing was changed**. Run through ``make``, the shell sees make's own exit status
+(2); the code above is in make's first ``*** … Error <code>`` line.
 
 Step 5 — Verify
 ===============
@@ -379,11 +380,13 @@ until it is re-keyed. On the admin workstation:
 
       make sync-trust-kits PROD=true
 
-#. **Package each site's kit** and send it over the encrypted channel used at onboarding.
+#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging reads the
+   slot-named file, so copy the refreshed kit there first:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true
+      cp trust/.env.<CODE>.production trust/.env.<slot>
+      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=true
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.

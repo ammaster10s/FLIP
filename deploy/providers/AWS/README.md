@@ -452,7 +452,7 @@ This section is the mechanism (FLIP#751, FLIP#770).
 `make rollback-centralhub` repoints each service at its previous ACTIVE revision, then **deregisters the revision
 it rolled away from** (it stays describable for forensics). The deregistration is what makes the rollback durable:
 `ecs_services.tf` tracks the *latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next
-`terraform apply` silently re-adopt it. On an FLARE hub it first empties the fl-server's `local/` on EFS and
+`terraform apply` silently re-adopt it. On a FLARE hub it first empties the fl-server's `local/` on EFS and
 re-syncs the kit (`scripts/reset-fl-server-local.sh`, the `efs-provision-certs` task): since FLIP#1390 the fl-server
 writes `local/flip__p_resources.json`, and an older fl-server image cannot load it and fails to start.
 `SKIP_FL_LOCAL_RESET=1` is for when the file is already gone or the target revision is FLIP#1390 or later.

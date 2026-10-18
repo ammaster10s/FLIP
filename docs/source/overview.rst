@@ -21,7 +21,8 @@ What FLIP guarantees
   Neither the internet nor the hub can open a connection into the Trust.
 
 **What leaves a Trust** is limited to aggregate cohort statistics (hidden below the Trust's own minimum group size),
-model updates (filtered before they are sent) and operational status. The trained model is the project's
+model updates (privacy-filtered before they are sent on FLARE, and on Flower when the researcher's code enables
+it) and operational status. The trained model is the project's
 deliverable and goes to the research team, so a Trust that approves a project is also approving that.
 
 .. seealso::
@@ -75,11 +76,11 @@ How a project runs
 A researcher writes a cohort query, and every Trust answers with aggregate statistics only. The researcher stages the
 project at the Trusts they need, and each Trust approves or declines it. Each approving Trust pulls the cohort's
 images from its PACS into its own XNAT, where project members can add labels if the model needs them. The researcher
-uploads their training code and starts training, and the code runs at every approving Trust. After each round, the
-hub combines the Trusts' model updates and sends the combined model back out. When training ends, the final model
+uploads their training code and starts training, and the code trains on each approving Trust's data. After each
+round, the hub combines the Trusts' model updates and sends the combined model back out. When training ends, the final model
 and its metrics are available in the FLIP UI.
 
-Each step, with screenshots, is on :doc:`flip-workflow`.
+Each step is drawn as a diagram on :doc:`flip-workflow`. The :doc:`user-guides` show the screens.
 
 Who does what
 =============
@@ -118,8 +119,9 @@ researcher receives the combined model, never a single Trust's update.
 
 .. note::
 
-   The filter applied to model updates before they leave a Trust is statistical clipping and sparsification. It is
-   **not formal differential privacy**. See :ref:`security`.
+   On FLARE, model updates are clipped and sparsified before they leave a Trust. This is **not formal differential
+   privacy**. On Flower, local differential privacy is available, but the researcher's code must enable it. See
+   :ref:`security`.
 
 Interoperability and data harmonisation
 =======================================

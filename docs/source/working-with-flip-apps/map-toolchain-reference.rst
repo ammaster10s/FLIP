@@ -42,11 +42,11 @@ quickly. The MAP templates' ``requirements.txt`` files carry the same pins.
    * - ``monai-deploy-app-sdk``
      - ``4.0.0``
      - The CUDA-13 generation. Requires ``holoscan-cu13``.
-   * - ``holoscan`` / ``holoscan-cli``
+   * - ``holoscan-cu13`` / ``holoscan-cli``
      - ``4.2.0``
-     - Install **both**: the packager refuses to run with only the CLI. Pin the CLI explicitly —
-       ``holoscan-cli`` **4.3.0 removed MAP packaging**, and the App SDK does not pin it, so an unconstrained install
-       gives you a CLI without ``holoscan package --models``.
+     - Install **both**: the packager refuses to run with only the CLI. The templates pin only ``holoscan-cu13``, so
+       pin the CLI yourself — ``holoscan-cli`` **4.3.0 removed MAP packaging**, and the App SDK does not pin it, so an
+       unconstrained install gives you a CLI without ``holoscan package --models``.
    * - ``monai``
      - ``>=1.6.0``
      - What FLIP trains with; 1.6.0 also patches four high-severity advisories. **Not** ``1.5.0``, which caps torch

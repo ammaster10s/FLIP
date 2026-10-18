@@ -250,9 +250,9 @@ Confirming enrichment is complete
 FLIP will not start training until you confirm this stage is finished. The confirmation is your declaration that the
 data is ready; the platform cannot check it for you.
 
-1. Open the project page.
-2. On the right-hand side, switch on the toggle confirming the dataset has been enriched.
-3. Continue to :ref:`training-configuration`.
+1. Open the model from the project page.
+2. On the right-hand side, switch on **Dataset enriched**.
+3. Continue to :ref:`initiate-training`.
 
 .. note::
 

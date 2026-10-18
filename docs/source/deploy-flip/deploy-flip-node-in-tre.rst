@@ -58,32 +58,18 @@ operator. The TRE operator is responsible for:
 **Container image ingestion**
 
 FLIP container images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). Because TREs typically block direct pulls from public
-registries, images must be ingested through the TRE's normal file-ingress process. A
-common pattern:
+(``ghcr.io/londonaicentre/*``). TREs typically block direct pulls from public registries,
+so images have to come in through the TRE's normal file-ingress process, for example as
+``docker save`` tarballs loaded with ``docker load``, or through a TRE-internal registry.
 
-1. Outside the TRE, pull and save each image to a tarball on a workstation that has
-   internet access:
+.. important::
 
-   .. code-block:: shell
-
-      docker pull ghcr.io/londonaicentre/trust-api:<tag>
-      docker save ghcr.io/londonaicentre/trust-api:<tag> -o trust-api-<tag>.tar
-
-2. Submit the tarballs through the TRE's file-ingress airlock.
-3. Inside the TRE, load each image into the local Docker daemon:
-
-   .. code-block:: shell
-
-      docker load -i trust-api-<tag>.tar
-
-.. note::
-
-   Other image distribution approaches may be acceptable depending on the TRE --
-   for example, a TRE-internal Docker registry (e.g. Harbor, GitLab, or a registry
-   mirror) that is pre-populated with the required images and reachable from the
-   FLIP host. Coordinate with the TRE operator to pick the option that best fits
-   local policy.
+   The FLIP make targets do not support this today. A production trust always pulls: the
+   production compose files name the ``ghcr.io/londonaicentre`` images directly, the trust
+   Makefile fixes the registry to GHCR and starts the stack with ``--pull always``. Without a
+   route to GHCR, ``up-onprem-trust`` fails even when the images are already loaded. Running FLIP in an
+   air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
+   before the TRE build starts.
 
 **Network policy**
 

@@ -107,9 +107,11 @@ What ``make destroy`` keeps
    make -C deploy/providers/AWS destroy PROD=<env>
 
 It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
-secret, every S3 bucket, the ACM certificates and Route 53 records, and, on ``PROD=true`` (or with
-``PRESERVE_VPC=true``), the VPC. Everything else goes, including the database (unless deletion protection stops
-it), the cloud trust's EC2 instance, the bastion, the load balancers and the CloudWatch logs.
+secret, every S3 bucket, the ACM certificates and Route 53 records, and the VPC unless you pass
+``PRESERVE_VPC=false`` (``PROD=true`` always keeps it). It removes only what it targets: the database (unless
+deletion protection stops it) with its parameter and subnet groups, the cloud trust's EC2 instance, the bastion, the
+security groups, the ALB, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
+finds depend on them. Everything else, including the CloudWatch logs, stays.
 
 .. warning::
 

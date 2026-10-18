@@ -12,14 +12,16 @@ Common user functions
 These pages cover the FLIP web interface from a **researcher's** point of view: preparing a project, training models
 across the Trusts and collecting the results. New to FLIP? Start with :doc:`getting-started`.
 
-What you can do depends on your role (see :ref:`rbac-roles`). Each user has one role:
+What you can do depends on your role (see :ref:`rbac-roles`). Each user has one of these roles:
 
 - ``researcher`` — everything described in these pages.
 - ``viewer`` — read-only access to the projects you are assigned to. You cannot create projects, run queries, upload
   files or start training.
 - ``admin`` — everything a researcher can do, plus un-staging projects and approving projects at every Trust that has
   no Trust Admin (see :ref:`admin-project-and-user-management` and the wider :ref:`sys-admin` section).
-- ``trust admin`` — approves or declines projects for their own Trust (see :ref:`trust-admin-guide`).
+
+A **Trust Admin** is a researcher who also holds the Trust Admin role for one Trust, and approves or declines projects
+for it (see :ref:`trust-admin-guide`).
 
 ****************
 A project's life

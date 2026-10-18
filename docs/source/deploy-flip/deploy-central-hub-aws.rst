@@ -411,13 +411,15 @@ Destroy infrastructure
 
 .. warning::
 
-   This deletes the environment's infrastructure, including the database. It asks you to type ``yes`` first.
-   **Cognito**, **Secrets Manager** and the **S3 buckets** are kept. In production, RDS deletion protection is on
-   and a final snapshot is taken before deletion is allowed; staging is disposable.
+   This deletes the database **without a final snapshot**; in production, RDS deletion protection makes that delete
+   fail. It asks you to type ``yes`` first. **Cognito**, **Secrets Manager**, the **S3 buckets**, the ACM
+   certificates and Route 53 records are kept, and so is the VPC unless you pass ``PRESERVE_VPC=false`` (production
+   always keeps it).
 
-It removes the Trust EC2 and the hub bastion, the ECS cluster and its EFS file systems, both load balancers,
-CloudFront and its WAF, the Cloud Map namespace, the VPC with its subnets, endpoints and NAT gateway, the IAM roles,
-the Parameter Store entries and the Elastic IPs.
+It removes only what it targets: the RDS database with its parameter and subnet groups, the Trust EC2 and the hub
+bastion with their key pairs, the security groups, the ALB, the EC2 IAM role and the SES email templates, plus any
+resources Terraform finds depend on them. Everything else stays. See :doc:`/sys-admin/admin-backup-and-restore`
+before you run it.
 
 ***************
 Troubleshooting

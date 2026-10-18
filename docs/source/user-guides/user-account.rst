@@ -47,7 +47,7 @@ Initial login
 *************
 
 1. Enter your email address and the one-time password from your enrolment email.
-2. Click **Login**.
+2. Click **Log In**.
 3. Set a new password.
 4. Set up multi-factor authentication (MFA): scan the QR code with an authenticator app (Google Authenticator, Authy,
    1Password, etc.) and enter the 6-digit code it shows.
@@ -97,7 +97,7 @@ authenticator app. You land on the Projects page.
 Forgot password
 ***************
 
-1. Click **Forgot Password?** on the login page.
+1. Click **Forgot password?** on the login page.
 2. Enter the email address of your FLIP account.
 3. Click **Request Code**.
 4. When the confirmation code arrives by email, enter it with a new password.
@@ -143,7 +143,7 @@ Dark mode
 FLIP has light and dark display modes, and remembers your choice between sessions.
 
 1. Open the account menu in the top right-hand corner.
-2. Click **Dark Mode** to switch between the light and dark themes.
+2. Click **Dark Mode** to switch to the dark theme; the same item reads **Light Mode** while dark mode is on.
 
 .. figure:: ../assets/generated/gifs/flip/dark-mode.gif
    :width: 600

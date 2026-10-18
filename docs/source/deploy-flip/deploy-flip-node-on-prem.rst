@@ -73,6 +73,12 @@ trust (step 2 of the runbook), opens the FL load balancer to the trust's IP (ste
 needs Python 3.12 or 3.13 and uv, the hub's Terraform outputs (``make init`` and ``make apply`` already run in
 ``deploy/providers/AWS``), and a kit created with step 1.
 
+.. warning::
+
+   Use it only for a fresh, single-trust test environment. It also runs ``deploy-trust KIT=<CODE>``, which deploys
+   and seeds the cloud trust EC2 with the same kit, and it sets the FL load balancer's on-prem list to this one IP,
+   dropping any rules for other trusts. To add a trust to a running network, follow :doc:`onboarding-a-trust`.
+
 #. **Deploy the hub and provision the trust.**
 
    .. code-block:: shell
@@ -81,11 +87,12 @@ needs Python 3.12 or 3.13 and uv, the hub's Terraform outputs (``make init`` and
 
    Leave out ``LOCAL_TRUST_IP`` to use this machine's own public IP, detected automatically.
 
-#. **Fill in the hub-shared settings** (step 3 of the runbook), from the repo root:
+#. **Fill in the hub-shared settings and XNAT passwords** (step 3 of the runbook), from the repo root:
 
    .. code-block:: shell
 
       make sync-trust-kit KIT=<CODE> PROD=<stag|true>
+      make generate-xnat-credentials KIT=<CODE> PROD=<stag|true>
 
 #. **Start the trust stack,** from the repo root:
 

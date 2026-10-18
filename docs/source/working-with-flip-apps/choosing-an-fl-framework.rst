@@ -55,8 +55,9 @@ Decision table
      - **NVIDIA FLARE**
    * - A privacy filter each Trust enforces on its own side, which the app cannot switch off
      - **NVIDIA FLARE** — Flower has no site-side filter hook
-   * - Formal ``(epsilon, delta)`` differential privacy on shared updates
-     - **Flower** — NVIDIA FLARE's filter is a heuristic, without calibrated noise
+   * - Differential-privacy noise on shared updates
+     - **Flower** — a per-round Gaussian mechanism, valid only with a calibrated ``dp-sensitivity``; NVIDIA FLARE's
+       filter is a heuristic, without noise
    * - The least FLIP-specific code in your app
      - **NVIDIA FLARE** — the template reports status, resolves client identity and wires the privacy filter
    * - Federated averaging (``standard``) or per-Trust evaluation (``evaluation``)
@@ -116,11 +117,12 @@ Privacy on shared updates
 The two frameworks privatise a Trust's training result differently before it leaves the site:
 
 - **NVIDIA FLARE** sparsifies and clips the update, without noise. This is a heuristic filter, not formal
-  differential privacy. The app can tune it or turn it off, but a Trust can also enforce **its own** filter, which
-  runs whatever the app does.
-- **Flower** clips the update and adds Gaussian noise for a formal ``(epsilon, delta)`` guarantee. It is applied
-  only if your ``client_app.py`` registers the privacy mod, so it is enforced by code review rather than by the
-  platform, and the shipped defaults are demonstration values, not a defensible privacy budget.
+  differential privacy. It can be tuned or switched off only in local or recipe runs; on the platform the template
+  fixes it, and a Trust can also enforce **its own** filter, which runs whatever the app does.
+- **Flower** clips the update and adds Gaussian noise: a per-round Gaussian mechanism, valid only with a calibrated
+  ``dp-sensitivity``. It is applied only if your ``client_app.py`` registers the privacy mod, so it is enforced by
+  code review rather than by the platform, and the shipped defaults are demonstration values, not a defensible privacy
+  budget.
 
 If the Trusts in your project require a site-enforced policy, use NVIDIA FLARE.
 

@@ -51,7 +51,8 @@ What is a kit?
 
 A trust's **kit** is everything it needs to join one FLIP network:
 
-- **The kit file**, ``trust/.env.<CODE>.<env>`` (``<CODE>`` is the trust's short code). It holds four blocks:
+- **The kit file**, ``trust/.env.<CODE>.<env>`` (``<CODE>`` is the trust's short code). On a Docker Compose host
+  the operator's copy is named after the FL slot instead, ``trust/.env.<slot>``. It holds four blocks:
 
   - *Hub-shared* settings, the same for every trust on the hub (encryption key, hub URL, FL backend, image tags);
   - *Kit credentials*, this trust's own keys and FL slot, written when the trust is registered;
@@ -166,11 +167,12 @@ so allow both:
      - The kit's ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``: 8002 on production, 8003 on LZA staging
 
 The FL server's load balancer admits only the public IPs the admin has listed. Step 6 of :doc:`onboarding-a-trust`
-adds the trust's IP; repeat it whenever that IP changes.
+adds the trust's IP; repeat it whenever that IP changes. On a Landing Zone Accelerator estate there is no such list:
+the networking account's edge decides what reaches the FL server.
 
-The node also needs outbound access to pull FLIP's container images (``ghcr.io/londonaicentre``) and OS packages,
-unless the images reach it another way, as in a TRE. Kubernetes adds a few destinations of its own; see
-:doc:`deploy-flip-node-kubernetes`.
+The node also needs outbound access to pull FLIP's container images (``ghcr.io/londonaicentre``) and OS packages.
+The Docker Compose deploy commands always pull, so this applies in a TRE too (see :doc:`deploy-flip-node-in-tre`).
+Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubernetes`.
 
 .. toctree::
    :maxdepth: 1

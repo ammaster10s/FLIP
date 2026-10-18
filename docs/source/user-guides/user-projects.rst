@@ -32,7 +32,8 @@ After signing in you land on the Projects page. It lists every project you can a
 ones you were added to. Users with the ``admin`` role see all projects.
 
 You can filter the list, for example by owner or by a keyword in the name or description. Each project carries a type
-chip, **Imaging + OMOP** or **OMOP only**, and the **Type** control narrows the list to one kind.
+chip, **Imaging + OMOP** or **OMOP only**, and the type filter (**All types**, **Imaging + OMOP**, **OMOP only**)
+narrows the list to one kind.
 
 .. figure:: ../assets/generated/gifs/flip/filter-project.gif
    :width: 600
@@ -46,7 +47,7 @@ chip, **Imaging + OMOP** or **OMOP only**, and the **Type** control narrows the 
 Create a project
 ****************
 
-1. Click **Create Project** in the top right-hand corner of the Projects page.
+1. Click **Create project** in the top right-hand corner of the Projects page.
 2. Enter the project name and description.
 3. Choose whether the project **includes imaging data**:
 
@@ -143,7 +144,7 @@ imaging tables. See :ref:`the schema reference <omop-schema>` for the tables you
 Create a cohort query
 =====================
 
-1. On the project page, click **Create Cohort Query** in the bottom left-hand corner.
+1. On the project page, click **Create Cohort Query** in the **Cohort Query** card on the left.
 2. Enter the query in SQL, for example:
 
    .. code-block:: sql
@@ -231,7 +232,7 @@ Imaging project status
 ************************
 
 After approval, FLIP creates an XNAT project at each participating Trust and imports the cohort's images from that
-Trust's PACS (see :ref:`flip-xnat`). The **Imaging Project Status** section of the project page shows the import's
+Trust's PACS (see :ref:`flip-xnat`). The **Imaging project status** section of the project page shows the import's
 progress at each Trust.
 
 .. figure:: ../assets/generated/gifs/flip/imaging-status.gif

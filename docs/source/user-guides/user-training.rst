@@ -63,8 +63,9 @@ Before you start, the model's required files must all be uploaded and checked (s
 
 5. Click **Initiate Training**.
 
-The progress bar at the top of the page shows a green tick as each stage completes. The activity panel on the right
-lists each step with a timestamp: queuing, net assignment, training in progress and training complete.
+The model page has two tabs. Once training starts it opens **Run**, where the **Live activity** feed lists each step
+with a timestamp (queuing, net assignment, training in progress, training complete) and the stop and download buttons
+sit at the top. The **Prepare** tab keeps a progress bar of the stages.
 
 .. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
@@ -76,13 +77,13 @@ lists each step with a timestamp: queuing, net assignment, training in progress 
 Stop training
 *************
 
-The stop button appears at the top of the model page while the model is queued or training. Once training has ended it
+The stop button appears at the top of the **Run** tab while the model is queued or training. Once training has ended it
 disappears.
 
 1. Click **Stop Training**.
 2. Confirm.
 
-The progress bar shows the stage at which training stopped.
+The progress bar on the **Prepare** tab shows the stage at which training stopped.
 
 .. figure:: ../assets/generated/gifs/flip/stop-training.gif
    :width: 600
@@ -93,7 +94,8 @@ The progress bar shows the stage at which training stopped.
 While the model is still queued (status *Model Queued*), the same button reads **Abort job**. Aborting removes the job
 from the queue, marks the model as *Stopped* and frees its net for the next job straight away.
 
-A stopped model produces no results, so **Download Results** stays disabled. You can initiate training again.
+A stopped model produces no results, so **Download Results** stays disabled. It cannot be started again; to train
+again, create a new model.
 
 .. _view-results:
 

@@ -42,9 +42,10 @@ alone. It stays inside the trust's own network. AWS-hosted trusts have no such p
 run FLIP's own bundled Orthanc, which XNAT reaches over the container network, so their
 security groups keep no ingress rules at all.
 
-**Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
-HSTS, AWS WAF managed rules, and an internal-only load balancer. Nothing else in the
-platform is reachable from the public internet.
+**The Central Hub is the internet-facing entry point.** It sits behind CloudFront with
+modern TLS, HSTS, AWS WAF managed rules, and an internal-only load balancer. The one other
+public endpoint is the FL server's load balancer in the self-contained AWS deployment,
+which admits only the allowlisted IP addresses of the trusts' FL clients.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
 transit by default, and payloads carry their own authenticated encryption layer
@@ -119,10 +120,12 @@ trust, and its holder also has Researcher access. Each role carries an explicit 
 rather than assumed, so a request with no matching grant is refused.
 
 Role membership alone is not sufficient for project data. That additionally requires
-membership of the specific project, re-checked on every access. Credential comparisons
-are constant-time, so response timing cannot be used to guess a secret. Periodic review
-of accounts and removal of dormant access is an operating commitment of the organisation
-running the hub, supported by the platform's role and membership records.
+membership of the specific project, re-checked on every access. There are two exceptions:
+an Admin can access every project, and a Trust Admin can read a project staged at their
+trust, so they can decide on it. Credential comparisons are constant-time, so response
+timing cannot be used to guess a secret. Periodic review of accounts and removal of
+dormant access is an operating commitment of the organisation running the hub, supported
+by the platform's role and membership records.
 
 **Role separation continues inside the trust.** Access control is not only a hub concern.
 XNAT enforces its own roles. The ability to query and retrieve from the trust PACS is
@@ -168,8 +171,8 @@ services together, so callers and receivers change atomically.
 legitimately holds the shared key, because it reads the approved cohort and pulls
 imaging. The key alone therefore cannot separate reading a project's cohort from
 *defining* it. So the two ``data-access-api`` routes that record or delete the frozen
-cohort carry a second gate on top of the shared key: proof of possessing the trust's
-payload-encryption key (``AES_KEY_BASE64``).
+cohort carry a second gate on top of the shared key: proof of possessing the
+platform-wide payload-encryption key (``AES_KEY_BASE64``), which the trust also holds.
 
 - ``trust-api`` sends that proof when it records an approved cohort, and
   ``data-access-api`` checks it.
@@ -199,10 +202,13 @@ independent controls would each have to fail before anything unintended could ex
   rejected.
 - **Schema and limits pinned.** Queries are pinned to the ``omop`` schema, with
   ``LIMIT``/``OFFSET`` restricted to literal values.
-- **Small results suppressed.** Results below ``COHORT_QUERY_THRESHOLD`` are suppressed.
-  A genuine zero is deliberately indistinguishable from a small suppressed count, so a
-  response cannot reveal that a handful of patients matched. The threshold is the trust's
-  own disclosure floor (default 10), set by each trust in its deployment kit. Trusts need
+- **Small results suppressed.** A cohort with fewer distinct patients than
+  ``COHORT_QUERY_THRESHOLD`` is suppressed whole. A genuine zero is deliberately
+  indistinguishable from a small suppressed cohort, so a response cannot reveal that a
+  handful of patients matched the query. Above the threshold, the age, sex and modality
+  breakdowns group small categories, but the per-column counts of present and missing
+  values are released without a small-number floor. The threshold is the trust's own
+  disclosure floor (default 10), set by each trust in its deployment kit. Trusts need
   not agree on a shared value, and the hub cannot lower it.
 - **Row-level data only for the approved cohort.** Row-level data is released only for the
   **cohort frozen at project approval**. Each Trust records the approved query and the
@@ -277,15 +283,22 @@ provisioning. So the FL server and each client authenticate *each other*, rather
 side trusting the network. A client cannot join a training network without a valid
 provisioned identity.
 
-**Model updates are filtered before they leave a trust.** A privacy filter is applied to
-training updates by default, so the aggregating server never sees a raw update. For
-governance purposes this should be described precisely: it is **statistical clipping and
-sparsification of model updates, not formal differential privacy**. There is no
-calibrated noise and no privacy budget.
+**Privacy filtering of model updates differs by FL backend** (see
+:ref:`fl-update-privacy`):
 
-It is a meaningful protection and it is on by default. But describing it as differential
-privacy to an ethics committee or information governance panel would misstate it.
-Formally differentially private aggregation is on the roadmap.
+- **NVIDIA FLARE.** Every training template clips and sparsifies each update before it
+  leaves the trust, and an uploaded app cannot turn this off. It is **statistical
+  clipping and sparsification, not formal differential privacy**: there is no calibrated
+  noise and no privacy budget. A trust can also enforce its own filter as site policy,
+  which a job cannot bypass.
+- **Flower.** Local differential privacy (clipping plus calibrated noise) is available,
+  but it is **opt-in**: the researcher's uploaded code must enable it. Code that does not
+  sends raw updates, and only review of the uploaded code catches that. There is no
+  site-enforced filter. The template's noise settings are demonstration values, not a
+  defensible privacy budget.
+
+Describing either as a differential privacy guarantee to an ethics committee or
+information governance panel would misstate it.
 
 ***************************
 Data in transit and at rest
