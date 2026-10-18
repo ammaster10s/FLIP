@@ -240,12 +240,17 @@ Set the job type with the ``job_type`` key in the app's ``config.json``, on both
 After you upload files, the UI shows which files the job type requires. The Central Hub API then bundles your
 uploaded files together with the job type's static (non-modifiable) template files.
 
-.. figure:: ../assets/fl/job_types.jpg
-   :alt: A user uploads the files for a job type; the hub bundles them with that job type's template before
-         submitting the job.
+.. figure:: ../assets/fl/job_types.svg
+   :alt: The researcher uploads config.json, trainer.py, models.py and any helpers. The job_type in
+         config.json selects a template, which lists the files it requires and provides fixed
+         server-side files. If a required file is missing the submission is rejected; otherwise the
+         template's files and the researcher's files are bundled into one app and submitted to the
+         net's FL API.
    :align: center
+   :width: 100%
 
-   Workflow of how the user uploads files for a specific job type.
+   From uploaded files to a submitted app. The job type decides which files you must supply; the
+   server side always comes from the platform's template.
 
 The per-job-type templates are under :gh:`fl-apps/ <fl-apps>`.
 The NVFLARE tutorials show them in use:
