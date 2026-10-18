@@ -42,7 +42,7 @@ When creating issues, please use the appropriate issue template:
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
-the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+the federated learning code (base library, FL services, and tutorials) for both FLARE and Flower. Both backends
 are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. See the single canonical
 [repository layout](README.md#repository-layout) in the root README and the README within each area for details.
 
@@ -228,15 +228,15 @@ fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
-Three changes affect checkouts created before them. None is picked up automatically, because
+These changes affect checkouts created before them. None is picked up automatically, because
 `.env.development` and the trust kit files are gitignored and never rewritten for you.
 
 | What changed | What to do |
 | --- | --- |
-| `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
-| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
+| `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
+| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
-| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
+| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -246,7 +246,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave the placeholder for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
 | XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
@@ -351,7 +351,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
+- `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
@@ -410,7 +410,7 @@ they would only ever fail trying to reach `londonaicentre`-owned resources — s
 `if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
 pushes. These are:
 
-- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+- **Image publishing** — `Build and Push FLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
