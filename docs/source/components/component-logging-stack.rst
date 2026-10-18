@@ -2,11 +2,15 @@
 Logging Stack
 ###############
 
-Every Trust runs a logging stack that collects, stores and displays the Trust APIs' logs. It never leaves the
-Trust. It has three layers:
+Every Trust runs a logging stack that collects, stores and displays its containers' logs, under Docker Compose
+or from the Kubernetes Helm chart. The logs never leave the Trust. This page is for Trust operators and engineers
+who need to find out what a Trust's services did.
+
+The stack has three layers:
 
 1. **Structured logs** — each Trust API writes one JSON object per log line.
-2. **Grafana Alloy + Loki** — Alloy collects the logs from Docker and Loki stores them for 30 days.
+2. **Grafana Alloy + Loki** — Alloy collects every container's logs and Loki stores them for 30 days. Only the
+   Trust APIs' JSON lines get the ``level``, ``api`` and ``event`` labels.
 3. **Grafana** — a web dashboard for querying and viewing the logs.
 
 .. contents:: On this page
@@ -58,14 +62,17 @@ Every log line is a JSON object:
 .. code-block:: json
 
    {
-     "timestamp": "2025-06-15T10:23:45.123456Z",
+     "timestamp": "2025-06-15T10:23:45.123456+00:00",
      "level": "INFO",
-     "api": "trust-api",
-     "logger": "trust_api.routers.cohort",
-     "message": "Project approved",
-     "event": "project.approved",
-     "project_id": "abc-123",
-     "request_id": "d4e5f6a7-..."
+     "api": "imaging-api",
+     "logger": "log_config.middleware",
+     "message": "Request completed",
+     "request_id": "d4e5f6a7-...",
+     "event": "request.completed",
+     "method": "POST",
+     "path": "/download/images/net-1",
+     "status_code": 200,
+     "duration_ms": 412
    }
 
 Every HTTP request is logged automatically:
@@ -107,6 +114,9 @@ Alloy collects container logs through the Docker socket. It replaces Promtail, w
 
 Its configuration is ``trust/observability/alloy/config.alloy``.
 
+On Kubernetes, Alloy reads the pod log files under ``/var/log/pods`` on the node instead, and labels each log
+with its ``namespace``, ``pod``, ``container`` and ``service`` (the namespace). The JSON parsing is the same.
+
 Loki
 ====
 
@@ -132,8 +142,14 @@ Grafana
 =======
 
 Grafana is the web UI for exploring logs. It starts with a Loki data source and a **Trust APIs** dashboard
-already set up, so no manual configuration is needed. It is at ``http://<trust-host>:3000``; the admin password
-is ``GRAFANA_ADMIN_PASSWORD`` from the Trust's kit file.
+already set up, so no manual configuration is needed. Under Compose it is at ``http://<trust-host>:3000`` (or
+``GRAFANA_PORT``). Sign in as ``admin`` with ``GRAFANA_ADMIN_PASSWORD`` from the Trust's kit file.
+
+On Kubernetes, Grafana has no external address; port-forward it from a machine with cluster access:
+
+.. code-block:: shell
+
+   kubectl -n <namespace> port-forward svc/grafana 3000:3000
 
 Trust APIs dashboard
 --------------------
@@ -157,7 +173,7 @@ Configuration
 Environment variables
 =====================
 
-Set these in the Trust's ``.env.*`` file, or in a Docker Compose override:
+Set these in the Trust's kit file (``trust/.env.<CODE>.<env>``):
 
 .. list-table::
    :header-rows: 1
@@ -167,8 +183,8 @@ Set these in the Trust's ``.env.*`` file, or in a Docker Compose override:
      - Description
    * - ``TRUST_LOG_LEVEL``
      - All three APIs (as ``LOG_LEVEL`` inside each container)
-     - Python log level for all Trust services. Default ``INFO``; the example ``.env.development`` sets
-       ``DEBUG``.
+     - Python log level for the Trust APIs. The kit template sets ``DEBUG``. On Kubernetes the chart's
+       ``logLevel`` value sets it instead (default ``INFO``).
    * - ``GRAFANA_PORT``
      - Grafana
      - Host port for the Grafana UI (default ``3000``)
@@ -184,7 +200,7 @@ Docker Compose services
 
 The stack is part of the Trust's Compose files: ``trust/deploy/compose_trust.development.yml`` (configurable
 ports) and ``trust/deploy/compose_trust.production.yml`` (persistent data, automatic restart). It adds three
-services:
+services, with the same images in the Helm chart (``observability.enabled`` turns all three off):
 
 .. list-table::
    :header-rows: 1
@@ -212,8 +228,9 @@ Querying logs and operations
 Accessing Grafana
 =================
 
-1. Open ``http://<trust-host>:3000`` in a browser.
-2. Sign in with the admin credentials.
+1. Open Grafana in a browser: ``http://<trust-host>:3000`` under Compose, or the port-forward above on
+   Kubernetes.
+2. Sign in as ``admin``.
 3. Open the **Trust APIs** dashboard in the **Observability** folder for an overview, or go to **Explore** and
    choose the **Loki** data source for your own queries.
 
@@ -230,8 +247,8 @@ Example LogQL queries
      - ``{api="trust-api"}``
    * - Errors only
      - ``{level="ERROR"}``
-   * - One event
-     - ``{event="training.failed"}``
+   * - Requests that raised an unhandled error
+     - ``{event="request.failed"}``
    * - Text within one service
      - ``{api="data-access-api"} |= "timeout"``
    * - One request across services
@@ -244,17 +261,19 @@ Troubleshooting
 Logs not appearing in Grafana
 =============================
 
+On a Compose Trust host, where ``<N>`` is the Trust's slot number:
+
 1. Check that the API containers are running:
 
    .. code-block:: shell
 
-      docker compose ps
+      sudo docker ps --filter name=trust<N>-
 
 2. Check that Alloy can reach Loki:
 
    .. code-block:: shell
 
-      docker compose logs alloy
+      sudo docker logs trust<N>-alloy-1
 
 3. Check that the Docker socket (``/var/run/docker.sock``) is mounted into the Alloy container. Alloy cannot
    find containers without it.

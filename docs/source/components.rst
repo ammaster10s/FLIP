@@ -2,6 +2,9 @@
 FLIP components
 ################
 
+How FLIP is built, one page per component. Start with the :doc:`components/overview`, which maps every component
+to where it runs and how they connect.
+
 .. toctree::
    :maxdepth: 2
 
@@ -13,8 +16,3 @@ FLIP components
    components/component-xnat
    components/component-pacs
    components/component-logging-stack
-
-.. note::
-
-   Trust-side services can also be deployed on **Kubernetes** with the Helm chart: see
-   :ref:`deploy-flip-node-kubernetes`.

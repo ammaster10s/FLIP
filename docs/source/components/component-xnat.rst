@@ -4,22 +4,25 @@
 XNAT
 ####
 
-`XNAT <https://www.xnat.org/>`_ is an open-source imaging informatics platform. It imports, archives, processes and
-securely shares imaging and related study data. Each trust runs its own XNAT, which holds the imaging retrieved for
-that trust's approved projects. The `XNAT wiki <https://wiki.xnat.org/documentation/how-to-use-xnat>`_ documents XNAT
-itself.
+`XNAT <https://www.xnat.org/>`_ is an open-source imaging informatics platform. Each trust runs its own XNAT on its
+trust node, holding the imaging retrieved from the trust's :doc:`PACS <component-pacs>` for that trust's approved
+projects. The `XNAT wiki <https://wiki.xnat.org/documentation/how-to-use-xnat>`_ documents XNAT itself.
 
-This page is a quick reference to the XNAT UI tasks that come before training, and to how FLIP configures XNAT:
-retrieval, anonymisation, DICOM-to-NIfTI conversion and the download calls training code uses.
+This page is for model developers, who use the XNAT UI to check and enrich data before training, and for engineers
+who need to know how FLIP configures XNAT: retrieval, anonymisation, DICOM-to-NIfTI conversion and the download calls
+training code uses.
 
 **How a project reaches XNAT:**
 
 1. When a FLIP project is approved, the hub queues an XNAT project-creation task for each trust that approved it. A
    trust that approves later gets its task then.
-2. Each trust polls for its task and creates the XNAT project locally.
-3. XNAT retrieves the cohort's imaging from the trust's :doc:`PACS <component-pacs>`.
-4. The project's model developers get access to the XNAT project at each trust, to prepare and enrich the data before
-   training.
+2. The trust picks up the task and creates the XNAT project. The project's users become its members, with XNAT
+   accounts created where needed, and the hub emails each of them (see :ref:`receiving-xnat-credentials`).
+3. XNAT retrieves the cohort's imaging from the trust's PACS.
+4. Model developers prepare and enrich the data in XNAT before training.
+
+A project created with **Includes imaging data** turned off never reaches XNAT: no XNAT project, conversion trigger
+or PACS retrieval is created at any trust.
 
 .. contents:: On this page
    :local:
@@ -119,9 +122,10 @@ XNAT project structure and navigation
    * - Project
      - Created when the FLIP project is approved
    * - Subject
-     - One individual. The anonymised ID is generated at random on import
+     - The patient of one imported study, under a random ID generated for that study. Two studies of the same
+       patient appear as two subjects
    * - Experiment
-     - CT session, labelled with the accession number
+     - An imaging session, such as a CT session, labelled with the study's accession number
    * - Scan
      - A series of imaging data
    * - Resource
@@ -189,7 +193,8 @@ Retrieval from the trust PACS
 *****************************
 
 XNAT's DICOM Query-Retrieve (DQR) plugin retrieves the imaging: XNAT queries the PACS for the studies in an approved
-cohort, and the PACS sends them back for XNAT to archive.
+cohort, and the PACS sends them back for XNAT to archive. Retrieved sessions skip the prearchive: they are anonymised
+on arrival and go straight into the project's archive. A session already in the project is not overwritten.
 
 .. seealso::
 
@@ -203,15 +208,9 @@ DICOM anonymization
 *******************
 
 XNAT has a built-in anonymization engine that removes protected health information (PHI) from DICOM headers. FLIP
-installs its own anonymization script site-wide. It runs on all data received through XNAT's DICOM receiver, before
-the session is archived.
-
-XNAT's stock script only writes the XNAT project, subject and session labels into three header fields. You can
-fetch it with:
-
-.. code-block:: bash
-
-    curl -X GET "http://<xnat-host>/xapi/anonymize/default" -H "accept: text/plain"
+installs its own anonymization script site-wide, in place of XNAT's stock script, which only writes the XNAT
+project, subject and session labels into three header fields. FLIP's script runs on all data received through
+XNAT's DICOM receiver, before the session is archived.
 
 FLIP anonymization script
 =========================
@@ -225,7 +224,7 @@ Level Confidentiality Profile acts on. It takes none of the profile's options. I
   Original Attributes Sequence and Request Attributes Sequence. Where the table says to empty an attribute or give it
   a dummy value, the script removes it.
 - **Removes every vendor private tag**, at any depth.
-- **Replaces Patient Name and Patient ID** with the XNAT subject label (a random UUID for each import), and removes
+- **Replaces Patient Name and Patient ID** with the XNAT subject label (a random UUID for each imported study), and removes
   their nested copies.
 - **Hashes every single-valued UID** at the top level, repeatably, so the objects of one study still reference each
   other. Copies inside sequences, and the three multi-valued UID attributes, are removed instead, because the engine
@@ -292,44 +291,13 @@ from head CT. An XNAT admin would enable it only for the projects that need it, 
   `quickshear <https://github.com/nipy/quickshear>`__-style plane cut blanks everything in front of and below the
   brain. It removes more than the face, but carries no licence fees.
 
-Anonymize API endpoints
-=======================
-
-FLIP uses these XNAT endpoints to install the script:
-
-.. list-table::
-    :widths: 10 30 30
-    :header-rows: 1
-
-    * - Method
-      - Endpoint
-      - Description
-    * - GET
-      - ``/xapi/anonymize/default``
-      - Gets the default anonymization script
-    * - PUT
-      - ``/xapi/anonymize/site``
-      - Sets the site-wide anonymization script
-    * - PUT
-      - ``/xapi/anonymize/site/enabled``
-      - Enables or disables the site-wide anonymization script
-
-.. admonition:: For maintainers
-   :class: note
-
-   The script is ``trust/xnat/xnat/config/anon_script.das``. XNAT setup installs it and sets the file-name template, and the
-   receiver applies it while its ``anonymizationEnabled`` flag is ``true``. A copy of PS3.15 Table E.1-1 lives in
-   ``trust/xnat/tests/ps315_table_e1_1.csv``, and a test fails when the script does not handle one of its rows. See
-   :gh:`trust/xnat/README.md`.
-
 *************************
 DICOM to NIfTI conversion
 *************************
 
 XNAT can convert DICOM images to NIfTI automatically with ``dcm2niix``, run by its Container Service plugin. FLIP runs
 the converter from its own version-pinned image, ``ghcr.io/londonaicentre/xnat-dcm2niix``, never a mutable
-``latest`` tag. (The Docker Hub ``xnat/dcm2niix:latest`` image once resolved to an old build that silently dropped
-slices from valid series.)
+``latest`` tag.
 
 .. important::
 
@@ -340,8 +308,8 @@ slices from valid series.)
    - Move it to the current image by re-running XNAT setup: the ``xnat-configure`` step on Compose, the
      ``xnat-init`` job on Kubernetes.
 
-   Setup updates the existing command in place, so every project's trigger keeps working. The imaging API refuses to
-   create a new project's trigger on a converter running another image, and its error names both images.
+   Setup updates the existing command in place, so every project's trigger keeps working. Until it has run, the
+   imaging API refuses to create a new project's trigger, and its error names the images XNAT has registered.
 
 Commands vs event subscriptions
 ===============================
@@ -354,15 +322,16 @@ Commands vs event subscriptions
 Per-project configuration
 =========================
 
-The **Convert DICOMs to NIfTI** option on a FLIP project (``dicom_to_nifti``) controls its subscription:
+The **Convert DICOMs to NIfTI** option on a FLIP project controls its subscription:
 
-- **On** (``dicom_to_nifti=True``): the subscription is active. ``dcm2niix`` runs whenever DICOM scans arrive, and the
-  NIfTI files appear next to the DICOM data.
-- **Off** (``dicom_to_nifti=False``): the subscription is created inactive. Nothing converts automatically, but
-  ``dcm2niix`` can still be run by hand from the XNAT UI.
+- **On**: the subscription is active. ``dcm2niix`` runs whenever DICOM scans arrive, and the NIfTI files appear next
+  to the DICOM data.
+- **Off**: the subscription is created inactive. Nothing converts automatically, but ``dcm2niix`` can still be run by
+  hand from the XNAT UI.
 
-A subscription can be activated or deactivated later through the XNAT Event Service API. It fires on **new scans
-only**. To convert scans archived while it was missing or broken, run from the repo root on the trust host:
+A subscription can be activated or deactivated later through the XNAT Event Service API (see
+`For maintainers`_). It fires on **new scans only**. To convert scans archived while it was missing or broken, run
+from the repo root on the trust host:
 
 .. code-block:: shell
 
@@ -371,13 +340,58 @@ only**. To convert scans archived while it was missing or broken, run from the r
 Without ``LAUNCH=1`` it only reports what it would convert. On an on-prem host, prefix the command with ``sudo -E``.
 See :ref:`ts-k8s-nifti-backlog` for what it selects and its options.
 
-A project created with **Includes imaging data** turned off (``has_imaging=False``) never reaches XNAT. The hub skips
-the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
+*****************
+FLIP XNAT methods
+*****************
 
-Event Service API endpoints
-===========================
+Training code can use these methods from the :gh:`flip-utils package <flip-utils/README.md>`:
 
-FLIP uses these XNAT endpoints to manage per-project subscriptions:
+``get_dataframe(project_id: str, query: str) -> DataFrame``
+    Returns the cohort's rows as a DataFrame, including the accession IDs for an imaging project. Takes the project
+    ID and the project query, both of which are already passed to the trainer.
+
+``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
+    Downloads the scans of the requested resource type (``NIFTI`` by default) into a directory the FL training script
+    can read, and returns its path. Takes the project ID, an accession ID (from ``get_dataframe``) and an optional
+    ``resource_type`` (one value or a list).
+
+See :doc:`/components/component-fl-nets` for every ``flip.*`` call available to training code.
+
+***************
+For maintainers
+***************
+
+**What is installed.** The XNAT web application and its four plugins (DICOM Query-Retrieve, Container Service, the
+OHIF viewer and Batch Launch) are pinned, with checksums, in :gh:`trust/xnat/artifacts.manifest`. The
+``dcm2niix`` image is built from :gh:`trust/xnat/dcm2niix/Dockerfile`.
+
+**Anonymisation.** The script is :gh:`trust/xnat/xnat/config/anon_script.das`. XNAT setup installs it and sets the
+file-name template, and the receiver applies it while its ``anonymizationEnabled`` flag is ``true``. A copy of
+PS3.15 Table E.1-1 lives in ``trust/xnat/tests/ps315_table_e1_1.csv``, and a test fails when the script does not
+handle one of its rows. Setup uses these XNAT endpoints:
+
+.. list-table::
+    :widths: 10 30 30
+    :header-rows: 1
+
+    * - Method
+      - Endpoint
+      - Description
+    * - GET
+      - ``/xapi/anonymize/default``
+      - Gets XNAT's stock anonymization script
+    * - PUT
+      - ``/xapi/anonymize/site``
+      - Sets the site-wide anonymization script
+    * - PUT
+      - ``/xapi/anonymize/site/enabled``
+      - Enables or disables the site-wide anonymization script
+
+**Conversion triggers.** The imaging API creates each project's subscription, naming the ``dcm2niix-scan`` wrapper
+by the id ``GET /xapi/events/allactions`` lists. Setup keeps that id across redeploys by updating the command in
+place (``POST /xapi/commands/{id}``): deleting and re-registering it would silently stop every existing project
+converting. With the Docker Swarm backend, setup also registers ``ghcr.io`` as a credential-less Container Service
+image host, without which a launch fails even for a public image. XNAT's endpoints for a project's subscriptions:
 
 .. list-table::
     :widths: 10 30 30
@@ -388,48 +402,20 @@ FLIP uses these XNAT endpoints to manage per-project subscriptions:
       - Description
     * - POST
       - ``/xapi/projects/{project}/events/subscription``
-      - Creates a project-scoped event subscription
+      - Creates a project-scoped event subscription (the imaging API, at project creation)
     * - GET
       - ``/xapi/projects/{project}/events/subscriptions``
       - Lists all event subscriptions for a project
-    * - DELETE
-      - ``/xapi/projects/{project}/events/subscription/{id}``
-      - Deletes an event subscription
     * - POST
       - ``/xapi/projects/{project}/events/subscription/{id}/activate``
       - Activates a deactivated subscription
     * - POST
       - ``/xapi/projects/{project}/events/subscription/{id}/deactivate``
       - Deactivates an active subscription
-    * - GET
-      - ``/xapi/events/allactions``
-      - Lists the action key of every command wrapper (the imaging API reads dcm2niix's from it)
-    * - PUT
-      - ``/xapi/events/subscription/{id}``
-      - Re-points a subscription at the current dcm2niix wrapper (the configure step, admin only)
+    * - DELETE
+      - ``/xapi/projects/{project}/events/subscription/{id}``
+      - Deletes an event subscription
 
-.. admonition:: For maintainers
-   :class: note
+.. seealso::
 
-   A subscription names the ``dcm2niix-scan`` wrapper by id, as ``GET /xapi/events/allactions`` lists it. Setup keeps
-   that id across redeploys by updating the command in place (``POST /xapi/commands/{id}``) rather than deleting and
-   re-registering it, which would silently stop every existing project converting. On Docker Swarm, setup also
-   registers ``ghcr.io`` as a credential-less Container Service image host, without which a launch fails even for a
-   public image. Detail: :gh:`trust/xnat/README.md`.
-
-*****************
-FLIP XNAT methods
-*****************
-
-Training code can use these methods from the :gh:`flip-utils package <flip-utils/README.md>`:
-
-``get_dataframe(self, project_id: str, query: str) -> DataFrame``
-    Returns a DataFrame containing at least the accession IDs. Takes the project ID and the project query, both of
-    which are already passed to the trainer.
-
-``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
-    Downloads the scans of the requested resource type (``NIFTI`` by default) into a directory the FL training script
-    can read, and returns its path. Takes the project ID, an accession ID (from ``get_dataframe``) and an optional
-    ``resource_type`` (one value or a list).
-
-See :doc:`/components/component-fl-nets` for every ``flip.*`` call available to training code.
+   :gh:`trust/xnat/README.md` for the XNAT stack, its setup scripts and their tests.

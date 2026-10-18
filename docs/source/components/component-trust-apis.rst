@@ -11,7 +11,8 @@ Three FastAPI services make up FLIP's footprint inside a Trust's Secure Enclave:
 - ``data-access-api`` — runs cohort queries against the Trust's OMOP database.
 
 They run as containers alongside XNAT, the OMOP database, the FL clients and the logging stack, either under
-Docker Compose on a Trust host or from the Kubernetes Helm chart.
+Docker Compose on a Trust host or from the Kubernetes Helm chart. This page is for engineers and Trust operators
+who need to know what each service does, what it talks to and which privacy controls it enforces.
 
 .. contents:: On this page
    :local:
@@ -88,7 +89,9 @@ Trust API
 *********
 
 The ``trust-api`` exposes a single route, ``GET /health``. Everything else it does is outbound, from two
-background loops. If either loop dies, ``/health`` stops reporting healthy.
+background loops. If either loop dies, ``/health`` reports ``degraded`` and names it. ``/health`` also shows
+what the hub reported on the last heartbeat: its release, and whether this Trust's ``AES_KEY_BASE64`` matches the
+hub's.
 
 Task poller
 ===========
@@ -97,7 +100,10 @@ Every ``POLL_INTERVAL_SECONDS`` (default 5) the poller:
 
 1. sends a heartbeat to the hub, with the latest health snapshot (below) when there is one;
 2. fetches the Trust's pending tasks;
-3. decrypts each task, runs it and posts the result back, retrying with backoff if the hub is unreachable.
+3. decrypts each task, runs it and posts the result back, one task at a time. Posting a result is retried with
+   backoff if the hub does not accept it.
+
+The hub only ever answers this poll: a Trust never pushes progress on its own, and the hub never connects in.
 
 On its first exchange with the hub, the poller checks that the hub's view of its identity matches
 ``EXPECTED_TRUST_ID`` in the kit file, and **exits if they differ**. A mis-copied kit file therefore cannot act
@@ -113,6 +119,10 @@ as another Trust.
    * - ``cohort_query``
      - Runs the project's cohort query and posts the aggregate statistics to the hub.
      - ``data-access-api`` ``POST /cohort``; hub ``POST /cohort/results``
+   * - ``persist_cohort``
+     - At approval, records the approved cohort's membership on this Trust (see
+       `Approved cohort membership`_). Queued before ``create_imaging``.
+     - ``data-access-api`` ``POST /cohort/snapshot``
    * - ``create_imaging``
      - Creates the project's XNAT project and starts retrieving its studies.
      - ``imaging-api`` ``POST /projects/create-project-from-central-hub-project``
@@ -120,7 +130,8 @@ as another Trust.
      - Removes the project's XNAT project.
      - ``imaging-api`` ``DELETE /projects/{id}``
    * - ``get_imaging_status``
-     - Reports how many studies are queued, imported and failed.
+     - Reports how many of the project's studies are queued, processing, imported and failed. The hub queues it
+       whenever the project page asks for the imaging status.
      - ``imaging-api`` ``GET /retrieval/import_status_count/{id}``
    * - ``reimport_studies``
      - Retries the studies the PACS did not deliver.
@@ -149,8 +160,8 @@ cycles in between reuse its last result.
 Imaging API
 ***********
 
-The ``imaging-api`` is the only FLIP service that talks to XNAT. Every route except ``/health`` requires the
-Trust-internal service key.
+The ``imaging-api`` is the only FLIP service that reads or changes anything in XNAT; ``trust-api`` only checks
+that XNAT is up. Every route except ``/health`` requires the Trust-internal service key.
 
 .. list-table::
    :header-rows: 1
@@ -179,9 +190,11 @@ Creating a project from the hub
 The ``create_imaging`` task runs these steps:
 
 1. Create the XNAT project and set its prearchive rules.
-2. If the project has DICOM-to-NIfTI conversion on, subscribe it to the XNAT event that converts each new DICOM
-   session to NIfTI.
-3. Create or add the hub project's members as XNAT users, emailing credentials to new ones.
+2. Subscribe the project to the XNAT event that converts new DICOM scans to NIfTI. The subscription is active
+   only when the project has DICOM-to-NIfTI conversion on, and it fires on new scans only; scans already archived
+   are converted with ``make -C trust reconvert-nifti`` (see :doc:`component-xnat`).
+3. Create or add the hub project's members as XNAT users. The hub then emails each new user a link to set
+   their XNAT password, and tells existing users they have been added.
 4. Start retrieval in the background. ``imaging-api`` asks ``data-access-api`` for the cohort's **accession
    numbers only** and hands them to XNAT, which retrieves the studies from the Trust's PACS. ``imaging-api``
    never talks DICOM to the PACS itself.
@@ -255,10 +268,13 @@ Disclosure threshold
 
 ``COHORT_QUERY_THRESHOLD`` (default 10), set in the kit file, is the Trust's own **disclosure floor**:
 
-- Aggregate statistics fold categories smaller than the threshold.
+- Aggregate statistics are suppressed when the cohort has fewer distinct patients than the threshold, and
+  smaller categories are folded into *Other*.
 - Both row-level endpoints refuse a cohort with fewer distinct patients than the threshold. They use one fixed
   message, so a below-threshold cohort looks the same as an empty one.
-- The hub can ask for a higher threshold but never a lower one.
+- The hub cannot change it. A Trust's optional **governance document** can raise it, never lower it, and can
+  also deny these routes for chosen projects; a denial looks the same as a below-threshold cohort. See the
+  :gh:`Trust README <trust/README.md#trust-governance-policy-optional>`.
 
 The threshold is checked at approval and again on every request. A cohort that shrinks below it stops being
 served, and raising it affects projects that are already approved.
@@ -267,12 +283,13 @@ Approved cohort membership
 --------------------------
 
 The row-level endpoints serve only the cohort **as it stood at project approval**. At approval, each Trust runs
-the approved query once and records which patients and studies it returned; it stores identifiers only, not
-their data. After that:
+the approved query once (the ``persist_cohort`` task) and records which patients and studies it returned; it
+stores identifiers only, not their data. Recording a cohort needs proof of the hub's AES key as well as the
+Trust-internal key, so FL training code, which has no AES key, cannot change it. After that:
 
 - ``/cohort/dataframe`` re-runs the approved query and keeps only the approved patients and studies.
 - ``/cohort/accession-ids`` serves the approved studies that are still in OMOP.
-- Both ignore any SQL the caller sends.
+- Both ignore any SQL the caller sends, and refuse a project with no recorded membership.
 
 So a cohort can **shrink but never grow**. A patient removed from OMOP, for example after an opt-out, drops out
 on the next request; no new patient or study can join. Only the membership is fixed, not the records: a new
@@ -282,18 +299,21 @@ per patient, so it acts on membership. The Trust keeps no copy of the records ou
 Query cache
 ===========
 
-Statistics results are cached in memory so that refining a query in the UI does not re-run earlier versions
-against OMOP each time. An entry lasts up to 60 days, the cache holds at most 64 entries, and results over
-50,000 rows are never cached. The schema that queries run against is on :doc:`component-omop-database`.
+Statistics queries are cached in memory, so that refining a query in the UI does not re-run earlier versions
+against OMOP each time. By default an entry lasts up to 60 days, the cache holds at most 64 entries, and results
+over 50,000 rows are never cached. The cache is per container and is lost on restart.
+
+The cache is never invalidated by changes in OMOP: re-running the same statistics query within 60 days can
+return the earlier result. The approval-time snapshot and the row-level endpoints always bypass it and read live
+OMOP. The schema that queries run against is on :doc:`component-omop-database`.
 
 *************
 Observability
 *************
 
 All three services write single-line JSON logs with a per-request id. Grafana Alloy collects them into Loki,
-and you view them in Grafana inside the Trust; see :doc:`component-logging-stack`. Each service's Swagger UI is
-enabled outside production and reachable only from the Trust host (or through SSM port forwarding for the
-AWS-hosted mock Trusts).
+and you view them in Grafana inside the Trust; see :doc:`component-logging-stack`. Each service's Swagger UI
+(``/docs``) is enabled only outside production.
 
 ***************
 Further reading

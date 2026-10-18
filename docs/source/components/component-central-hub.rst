@@ -4,7 +4,10 @@
 Central Hub
 ###########
 
-The Central Hub is the cloud-hosted half of FLIP. It runs:
+The Central Hub is the cloud-hosted half of FLIP. This page describes its services and how the Trusts and FL
+servers talk to it. It is for engineers deploying, operating or integrating with the hub.
+
+The hub runs:
 
 - the **web UI** that researchers and administrators use;
 - the **central API**, which owns projects, users, cohort queries and models;
@@ -42,28 +45,28 @@ A FastAPI application serving everything under ``/api``. Its route groups map on
    * - Prefix
      - Purpose
    * - ``/projects``
-     - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and study re-import.
+     - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and
+       the cohort each Trust froze at approval.
    * - ``/cohort``
      - Submit a cohort query to the project's Trusts and read back the aggregated results.
    * - ``/model``, ``/models``
      - Models under a project, their job types, metrics, logs and per-Trust status.
    * - ``/files``
-     - Model-file upload (presigned S3 POST), scan status, listing, download, and federated results download.
+     - Model-file upload (presigned POST), scan status, listing, download, and federated results download.
    * - ``/fl``
      - Training start and stop, net status, and the deployment-mode quiesce report.
    * - ``/users``, ``/roles``, ``/site``
-     - Users, access requests, MFA status and roles; site banner and details.
+     - Users, access requests, MFA status and roles; site banner and deployment mode.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
    * - ``/step``
      - Multi-step workflows the UI drives: approve a project and start imaging at its Trusts, submit a cohort
        query to them, register a user, and retrieve a model.
-   * - *(unprefixed)*
-     - The endpoints Trusts and FL servers call back on — see `Talking to the Trusts`_ and
-       `Callbacks from the FL server`_.
+   * - ``/tasks`` and callbacks
+     - The endpoints Trusts and FL servers call — see `Talking to the Trusts`_ and `Callbacks from the FL server`_.
 
-Interactive API docs (``/api/docs``) are available everywhere except production. The generated module reference
-is under :doc:`API reference </api-reference>`.
+``GET /api/health`` is unauthenticated and reports the hub's release. Interactive API docs (``/api/docs``) are
+served in local development only; staging and production turn them off.
 
 FL nets, hub side
 =================
@@ -105,8 +108,7 @@ When the ``flip-api`` container starts, it runs these steps in order and **stops
 than serve a half-ready hub:
 
 1. Wait for PostgreSQL to accept connections.
-2. Apply the database migrations shipped with the code. A release that expects a column the database does not
-   have refuses to start.
+2. Apply the database migrations shipped with the code. If a migration fails, the container exits.
 3. Seed the essential data: roles and permissions, the well-known users, the FL kit slot pool, the site banner
    and configuration, the FL nets (from ``NET_ENDPOINTS`` and ``FL_BACKEND``), and one scheduler entry per net.
 4. Start the API server, which also loads the browser CORS allowlist from the identity provider's registered
@@ -129,6 +131,9 @@ Background scheduler
      - 1
      - Assigns the oldest queued training job to a free net, bundles it and submits it (see
        :ref:`flip-fl-nets`). Skipped while deployment mode is on.
+   * - FL job watchdog
+     - 1
+     - Fails a running job whose FL server has ended or lost it without reporting a result, and frees its net.
    * - FL API keep-alive
      - 2
      - Polls each net's server status so the FL API's admin session does not time out.
@@ -163,19 +168,22 @@ The hub **never connects to a Trust**. Work for a Trust is queued as a task on t
      - Fetch up to 50 pending tasks for this Trust; each is marked ``IN_PROGRESS`` when handed out.
    * - ``POST /api/tasks/{task_id}/result``
      - Report a task's outcome, marking it ``COMPLETED`` or ``FAILED``. A successful ``create_imaging`` result
-       also makes the hub record the XNAT project and email credentials to its users.
+       also makes the hub record the XNAT project and email credentials to its users; a successful
+       ``persist_cohort`` result records the cohort the Trust froze at approval.
    * - ``POST /api/trust/heartbeat``
      - Sent on every poll, with the Trust's health snapshot when it has one.
    * - ``POST /api/cohort/results``
-     - A cohort query's aggregate statistics, saved per Trust and combined once every Trust has answered.
+     - A cohort query's aggregate statistics from one Trust. The hub saves them and recomputes the combined
+       statistics each time a Trust answers.
 
-The task types are ``cohort_query``, ``create_imaging``, ``delete_imaging``, ``get_imaging_status``,
-``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the shared AES key, on top of
-TLS.
+The task types are ``cohort_query``, ``persist_cohort``, ``create_imaging``, ``delete_imaging``,
+``get_imaging_status``, ``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the
+shared AES key, on top of TLS.
 
 Every call is authenticated with the Trust's **API key**, which the hub checks against its stored hashes. The key
 is the Trust's identity: the hub tells the Trust which Trust it thinks it is, and the Trust refuses to run if
-that does not match its kit file. The Trust side of this exchange is on :doc:`component-trust-apis`.
+that does not match the Trust its kit file expects. The Trust side of this exchange is on
+:doc:`component-trust-apis`.
 
 ****************************
 Callbacks from the FL server
@@ -199,12 +207,13 @@ Authentication and authorisation
 Users sign in through an **OIDC identity provider**, chosen by ``AUTH_BACKEND``:
 
 - **AWS Cognito** in staging and production (the only value production accepts);
-- **Keycloak** in local development.
+- **Keycloak** in local development (the only value development accepts).
 
 ``flip-api`` checks every access token's signature, expiry, issuer, token type and audience; ID tokens are
 rejected. It then confirms the user has TOTP (MFA) enrolled, so an administrator's MFA reset takes effect
-immediately. ``ENFORCE_MFA`` can switch this check off for local development only. User administration (invite,
-enable, disable, delete, MFA state) goes through the same provider.
+immediately. This check is on unless ``ENFORCE_MFA`` is set to ``false``, which local development does because its
+sign-in cannot complete a TOTP challenge. User administration (invite, enable, disable, delete, MFA state) goes
+through the same provider.
 
 Authorisation is **role-based**. A user's roles are tied to their identity-provider account, and per-resource
 checks decide who may see or change a project, model or cohort query. The role matrix is on :ref:`rbac-roles`.
@@ -236,9 +245,8 @@ Model files
 
 A researcher's upload **never passes through the hub**:
 
-1. ``flip-api`` checks the file extension and returns a presigned S3 upload limited to
-   ``MAX_MODEL_FILE_BYTES``.
-2. The browser uploads straight to a staging area in S3.
+1. ``flip-api`` checks the file extension and returns a presigned upload limited to ``MAX_MODEL_FILE_BYTES``.
+2. The browser uploads straight to a staging area in object storage.
 3. The hub scans the file, which shows as ``SCANNING`` meanwhile:
 
    - Pickle-based files get a structural scan. A dangerous file is deleted and marked ``INFECTED``. A scan that
@@ -268,9 +276,6 @@ sends them. The development Keycloak has no mail server, so a new user gets the 
 Further reading
 ***************
 
-- :gh:`flip-api/README.md` and
-  :gh:`flip-ui/README.md`
-- :gh:`deploy/providers/AWS/README.md`
-  — the Terraform, deploy and rollback runbook behind the deployment pages
+- :gh:`flip-api/README.md` and :gh:`flip-ui/README.md`
+- :gh:`deploy/providers/AWS/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
 - :ref:`deploy-central-hub` and :ref:`security`
-- Module reference: :doc:`API reference </api-reference>`

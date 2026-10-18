@@ -13,6 +13,9 @@ The chosen format is the `OHDSI <https://www.ohdsi.org/>`_
 FLIP instance is usually called the *OMOP Database* or just *OMOP*. Trusts receive resources for preparing their
 data for it during onboarding.
 
+This page is for Trust data engineers mapping their data into OMOP, researchers writing cohort queries, and FLIP
+developers running the mocked database.
+
 .. contents:: On this page
    :local:
    :depth: 2
@@ -307,14 +310,12 @@ them on every pod start, so an upgrade also narrows a role created by an older c
 .. note::
 
    On Kubernetes, the narrowing comes from the ``omop-db`` image. An image tag older than the fix leaves an
-   existing role's wider access in place, and logs a warning saying so. The upgrade path is in the chart
-   README (``trust/deploy/helm/README.md``). The query validator's ``omop``-schema pin applies either way.
+   existing role's wider access in place, and logs a warning saying so. The upgrade path is in the
+   :gh:`chart README <trust/deploy/helm/README.md>`. The query validator's ``omop``-schema pin applies either way.
 
-**Row-level results are gated on the Trust's** ``COHORT_QUERY_THRESHOLD`` (default 10). A cohort smaller than
-the threshold is refused with the same fixed message as an empty cohort, so the refusal discloses nothing. The
-threshold is checked on every call against the cohort as it stands in OMOP now: its patients are fixed at
-approval and can only shrink, while their records are read live. :doc:`/security` covers all the controls
-around the clinical data boundary.
+**Results are also gated on the Trust's disclosure threshold** (``COHORT_QUERY_THRESHOLD``, default 10), and a
+project's cohort membership is fixed at approval. Both are described on :doc:`component-trust-apis`;
+:doc:`/security` covers all the controls around the clinical data boundary.
 
 .. _omop-dev-instance:
 
@@ -335,7 +336,11 @@ published per-project tables:
 
 - A data version is a git tag on the dataset, pinned in ``trust/.data_version`` (one pin for OMOP and Orthanc).
 - The download is anonymous; no AWS credentials are needed.
-- Bringing a Trust up seeds it automatically, and later starts reuse the seeded volume.
+- Bringing a Trust up seeds it automatically, and later starts reuse the seeded volume. A change to the pinned
+  version re-seeds it.
+- By default only the chest X-ray project is seeded this way. The spleen and brain MRI projects regenerate their
+  DICOM locally, so they are seeded from ``fl-tutorials`` instead, for example with
+  ``make -C fl-tutorials seed-spleen KIT=GSTT``. See the :gh:`datasets README <fl-tutorials/datasets/README.md>`.
 
 To seed by hand:
 
@@ -348,7 +353,7 @@ Every row carries a ``source_trust`` column, and N Trusts are a deterministic sp
 
 .. seealso::
 
-   ``trust/omop-db/README.md`` for the partition modes.
+   The :gh:`omop-db README <trust/omop-db/README.md>` for the partition modes.
 
 .. _omop-synthea-ehr:
 
@@ -374,8 +379,8 @@ Run it once per Trust, with the stack up:
 .. tip::
 
    A Trust on Kubernetes publishes no host port. Port-forward ``svc/omop-db``, pass the connection as ``make``
-   variables, then restart its data-access-api. The recipe is in ``trust/deploy/helm/README.md``,
-   "Local clusters (kind)".
+   variables, then restart its data-access-api. The recipe is in the
+   :gh:`chart README <trust/deploy/helm/README.md>`, "OMOP core vocabulary".
 
 Seeding the vocabulary
 ======================
@@ -395,7 +400,8 @@ licensed, so each environment loads the bundle it is licensed to use into its ow
 
    To diagnose it, do not count ``omop.concept`` (it holds the DICOM vocabulary either way). The empty table is
    ``omop.concept_ancestor``. When a cohort comes back empty, the Data Access API checks it and logs an error
-   naming this cause and the command to fix it.
+   naming this cause and the command to fix it. After loading, restart the Trust's data-access-api: it caches
+   query results and would otherwise replay the empty answer.
 
    The spleen query still works on an unseeded stack: it filters on a concept id but never joins
    ``omop.concept``.
@@ -403,9 +409,10 @@ licensed, so each environment loads the bundle it is licensed to use into its ow
 ``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
 first, in one of two ways:
 
-- **AI Centre nodes** (FLIP developers with organisation AWS access): ``make -C trust/omop-db fetch-vocab-core``.
-  ``load-omop-vocab`` runs this for you; it skips the download if the directory exists, and fails without AWS
-  access if it does not.
+- **AI Centre nodes** (FLIP developers with organisation AWS access):
+  ``make -C trust/omop-db fetch-vocab-core VOCAB_S3_BUCKET=<bucket>``, naming a bucket your AWS profile can read
+  (there is no default). ``load-omop-vocab`` runs this for you when given the same variable; it skips the
+  download if the directory exists, and fails without the bucket and AWS access if it does not.
 - **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
   own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
 
@@ -414,4 +421,4 @@ its own.
 
 .. seealso::
 
-   ``trust/omop-db/README.md`` for the full vocabulary roster, versions and licensing.
+   The :gh:`omop-db README <trust/omop-db/README.md>` for the full vocabulary roster, versions and licensing.
