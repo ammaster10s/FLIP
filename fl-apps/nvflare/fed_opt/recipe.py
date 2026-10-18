@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Pin the hash seed before importing FLARE (via flip): export_job serialises some task lists via
+# Pin the hash seed before importing nvflare (via flip): export_job serialises some task lists via
 # sets, whose iteration order depends on PYTHONHASHSEED, so an unpinned seed yields spurious
 # task-order diffs on every regeneration. The seed must be set before interpreter start, so re-exec
 # once when it isn't already fixed.
