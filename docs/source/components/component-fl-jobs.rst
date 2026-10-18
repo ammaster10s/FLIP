@@ -85,29 +85,17 @@ with the job type's template files.
    From uploaded files to a submitted app. The job type decides which files you must supply; the
    server side always comes from the platform's template.
 
-The templates are under :gh:`fl-apps/ <fl-apps>`. The NVFLARE tutorials show them in use:
-
-- :gh:`xray_classification <fl-tutorials/nvflare/image_classification/xray_classification>` (``standard``)
-- :gh:`3d_spleen_segmentation <fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>` (``standard``)
-- :gh:`3d_spleen_segmentation_evaluation <fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>` (``evaluation``)
-- :gh:`latent_diffusion_model <fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>` (``diffusion_model``)
-- :gh:`ehr_risk_prediction <fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>` (``standard``)
-
-A job type describes the federated algorithm, not the data. The three ``standard`` tutorials differ in data,
-architecture and training settings, and the EHR one has no imaging at all: what to fetch is your script's
-decision (an imaging app calls ``flip.get_by_accession_number``, the EHR app only ``flip.get_dataframe``).
-
-The tutorials run on the local NVFLARE simulator from the repo root. The imaging ones need a GPU; the EHR one
-runs on CPU:
+The templates are under :gh:`fl-apps/ <fl-apps>`, and the worked tutorials under :gh:`fl-tutorials/ <fl-tutorials>`.
+To list the tutorials for each backend:
 
 .. code-block:: shell
 
-   make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+   make -C fl-tutorials list-tutorials                    # NVIDIA FLARE
+   make -C fl-tutorials list-tutorials FL_BACKEND=flower
 
-.. seealso::
-
-   The :gh:`fl-tutorials/ <fl-tutorials/nvflare>` README, and the Flower tutorials under
-   :gh:`fl-tutorials/flower/ <fl-tutorials/flower>`.
+A job type describes the federated algorithm, not the data: the same ``standard`` job type runs imaging and
+tabular apps alike. What to fetch is your script's decision (an imaging app calls ``flip.get_by_accession_number``,
+a tabular one only ``flip.get_dataframe``).
 
 Evaluation metrics
 ==================

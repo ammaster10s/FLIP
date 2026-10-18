@@ -134,32 +134,15 @@ Tutorials and templates per framework
 =====================================
 
 Each framework has its own app templates, one per job type, and its own worked tutorials. The same model often
-exists on both, so you can compare them side by side.
+exists on both, so you can compare them side by side. The templates are under :gh:`fl-apps/nvflare` and
+:gh:`fl-apps/flower`; to list the tutorials for each framework:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 35 35
+.. code-block:: shell
 
-   * - Job type
-     - NVIDIA FLARE tutorials
-     - Flower tutorials
-   * - ``standard``
-     - ``xray_classification``, ``3d_spleen_segmentation``, ``ehr_risk_prediction``, ``arkplus_fine_tuning``
-     - ``xray_classification``, ``3d_spleen_segmentation``, ``ehr_risk_prediction``, ``3d_prostate_segmentation``
-   * - ``evaluation``
-     - ``3d_spleen_segmentation_evaluation``, ``arkplus_baseline_classification_evaluation``,
-       ``arkplus_multimodel_classification_evaluation``
-     - ``3d_spleen_segmentation_evaluation``
-   * - ``diffusion_model``
-     - ``latent_diffusion_model``
-     - —
-   * - ``fed_opt``
-     - — (template only)
-     - —
+   make -C fl-tutorials list-tutorials                    # NVIDIA FLARE
+   make -C fl-tutorials list-tutorials FL_BACKEND=flower
 
-The tutorials live under :gh:`fl-tutorials/nvflare` and :gh:`fl-tutorials/flower`; the templates under
-:gh:`fl-apps/nvflare` and :gh:`fl-apps/flower`. :doc:`/paper/arkplus-fine-tuning` walks through the Ark+ fine-tuning
-tutorial on the platform.
+:doc:`/paper/arkplus-fine-tuning` walks through one tutorial end to end on the platform.
 
 
 Next steps
@@ -167,4 +150,4 @@ Next steps
 
 - :doc:`create-flip-app-from-flare` — adapt an NVIDIA FLARE Client API script to run on FLIP.
 - :doc:`create-flip-app-from-flower` — adapt a Flower app to run on FLIP.
-- :ref:`flip-fl-nets` — job types, required files and configuration keys for both frameworks.
+- :ref:`fl-jobs` — job types, required files and configuration keys for both frameworks.
