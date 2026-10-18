@@ -7,7 +7,7 @@ who acts, and what stays inside each trust. The step-by-step instructions for th
 :doc:`user-guides`.
 
 The same flow covers **evaluating** an existing model at each trust instead of training one: the last stage then runs
-a single round and returns metrics only. See `Evaluation jobs`_.
+a single round and returns metrics only (see `Training and results`_).
 
 .. list-table::
    :header-rows: 1
@@ -34,9 +34,6 @@ a single round and returns metrics only. See `Evaluation jobs`_.
    * - `Training and results`_
      - Automatic
      - A trained model and its metrics are ready to download.
-   * - `Evaluation jobs`_
-     - Researcher (optional)
-     - An existing model's metrics at each trust, from a single round.
 
 **How to read the diagrams.** Each diagram is a swimlane: one column per person or service, with time running
 downwards. The numbers on the arrows match the numbered steps in the text. Services on the left run in the Central
@@ -349,31 +346,7 @@ appear as charts on the model page while training runs.
 
    :ref:`training-metrics` and :ref:`view-results`.
 
-***************
-Evaluation jobs
-***************
+.. note::
 
-*Who: researcher*
-
-FLIP can also **evaluate** an existing model, for example to measure how well it performs on each trust's patients.
-This follows the same flow, with a single round and no training: each trust runs the model on its own data and
-returns metrics only.
-
-.. mermaid::
-   :caption: Evaluation job: one round, metrics only.
-
-   sequenceDiagram
-       autonumber
-       actor R as Researcher
-       box rgb(248, 234, 242) Central Hub
-           participant Hub as Hub API and UI
-           participant S as FL server
-       end
-       box rgb(234, 237, 242) Each approving trust
-           participant C as FL client
-       end
-       S->>C: Model to evaluate
-       C->>C: Evaluate on local data
-       C->>S: Metrics only
-       S->>Hub: Metrics per trust
-       Hub-->>R: Metrics on the model page, Download Results
+   **Evaluation jobs.** To evaluate an existing model rather than train one, the same flow runs a single round with
+   no training: each trust runs the model on its own data and returns metrics only (step 3 carries no model update).
