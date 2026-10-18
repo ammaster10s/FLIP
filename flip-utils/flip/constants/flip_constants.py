@@ -67,7 +67,7 @@ class ProdSettings(_Common):
     # Hub-local shared volume where the FL API stages a de-bundled evaluation
     # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
     # disk. Mirrors the Flower backend's /app/src shared mount: the checkpoint is
-    # never bundled into the NVFLARE app, so it is never deployed to clients. The
+    # never bundled into the FLARE app, so it is never deployed to clients. The
     # fl-server mounts this path; clients do not.
     SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
 
@@ -177,7 +177,7 @@ class FlipEvents:
     """Event names used in FLIP workflows.
 
     Note: This is a class with class attributes rather than an Enum
-    because NVFLARE events are string constants.
+    because FLARE events are string constants.
     """
 
     # Common events (all job types)
@@ -195,7 +195,7 @@ class FlipEvents:
 class FlipProps:
     """fl_ctx property names FLIP components use to share round telemetry.
 
-    Set (sticky, so they survive across NVFLARE contexts) by the FLIP
+    Set (sticky, so they survive across FLARE contexts) by the FLIP
     ScatterAndGather controller as client results are accepted; read by
     ServerEventHandler when relaying ROUND_DONE to the hub as a
     ROUND_AGGREGATED event.

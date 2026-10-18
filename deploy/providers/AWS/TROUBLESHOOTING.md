@@ -110,11 +110,11 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ### 1.7 ECS-internal call from fl-api → fl-server hangs in `try_connect`
 
-**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its NVFLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
+**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
 
-**Root cause**: fl-api is the NVFLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
+**Root cause**: fl-api is the FLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
 
-**Fix**: `ecs_sg.tf` now opens fl-server SG ingress on 8002 from the fl-api SG. If you add another in-VPC NVFLARE admin consumer, add its SG to the same ingress rule.
+**Fix**: `ecs_sg.tf` now opens fl-server SG ingress on 8002 from the fl-api SG. If you add another in-VPC FLARE admin consumer, add its SG to the same ingress rule.
 
 ---
 

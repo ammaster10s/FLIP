@@ -27,7 +27,7 @@ two backends differ:
    :widths: 28 36 36
 
    * - Control
-     - NVFLARE
+     - FLARE
      - Flower
    * - **App filter**
      - Percentile sparsification and clipping, no noise. On in every training template.
@@ -45,10 +45,10 @@ two backends differ:
 Privacy filters on shared model updates
 ***************************************
 
-NVFLARE: percentile sparsification
+FLARE: percentile sparsification
 ==================================
 
-The NVFLARE training job types (``standard``, ``fed_opt``, ``diffusion_model``) pass each client's training
+The FLARE training job types (``standard``, ``fed_opt``, ``diffusion_model``) pass each client's training
 result through a percentile privacy filter before it leaves the site (``PercentilePrivacy``, after Shokri &
 Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 
@@ -56,12 +56,12 @@ Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
   ``100 - percentile`` % of each update is shared;
 - truncates the remaining components to ``±gamma``.
 
-The templates use the NVFLARE defaults, ``percentile=10`` and ``gamma=0.01`` (share the top 90 %, clip at 0.01).
+The templates use the FLARE defaults, ``percentile=10`` and ``gamma=0.01`` (share the top 90 %, clip at 0.01).
 The ``diffusion_model`` job type computes the cutoff separately for each training stage. The ``evaluation``
 templates have no filter: they send metrics, not weights.
 
 The filter is set in the template's ``config_fed_client.json``, which an upload cannot replace, so every FLIP run
-uses these values. In your own NVFLARE runs (the simulator, or a job exported with
+uses these values. In your own FLARE runs (the simulator, or a job exported with
 ``FlipFedAvgRecipe(percentile_privacy=...)``) you can tune both, or switch the filter off with ``off: true``.
 
 .. warning::
@@ -121,7 +121,7 @@ The parameters live in ``[tool.flwr.app.config]`` and can be overridden per run 
 
 Also worth knowing:
 
-- **It applies to training rounds only**, not evaluation, matching the NVFLARE filter's scope.
+- **It applies to training rounds only**, not evaluation, matching the FLARE filter's scope.
 - **Integer buffers pass through unprivatised.** Counters such as BatchNorm's ``num_batches_tracked`` are step
   counts, not learned parameters.
 
@@ -135,8 +135,8 @@ Also worth knowing:
 Site-enforced privacy policy (per trust)
 ****************************************
 
-The filters above belong to the **app**. On NVFLARE, a Trust can also enforce **its own** update-privacy filter
-through NVFLARE's site privacy policy, configured entirely on the Trust's side. Different Trusts can run
+The filters above belong to the **app**. On FLARE, a Trust can also enforce **its own** update-privacy filter
+through FLARE's site privacy policy, configured entirely on the Trust's side. Different Trusts can run
 different policies in the same federation, with no hub redeploy.
 
 **To enable it** (*Who: Trust operator*):
@@ -173,9 +173,9 @@ different policies in the same federation, with no hub redeploy.
    An **invalid** setting, including a misspelled ``FL_SITE_PRIVACY_*`` name, stops the FL client at start-up
    rather than letting it run unfiltered.
 
-How the site policy behaves (verified against NVFLARE 2.9.0):
+How the site policy behaves (verified against FLARE 2.9.0):
 
-- **The job cannot bypass it.** NVFLARE runs site filters *before* the job's own filters, in one chain, and the
+- **The job cannot bypass it.** FLARE runs site filters *before* the job's own filters, in one chain, and the
   site filter has no ``off`` switch. It also covers jobs whose app has no filter of its own.
 - **Jobs cannot choose a weaker scope.** The policy defines a single default scope, and FLIP refuses any job whose
   ``meta.json`` sets a ``scope``.
@@ -185,7 +185,7 @@ How the site policy behaves (verified against NVFLARE 2.9.0):
 - **Evaluation results are unaffected.** The filter changes only weight payloads; metrics pass through.
 - **Failures are loud.** A filter error appears as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the client's
   audit trail. Nothing is ever sent unfiltered.
-- **NVFLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
+- **FLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
   the control.
 
 *************************************
@@ -214,7 +214,7 @@ one, the kit settings are the only controls. ``trust/governance.example.toml`` i
        on a Flower Trust rather than report it as active.
 
 The FL client never sees the whole document, because researcher code runs inside the client and could read every
-access rule. On NVFLARE, a one-shot init step hands the client its ``[fl_privacy]`` section only. If the document
+access rule. On FLARE, a one-shot init step hands the client its ``[fl_privacy]`` section only. If the document
 is invalid, that step fails and the client does not start.
 
 **To apply an edit to a live Trust** (*Who: Trust operator*):
@@ -222,7 +222,7 @@ is invalid, that step fails and the client does not start.
 .. code-block:: shell
 
    make -C trust check-governance KIT=<CODE>    # validate the document
-   make -C trust reload-governance KIT=<CODE>   # recreate data-access-api (and the NVFLARE clients) only
+   make -C trust reload-governance KIT=<CODE>   # recreate data-access-api (and the FLARE clients) only
 
 ``reload-governance`` touches no data. Recreating the FL clients does interrupt any job they are running, so apply
 it between runs.

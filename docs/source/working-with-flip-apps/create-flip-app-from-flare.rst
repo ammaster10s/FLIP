@@ -20,18 +20,18 @@ Create a FLIP app from a FLARE app
    and cover the same FLIP touchpoints, so you can compare the two backends section by section.
 
 This page shows how to adapt a stock NVIDIA FLARE **Client API** training script so that it runs on FLIP — for
-example, one copied from the `NVFLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or
-the FLIP app hub. Every NVFLARE job type on FLIP runs your client code through the Client API (``nvflare.client``): a
+example, one copied from the `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or
+the FLIP app hub. Every FLARE job type on FLIP runs your client code through the Client API (``nvflare.client``): a
 plain Python script that runs on each Trust.
 
 The FLIP touchpoints your script needs are:
 
 - ``flip.get_dataframe(...)`` to retrieve the project's cohort DataFrame
 - ``flip.get_by_accession_number(...)`` to pull the imaging for each accession
-- ``SummaryWriter.add_scalar(...)`` (NVFLARE's own tracking API) to publish per-epoch metrics to the model page
+- ``SummaryWriter.add_scalar(...)`` (FLARE's own tracking API) to publish per-epoch metrics to the model page
 - the ``FLModel`` contract: what the trainer receives and returns each round
 
-You do **not** call ``flip.update_status(...)``. On NVFLARE, FLIP owns the server side and reports the model
+You do **not** call ``flip.update_status(...)``. On FLARE, FLIP owns the server side and reports the model
 lifecycle for you (see :ref:`flare-server-side`).
 
 .. seealso::
@@ -74,7 +74,7 @@ lifecycle for you (see :ref:`flare-server-side`).
      - ``flip_local_dp_mod`` registered by the uploaded ``client_app.py``
      - Wired by the template (nothing to do)
    * - Local run
-     - ``make run-tutorial`` (simulator), as on NVFLARE
+     - ``make run-tutorial`` (simulator), as on FLARE
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
 *****************
@@ -128,7 +128,7 @@ template and your uploaded files; an uploaded ``job.py`` is ignored.
 The server side is FLIP's (nothing to do)
 *****************************************
 
-On NVFLARE, FLIP owns the entire server side. The ``standard`` template runs four stages in order — initialise
+On FLARE, FLIP owns the entire server side. The ``standard`` template runs four stages in order — initialise
 training, federated-averaging rounds, evaluation of the final global model, post-run cleanup — and talks to the
 Central Hub for you. What matters to you as an app author:
 
@@ -360,7 +360,7 @@ results zip. The tutorials use the key ``val_acc``; any numeric key is accepted.
 trainer.py: sending per-epoch metrics
 *****************************************
 
-Publish per-epoch, per-site metrics with NVFLARE's own tracking API, ``SummaryWriter.add_scalar`` (``flare.log``
+Publish per-epoch, per-site metrics with FLARE's own tracking API, ``SummaryWriter.add_scalar`` (``flare.log``
 works too). The FLIP template forwards them from the Trust to the FL server, and the server sends them to the
 Central Hub. They populate the graphs on the model page (see :ref:`training-metrics`).
 
@@ -474,7 +474,7 @@ should share an identical ``models.py``.
 config.json: job type and run settings
 *****************************************
 
-``config.json`` is required for every job type on both backends. On NVFLARE it carries the platform's training
+``config.json`` is required for every job type on both backends. On FLARE it carries the platform's training
 settings **and** anything your own code reads:
 
 .. code-block:: json
@@ -579,7 +579,7 @@ Local testing before upload
 ************************************
 
 The tutorials describe the job in Python with ``FlipFedAvgRecipe`` — the same class the platform's ``standard``
-template is generated from — and run it with NVFLARE's ``Recipe.execute``. A minimal ``job.py``, abridged from
+template is generated from — and run it with FLARE's ``Recipe.execute``. A minimal ``job.py``, abridged from
 ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/job.py``:
 
 .. code-block:: python
@@ -636,7 +636,7 @@ template is generated from — and run it with NVFLARE's ``Recipe.execute``. A m
 
 The same script gives you two modes.
 
-**Export (no GPU, no data).** Writes the complete NVFLARE job — ``meta.json``, ``app/config/`` and ``app/custom/``
+**Export (no GPU, no data).** Writes the complete FLARE job — ``meta.json``, ``app/config/`` and ``app/custom/``
 with your files — under ``./fl_job/flip_fedavg/``, so you can inspect exactly what the platform will run:
 
 .. code-block:: shell
@@ -645,7 +645,7 @@ with your files — under ``./fl_job/flip_fedavg/``, so you can inspect exactly 
    uv run --project ../../../../flip-utils --extra full \
        python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 
-**Simulation (GPU and data).** Runs the job in the NVFLARE simulator against local data. In ``LOCAL_DEV`` mode (the
+**Simulation (GPU and data).** Runs the job in the FLARE simulator against local data. In ``LOCAL_DEV`` mode (the
 default outside the platform), ``get_dataframe`` reads a CSV and ``get_by_accession_number`` reads a directory, both
 named in the app's ``.env.app``:
 
@@ -679,7 +679,7 @@ named in the app's ``.env.app``:
 
 .. note::
 
-   Unlike Flower, the standalone NVFLARE stack under ``fl-services/nvflare`` cannot submit a single app over HTTP.
+   Unlike Flower, the standalone FLARE stack under ``fl-services/nvflare`` cannot submit a single app over HTTP.
    Use the simulator, or the full platform path: upload through the FLIP UI, or run ``make e2e_smoke``.
 
 .. seealso::
@@ -692,7 +692,7 @@ named in the app's ``.env.app``:
 Other job types
 ************************************
 
-The walkthrough above is for ``standard`` (federated averaging). The other NVFLARE job types keep the same Client
+The walkthrough above is for ``standard`` (federated averaging). The other FLARE job types keep the same Client
 API shape and change only what the script returns:
 
 - ``fed_opt`` — same client contract as ``standard`` (a ``DIFF`` per round); only the server-side optimiser
@@ -729,7 +729,7 @@ Common pitfalls
 - **Missing** ``ResourceType`` **or labels.** If a Trust lacks the requested resource type for an accession,
   ``get_by_accession_number`` raises — skip that accession. If *no* accession yields a sample, raise an error that
   points at the data-enrichment step rather than letting the DataLoader fail on ``num_samples=0``.
-- **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are
+- **Uploading FLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are
   ignored on the platform; the template's copies are used. Only the files in ``app_files/`` matter. The exception is
-  ``meta.json``: an uploaded one declares the job's resources, and one carrying anything beyond what :ref:`NVFLARE meta.json <fl-nvflare-meta-json>` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at
+  ``meta.json``: an uploaded one declares the job's resources, and one carrying anything beyond what :ref:`FLARE meta.json <fl-nvflare-meta-json>` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at
   Initiate Training.

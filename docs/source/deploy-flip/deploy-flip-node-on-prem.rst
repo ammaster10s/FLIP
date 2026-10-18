@@ -159,7 +159,7 @@ the admin manages them.
      - Number of GPUs for FL jobs; ``0`` on a CPU-only host.
      - If needed
    * - ``FL_SITE_PRIVACY_POLICY`` and its parameters
-     - Your site's own privacy filter on FL updates (NVFLARE only). See :ref:`onprem-site-privacy-policy`.
+     - Your site's own privacy filter on FL updates (FLARE only). See :ref:`onprem-site-privacy-policy`.
      - Optional
 
 .. note::

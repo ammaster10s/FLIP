@@ -126,7 +126,7 @@ bundled with the app and sent to the participating Trusts, with two exceptions:
    built, and that fails in two ways:
 
    - **It does not work where the app runs.** The FL server on a platform-managed estate and a Trust's training host
-     behind an NHS firewall have no internet route. The download hangs and the run dies: on NVFLARE the Trust reports
+     behind an NHS firewall have no internet route. The download hangs and the run dies: on FLARE the Trust reports
      ``cannot sync with server Runner``; on Flower the run never starts a round.
    - **It bypasses the checks.** Uploaded files are checked once and then sent exactly as uploaded, so a Trust can
      inspect what will run. A URL fetched later can serve different bytes, and loading a swapped ``.pt`` checkpoint runs
@@ -217,14 +217,14 @@ backend:
 
    * - Backend
      - Configuration
-   * - NVFLARE
-     - ``config.json``, required for every NVFLARE job type. Besides ``job_type``, it can set platform keys such as
+   * - FLARE
+     - ``config.json``, required for every FLARE job type. Besides ``job_type``, it can set platform keys such as
        ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``. Keys the platform does not recognise are passed through unchanged for
        your code to read, which is how the tutorials set things like learning rate or validation split.
    * - Flower
      - ``config.json`` is read only for ``job_type``. The run configuration comes from the platform's app template,
        and your app can override it with a ``config.toml`` file. ``config.toml`` may only override keys the template
-       already declares: an undeclared key fails the run at submission. Flower apps do not use the NVFLARE keys.
+       already declares: an undeclared key fails the run at submission. Flower apps do not use the FLARE keys.
 
 Every platform key has a default, so an app that sets only ``job_type`` still runs.
 

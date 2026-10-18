@@ -57,7 +57,7 @@ What gets deployed
      - OMOP database queries (plus a small approved-cohort store)
      - Yes
    * - ``flClient``
-     - FL participant (NVFLARE or Flower)
+     - FL participant (FLARE or Flower)
      - No
    * - ``omopDb``
      - OMOP PostgreSQL database
@@ -218,7 +218,7 @@ the FL client starts.
 
    make -C trust/deploy/helm stage-kit KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
 
-- ``KIT_SRC`` is the slot's own kit: for NVFLARE the folder holding ``local/``, ``startup/`` and ``transfer/``; for
+- ``KIT_SRC`` is the slot's own kit: for FLARE the folder holding ``local/``, ``startup/`` and ``transfer/``; for
   Flower ``certificates/`` and ``keys/`` with this slot's credential only. The target reads the backend from that
   shape and refuses a folder with neither shape or both (``FL_BACKEND=nvflare|flower`` overrides).
 - ``KUBE_CONTEXT`` is required, so the kit never lands in whichever cluster ``kubectl`` happens to point at.
@@ -229,7 +229,7 @@ the FL client starts.
 
    ``stage-kit`` copies into the node with ``docker cp``, which works for a **kind** cluster only. On any other
    cluster, place the kit on the node by whatever means your site allows, at the path in the kit's ``FL_KIT_DIR``
-   (default ``/opt/flip/fl-kit``), readable by uid 1000 (NVFLARE) or 49999 (Flower).
+   (default ``/opt/flip/fl-kit``), readable by uid 1000 (FLARE) or 49999 (Flower).
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.

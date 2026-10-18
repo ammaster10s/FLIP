@@ -105,7 +105,7 @@ On the platform, the app gets the cohort from ``flip.get_dataframe(project_id, q
 Local testing (simulator)
 *************************
 
-Test the app locally before deploying it. NVFLARE's simulator runs both clients on one GPU, which is enough to
+Test the app locally before deploying it. FLARE's simulator runs both clients on one GPU, which is enough to
 smoke-test code changes and try hyperparameters.
 
 From the repository root:
@@ -283,7 +283,7 @@ Adapting this guide for your model
    trainable parameter names (Ark+ uses ``omni_heads``). The backbone is then sent once and left out of every later
    round — the single biggest saving for large models.
 
-#. **Test locally first.** Run ``make -C fl-tutorials run-tutorial``, or NVFLARE's ``SimulatorRunner`` from your own
+#. **Test locally first.** Run ``make -C fl-tutorials run-tutorial``, or FLARE's ``SimulatorRunner`` from your own
    script, to catch configuration and shape errors before they cost a platform run.
 
 #. **Upload, train, iterate.** You can upload new versions of your files and re-train in the same project without

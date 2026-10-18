@@ -84,10 +84,10 @@ the two tutorials above add a matching ``ClientApp``.
 .. note::
 
    For a Flower app, ``config.json`` carries only ``job_type`` (``{"job_type": "standard"}``), which FLIP uses to
-   pick the base template. Run configuration goes in ``config.toml`` — unlike NVFLARE, where ``config.json`` carries
+   pick the base template. Run configuration goes in ``config.toml`` — unlike FLARE, where ``config.json`` carries
    the training settings.
 
-   NVFLARE's ``meta.json`` GPU request has no Flower counterpart: Flower does not schedule jobs by GPU. A GPU request
+   FLARE's ``meta.json`` GPU request has no Flower counterpart: Flower does not schedule jobs by GPU. A GPU request
    made when you initiate training is recorded in the model's activity feed but not enforced, and each SuperNode uses
    whatever GPUs its host provides.
 
@@ -393,7 +393,7 @@ returns a ``pathlib.Path`` to a local directory containing ``input_*.nii.gz`` fi
 ClientApp: privatising the update before it leaves
 ***************************************************
 
-On NVFLARE, FLIP's template applies a privacy filter to every training result, and the app author does nothing. On
+On FLARE, FLIP's template applies a privacy filter to every training result, and the app author does nothing. On
 Flower the ``ClientApp`` is your uploaded file, so the template cannot add the filter. Register FLIP's
 differential-privacy mod on your training handler:
 
@@ -504,7 +504,7 @@ They populate the graphs on the model page (see :ref:`training-metrics`).
    - A key with neither suffix is plotted at its FL global round, on an axis titled "Global Rounds".
    - Each ``(label, x_label)`` pair is a separate plot, so one metric logged under two x-labels appears as two plots.
 
-   NVFLARE ``SummaryWriter`` tags use the same grammar, with ``global_step`` in place of ``.x_<V>``.
+   FLARE ``SummaryWriter`` tags use the same grammar, with ``global_step`` in place of ``.x_<V>``.
 
 .. _flower-config-toml:
 
@@ -544,8 +544,8 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    clientapp = "app.client_app:app"
 
    [tool.flwr.app.config]
-   num-server-rounds = 3   # equivalent to NVFLARE's GLOBAL_ROUNDS
-   local-epochs = 1        # equivalent to NVFLARE's LOCAL_ROUNDS
+   num-server-rounds = 3   # equivalent to FLARE's GLOBAL_ROUNDS
+   local-epochs = 1        # equivalent to FLARE's LOCAL_ROUNDS
    learning-rate = 1e-4
    batch-size = 2
    # Client-side DP knobs read by flip_local_dp_mod
@@ -613,7 +613,7 @@ whenever that metric improves, and records ``best_model``, ``best_round`` and ``
 - The key must be one the clients actually report. Otherwise the run completes with no best model, logging a warning
   each round rather than failing.
 
-This is the Flower equivalent of ``BEST_MODEL_METRIC`` in an NVFLARE ``config.json``.
+This is the Flower equivalent of ``BEST_MODEL_METRIC`` in an FLARE ``config.json``.
 
 ************************************
 Submitting the app to FLIP
@@ -643,7 +643,7 @@ In ``LOCAL_DEV`` mode (the default outside the platform), ``get_dataframe`` read
 ``DEV_DATAFRAME`` and ``get_by_accession_number`` reads the directory named by ``DEV_IMAGES_DIR``. Both local paths
 point these at the tutorial's dataset under ``fl-tutorials/data/``.
 
-**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, as on NVFLARE)
+**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, as on FLARE)
 runs ``flwr run`` against a local SuperLink that flwr starts itself — no containers, no FL API, no Docker — so a
 code change is one re-run away:
 
@@ -667,7 +667,7 @@ serves only its own rows.
 
 **Full-fidelity checks: the end-to-end smoke test, or the Flower containers.** The simulator cannot exercise the FL
 images, the FL API submit path or SuperNode registration. The end-to-end smoke tests cover those, against the
-running dev stack, as for NVFLARE:
+running dev stack, as for FLARE:
 
 .. code-block:: shell
 

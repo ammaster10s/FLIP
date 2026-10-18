@@ -39,7 +39,7 @@ The experiment runs the **identical** app (:ref:`Ark+ fine-tuning <arkplus-fine-
 Where          FLIP production, cross-continental (UK + Thailand)  Single machine, NVIDIA RTX 5090, both clients on one GPU
 Rounds         50 global rounds × 5 local epochs                   50 global rounds × 5 local epochs
 Round payload  Head-only after round 0 (~27 KB)                    Head-only after round 0 (~27 KB)
-Source         CloudWatch logs from the production FL server       NVFLARE simulator server log
+Source         CloudWatch logs from the production FL server       FLARE simulator server log
 =============  ==================================================  ========================================================
 
 Three metrics isolate the platform's own cost from site compute and network transfer:
@@ -247,7 +247,7 @@ Adapting for your own model
 The same workflow works for any FLIP run:
 
 #. **Run your model on FLIP** through the UI as usual.
-#. **Run the same model in the local simulator**, using the tutorial harness or NVFLARE's ``SimulatorRunner``, with the
+#. **Run the same model in the local simulator**, using the tutorial harness or FLARE's ``SimulatorRunner``, with the
    same round count as the deployed ``config.json``.
 #. **Extract the platform metrics** with ``extract_platform_round_timings.sh '<your-model-url>'``.
 #. **Compare** with ``make round-metrics COMPARE=/path/to/platform/rounds.tsv``.

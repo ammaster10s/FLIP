@@ -21,7 +21,7 @@ site pins that tag in its kit and moves between releases with one command.
 
 Two rules apply throughout:
 
-- **A site runs the release its hub runs.** The hub and its sites must agree on the FL framework version (an NVFLARE
+- **A site runs the release its hub runs.** The hub and its sites must agree on the FL framework version (an FLARE
   2.9 client cannot join a 2.8 server), the payload encryption and the task contract. The upgrade therefore defaults
   to the release the hub reports, and stops if the hub cannot say. It tells you when a newer release exists, but
   offers it only once the hub runs it.

@@ -10,7 +10,7 @@
 | `source/user-guides.rst` | User-facing workflows and guides |
 | `source/api-reference.rst` | Auto-generated Python reference for `flip-utils` only (sphinx-autoapi; the hub and trust services are applications, not libraries); the REST endpoint table lives in `source/components/component-central-hub.rst` |
 | `source/deploy-flip.rst` | Deployment instructions (central hub — a parent page with one child per AWS deployment mode — TRE, on-prem) |
-| `source/working-with-flip-apps.rst` | Building FL apps (NVFLARE / Flower) |
+| `source/working-with-flip-apps.rst` | Building FL apps (FLARE / Flower) |
 | `source/flip-workflow.rst` | End-to-end FLIP workflow |
 | `source/faqs.rst` | Frequently asked questions |
 | `source/glossary.rst` | Terminology definitions |

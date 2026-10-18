@@ -11,7 +11,7 @@
 
 """Client-API evaluator for the Ark+ baseline chest X-ray evaluation tutorial.
 
-This is the NVFLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
+This is the FLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
 (``CrossSiteModelEval`` + ``EvaluationModelLocator``, wired by ``FlipEvalRecipe``) loads the single
 uploaded Ark+ checkpoint and broadcasts it to every client as one ``FLModel``; this script implements the
 canonical ``is_evaluate()`` loop — receive the global model, score it on the local cohort, and send back
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config (top-level ``query`` key).
 
-    NVFlare's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can contain
+    FLARE's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can contain
     spaces) is plumbed via ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator
     mode this is ignored — data comes from the local SITE/DEV paths.
     """

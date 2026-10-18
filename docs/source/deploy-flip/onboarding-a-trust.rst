@@ -268,7 +268,7 @@ The trust is now onboarded. The sections below are for later.
 .. _onprem-site-privacy-policy:
 
 **********************************************
-Optional — set a site privacy policy (NVFLARE)
+Optional — set a site privacy policy (FLARE)
 **********************************************
 
 *Who: trust operator*

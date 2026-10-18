@@ -363,7 +363,7 @@ A trust's **kit file**, ``trust/.env.<CODE>.<suffix>``, is its identity and its 
       make generate-xnat-credentials KIT=<CODE> PROD=<env>
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
-maps onto the matching NVFLARE participant kit or Flower SuperNode key.
+maps onto the matching FLARE participant kit or Flower SuperNode key.
 
 **Registration is idempotent.** Running it again for a trust that is already registered issues no new credentials,
 because the hub keeps only hashes of them; it logs *already registered* and refreshes the hub-shared settings.
@@ -397,7 +397,7 @@ Running out of FL kit slots
 ===========================
 
 Registration fails with ``NoFreeKitSlotError`` ("No FL kit slots available…") when the hub has no claimable FL kit
-slot left. One command adds more (NVFLARE only):
+slot left. One command adds more (FLARE only):
 
 .. code-block:: shell
 
@@ -406,7 +406,7 @@ slot left. One command adds more (NVFLARE only):
 ``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
 activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
 certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
-the NVFLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
 
 It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
 and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
@@ -470,7 +470,7 @@ rolled away from so a later Terraform apply cannot bring it back.
 
 - **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui PROD=<env>`` from the matching commit if
   it must.
-- **On an NVFLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
+- **On an FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
   minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
 
 .. warning::
@@ -550,7 +550,7 @@ FL image compatibility on upgrade
 **********************************
 
 The hub now **requires** FL clients to identify themselves when they report training metrics and logs. FL images built
-before this change do not, so the hub and the FL images (``flare-fl-base`` for NVFLARE, ``flower-fl-base`` for Flower)
+before this change do not, so the hub and the FL images (``flare-fl-base`` for FLARE, ``flower-fl-base`` for Flower)
 must be upgraded together.
 
 .. warning::

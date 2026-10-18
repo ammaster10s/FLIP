@@ -38,7 +38,7 @@ training loop, model architecture); for the server side, you choose a **job type
 
    * - Job type
      - What the server does
-     - NVFLARE
+     - FLARE
      - Flower
    * - ``standard``
      - Federated averaging.
@@ -57,7 +57,7 @@ training loop, model architecture); for the server side, you choose a **job type
      - Yes
      - No
 
-Every NVFLARE job type runs your code through the **NVFLARE Client API**: a plain training or evaluation script
+Every FLARE job type runs your code through the **FLARE Client API**: a plain training or evaluation script
 that uses ``nvflare.client``. Every Flower job type runs your ``client_app.py``.
 
 How to choose a job type
@@ -101,10 +101,10 @@ Evaluation metrics
 ==================
 
 On both backends the FL server sends each Trust's returned metrics to the hub, so they appear on the model page
-as one point per Trust (at round 0 on NVFLARE, round 1 on Flower). Aggregate metrics are forwarded with
+as one point per Trust (at round 0 on FLARE, round 1 on Flower). Aggregate metrics are forwarded with
 upper-cased names, leaving out undefined values such as NaN.
 
-- **NVFLARE**: evaluation code needs nothing extra, and nested metric keys are joined with ``/``. An evaluator can
+- **FLARE**: evaluation code needs nothing extra, and nested metric keys are joined with ``/``. An evaluator can
   also keep results out of the plots and in the results file only; see the evaluation template's README.
 - **Flower**: the client must name itself with ``client_name`` (or ``site``) in its reply config.
 
@@ -120,7 +120,7 @@ files it requires. The FLIP UI shows the same list on the model page.
 
 .. literalinclude:: ../../../fl-apps/nvflare/required_files.json
    :language: json
-   :caption: ``fl-apps/nvflare/required_files.json`` — required files per NVFLARE job type
+   :caption: ``fl-apps/nvflare/required_files.json`` — required files per FLARE job type
 
 .. literalinclude:: ../../../fl-apps/flower/required_files.json
    :language: json
@@ -128,7 +128,7 @@ files it requires. The FLIP UI shows the same list on the model page.
 
 .. note::
 
-   Every job type lists ``config.json``, because its ``job_type`` key selects the job type. On NVFLARE it also
+   Every job type lists ``config.json``, because its ``job_type`` key selects the job type. On FLARE it also
    holds the training configuration below. On Flower it holds nothing else: Flower apps take their run
    configuration from ``config.toml``.
 
@@ -143,7 +143,7 @@ bundled too, which is how apps ship helper modules and transforms, with these ex
   ``strategy.py`` and ``__init__.py`` (the Flower tutorials ship all three in their app directories).
 - **A Flower** ``pyproject.toml`` **always comes from the template.** One you upload is bundled but never used as
   the app's project file. Put per-run overrides in ``config.toml`` instead (see `Flower run configuration`_).
-- **On NVFLARE, a checkpoint declared for server-side use is not sent to the Trusts.** A file named by
+- **On FLARE, a checkpoint declared for server-side use is not sent to the Trusts.** A file named by
   ``SERVER_CHECKPOINT``, or by an evaluation job's ``models`` entries, is staged on the FL server instead. This
   keeps large weights off the client deployment path.
 
@@ -155,10 +155,10 @@ To see what a fully bundled app looks like, browse the per-job-type templates un
 Training configuration
 **********************
 
-NVFLARE ``config.json``
+FLARE ``config.json``
 =======================
 
-For NVFLARE job types, ``config.json`` holds the job type and the training settings the platform recognises.
+For FLARE job types, ``config.json`` holds the job type and the training settings the platform recognises.
 Every setting has a default, so an app that declares only ``job_type`` is valid.
 
 .. code-block:: json
@@ -233,7 +233,7 @@ Every setting has a default, so an app that declares only ``job_type`` is valid.
    Neither key is rewritten in the deployed ``config.json``, so code that reads ``GLOBAL_ROUNDS`` from that file
    sees what you wrote, not what the server uses.
 
-Some further keys are used by FLIP's NVFLARE components but are **not validated**:
+Some further keys are used by FLIP's FLARE components but are **not validated**:
 
 - ``SERVER_CHECKPOINT``: a model file (string, or list of strings) to stage on the FL server instead of bundling
   it into the app.
@@ -248,26 +248,26 @@ replacing any value you set.
 
 .. _fl-nvflare-meta-json:
 
-NVFLARE ``meta.json``
+FLARE ``meta.json``
 =====================
 
-An NVFLARE job's ``meta.json`` states what the job needs at each site. Upload a ``meta.json`` with your model files
+An FLARE job's ``meta.json`` states what the job needs at each site. Upload a ``meta.json`` with your model files
 and it replaces the template's. Write it by hand, or export it from a recipe or ``FedJob`` (``export_job``), as you
 would for ``nvflare job submit``. FLIP keeps two keys and writes the rest from the run:
 
 **resource_spec**
-   What the job needs at every participating Trust, as NVFLARE's portable ``@default`` block:
+   What the job needs at every participating Trust, as FLARE's portable ``@default`` block:
 
    .. code-block:: json
 
       {"resource_spec": {"@default": {"num_of_gpus": 1}}}
 
    - ``num_of_gpus`` is a whole number from 0 to 8. The FL server holds the job until every Trust can provide the
-     GPUs (see "GPU requirements and NVFLARE's scheduler" on :doc:`component-fl-nets`).
+     GPUs (see "GPU requirements and FLARE's scheduler" on :doc:`component-fl-nets`).
    - ``num_of_cpus`` (a whole number, at least 1) and ``memory`` (such as ``"32Gi"``) are accepted too. Only
-     NVFLARE's container job launchers (Docker, Kubernetes) use them.
+     FLARE's container job launchers (Docker, Kubernetes) use them.
    - A block naming a site is refused, because a job cannot know the Trusts' site names. So is
-     ``mem_per_gpu_in_GiB``, which NVFLARE's portable block does not accept.
+     ``mem_per_gpu_in_GiB``, which FLARE's portable block does not accept.
 
    A researcher can override the GPU count for one run when starting training (see the
    :ref:`user guide <initiate-training>`). FLIP's templates ship an empty ``resource_spec``.
@@ -287,7 +287,7 @@ Flower apps have no ``meta.json``.
 Flower run configuration
 ========================
 
-Flower apps do not use the NVFLARE keys above. Their run configuration lives in the ``[tool.flwr.app.config]``
+Flower apps do not use the FLARE keys above. Their run configuration lives in the ``[tool.flwr.app.config]``
 table of the template's ``pyproject.toml``.
 
 To override those values, upload a ``config.toml`` with your code. The FL API passes it to ``flwr run
@@ -347,7 +347,7 @@ round) return the local copy after a small check with XNAT, which downloads agai
 **Round progress** (round started, a client's result received, round aggregated) appears in the model page's Live
 activity feed. Your training code never sends it: the FL server does.
 
-- On **NVFLARE**, FLIP's server components send it for every app.
+- On **FLARE**, FLIP's server components send it for every app.
 - On **Flower**, the app's strategy must subclass FLIP's ``flip.flower.strategy.FlipFedAvg``, as the templates do.
   An app whose strategy subclasses stock ``FedAvg`` still works but shows no round progress.
 

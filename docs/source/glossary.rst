@@ -35,7 +35,7 @@ Glossary
 
     **FL kit slot**
       The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), fixed by its provisioned
-      participant kit: a certificate on NVFLARE, a SuperNode key pair on Flower. Slots are provisioned once per
+      participant kit: a certificate on FLARE, a SuperNode key pair on Flower. Slots are provisioned once per
       :term:`FL net`; a trust claims one when it registers with the Central Hub, and that name, not the trust's
       hub-side name, is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS`` keys. See
       :ref:`flip-fl-nets`.
@@ -68,7 +68,7 @@ Glossary
 
     **NVIDIA FLARE**
       NVIDIA Federated Learning Application Runtime Environment, an open-source SDK for adapting machine learning
-      workflows to federated learning, and one of the two FL backends FLIP supports (written NVFLARE elsewhere in
+      workflows to federated learning, and one of the two FL backends FLIP supports (written FLARE elsewhere in
       these docs). See its `documentation <https://nvflare.readthedocs.io/en/main/index.html>`_.
 
     **OMOP**

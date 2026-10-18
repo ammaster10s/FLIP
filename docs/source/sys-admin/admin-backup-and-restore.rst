@@ -67,7 +67,7 @@ What holds state
      - Versioning. Terraform refuses to destroy the bucket.
      - Its inputs live elsewhere: the model's files, and the templates inside the flip-api image.
    * - AI Centre bucket (``…-aicentre``)
-     - The FL participant kits for every net and slot and, for NVFLARE, each net's root CA state.
+     - The FL participant kits for every net and slot and, for FLARE, each net's root CA state.
      - Versioning. Terraform refuses to destroy the bucket.
      - No. Without the CA state the net must be provisioned again, which issues new kits to **every** trust.
    * - UI bucket

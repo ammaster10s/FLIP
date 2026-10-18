@@ -243,7 +243,7 @@ values must differ, or exist only in this mode:
   used to name resources.
 - **Staging only:** the edge serves staging FL traffic on port 8003, while the staging FL server still listens on
   8002. Keep ``FL_SERVER_PORT=8002`` and set ``FL_EDGE_PORT=8003`` in ``.env.lza-stag``; ``sync-trust-kit`` copies
-  it into each kit and refuses to run on ``lza-stag`` without it. NVFLARE kits take the port from the staging
+  it into each kit and refuses to run on ``lza-stag`` without it. FLARE kits take the port from the staging
   provisioning file instead (``connect_to`` in ``fl-services/nvflare/provision/net-1_project_stag.yml``).
 - Mint the secrets (``AES_KEY_BASE64``, the internal service key, ``ADMIN_USER_PASSWORD``) for the account. Do not
   reuse another account's Secrets Manager secret.

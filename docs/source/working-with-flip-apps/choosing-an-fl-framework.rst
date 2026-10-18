@@ -31,7 +31,7 @@ Check which framework your FLIP deployment runs
 nets are set up, and the hub bundles your uploaded files with that backend's template. An app written for the other
 framework will not run there.
 
-To see which one you are on, open a model's page: the **Model Files** panel shows the backend (*NVFlare* or
+To see which one you are on, open a model's page: the **Model Files** panel shows the backend (*FLARE* or
 *Flower*) next to the detected ``job_type``. Before you have a model, ask your FLIP administrator.
 
 If the deployment you will train on is fixed, write for its framework and skip to the matching guide. The rest of

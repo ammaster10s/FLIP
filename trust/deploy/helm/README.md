@@ -98,7 +98,7 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
   The token reaches `scripts/preflight.sh` as `KIT_ENV` (not `ENV` — the POSIX shell's own startup-file
   variable) and `sync_k8s_kit.py` as `--env`. Neither script keeps its own copy of the map: run bare with
   `PROD` set and no token, each refuses and names the Makefile target to use.
-- **`stage-kit`** detects the backend from the kit's shape (NVFLARE `startup/`, Flower `certificates/` +
+- **`stage-kit`** detects the backend from the kit's shape (FLARE `startup/`, Flower `certificates/` +
   `keys/`), chowns to that image's uid (1000 / 49999), empties `KIT_DEST` before `docker cp` so a
   re-stage leaves no stale credentials, and pre-creates the subPath directories the chart mounts. It
   implements the kind case only.
@@ -304,7 +304,7 @@ individual settings above. Three sections, each read by the service that enforce
 | ------- | ------- | ------ |
 | `[disclosure]` | data-access-api | `min_cohort_size` — may RAISE the kit's `COHORT_QUERY_THRESHOLD`, never lower it |
 | `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`), decided the same way whatever their order |
-| `[fl_privacy.nvflare]` | fl-client (NVFLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
+| `[fl_privacy.nvflare]` | fl-client (FLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
 
 The document is **optional and additive**. Left empty — the default — the platform defaults apply
 exactly as before: no ConfigMap, no volume, no mount, no env var, and a default install's pod specs
@@ -315,7 +315,7 @@ explains how rules are decided.
 **How it reaches the pods.** The value is the document *itself*, not a path — a path on the deploy
 host means nothing inside a pod. The chart renders it into a ConfigMap
 (`<release>-flip-trust-governance`). `data-access-api` mounts it **read-only** at `/app/governance.toml`,
-with `ACCESS_POLICY_FILE` pointing there. The NVFLARE fl-client never mounts it — researcher code runs
+with `ACCESS_POLICY_FILE` pointing there. The FLARE fl-client never mounts it — researcher code runs
 in that container — but its `governance-extract` init container, in the same image, writes the
 `[fl_privacy]` table alone to an emptyDir the client reads read-only; an invalid document fails the
 init container and the client does not start. The Flower client gets none of it. The file is
@@ -559,10 +559,10 @@ loading the vocabulary by hand.
 
 ### FL Backend Configuration
 
-Switch between NVFLARE and Flower:
+Switch between FLARE and Flower:
 
 ```bash
-# NVFLARE (default)
+# FLARE (default)
 helm install trust-release ./ --set flBackend=nvflare
 
 # Flower
@@ -995,11 +995,11 @@ The chart is validated in CI via:
 
 1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
-2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
+2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999).
 
 ### Network policy blocking intra-service traffic
 

@@ -138,7 +138,7 @@ Prerequisites
 Step 1 — Obtain the aggregated checkpoint
 =========================================
 
-A completed FLIP training run uploads its results as a zip containing ``FL_global_model.pt``. This is an NVFLARE
+A completed FLIP training run uploads its results as a zip containing ``FL_global_model.pt``. This is an FLARE
 checkpoint: a dictionary whose ``model`` key holds the state dict, alongside ``train_conf`` and optionally
 ``meta_props``.
 
@@ -412,7 +412,7 @@ Step 4 — Package the MAP
 
 Application templates live in ``map-apps/``: ``map-apps/segmentation`` for models that output a mask,
 ``map-apps/classification`` for models that output labels. A MAP consumes trained weights, not FL configuration, so
-the same templates serve apps trained with either NVFLARE or Flower.
+the same templates serve apps trained with either FLARE or Flower.
 
 .. code-block:: shell
 
@@ -658,7 +658,7 @@ It is easy to assume FLIP checks more of ``config.json`` than it does. What is c
 
 - **The Central Hub reads only** ``job_type``, to choose which template to bundle. An unknown ``job_type`` is
   rejected; a missing one defaults to ``standard``.
-- **On NVFLARE, FLIP validates a fixed set of platform keys** when it assembles the job. Some failures stop the job
+- **On FLARE, FLIP validates a fixed set of platform keys** when it assembles the job. Some failures stop the job
   rather than falling back silently: an unknown ``AGGREGATOR``, an ``AGGREGATION_WEIGHTS`` value outside 0–1, an
   invalid ``AGGREGATE_ONLY_REGEX``, or ``BEST_MODEL_METRIC`` on a single-round job. The full set is under
   :ref:`fl-training-configuration`.

@@ -170,7 +170,7 @@ lowers the request to fit. NVIDIA FLARE retries for about 40 minutes, then marks
 net.
 
 **Fix.** Lower the job's GPU request, or ask the Trust whether it has the GPUs. See
-"GPU requirements and NVFLARE's scheduler" on :ref:`flip-fl-nets`.
+"GPU requirements and FLARE's scheduler" on :ref:`flip-fl-nets`.
 
 .. _ts-run-never-starts:
 
