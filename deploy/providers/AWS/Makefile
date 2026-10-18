@@ -1309,15 +1309,13 @@ ifneq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
-	@echo "   • Security groups"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
+	@echo "   • Security groups and the ALB"
+	@echo "   • SES email templates"
 ifeq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 	@echo "   • VPC"
 endif
-	@echo "   • ALB/NLB load balancers"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
