@@ -339,7 +339,7 @@ Day-to-day use
    * - ``make debug SERVICE=flip-api``
      - Attach a debugger on port 5678 (see `DEBUG.md <https://github.com/londonaicentre/FLIP/blob/develop/DEBUG.md>`__)
    * - ``make up FL_BACKEND=flower``
-     - Use Flower instead of NVFLARE; provision it first with
+     - Use Flower instead of FLARE; provision it first with
        ``make -C fl-services/flower provision NET_NUMBER=1`` (and ``2``). See
        the `Flower service guide <https://github.com/londonaicentre/FLIP/blob/develop/fl-services/flower/README.md>`__.
    * - ``make clean-object-store``

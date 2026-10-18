@@ -216,7 +216,7 @@ make -C ../../.. generate-xnat-credentials KIT=<CODE> HUB=<hub>
 
 Registration is backend-agnostic — the kit inherits `FL_BACKEND` (e.g. `flower`) from
 the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
-(Flower) or participant kit (NVFLARE) provisioned for that slot name.
+(Flower) or participant kit (FLARE) provisioned for that slot name.
 
 #### Troubleshooting
 
@@ -574,7 +574,7 @@ seconds, no rebuild — then **deregisters the revision it rolled away from** (i
 for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
 *latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
 silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
-commit if the UI must move too. On an NVFLARE hub it first empties the fl-server's `local/` on EFS and
+commit if the UI must move too. On a FLARE hub it first empties the fl-server's `local/` on EFS and
 re-syncs the kit (the `efs-provision-certs` task, a minute or two): an fl-server image older than FLIP#1390
 fails to start while the `local/flip__p_resources.json` a newer one wrote is there. If that step fails,
 nothing is rolled back; `SKIP_FL_LOCAL_RESET=1` skips it. After a *partial* deploy (some services repointed before a
@@ -659,7 +659,7 @@ because the allowlist the API is *serving* only changes at the restart in step 3
 
 When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
 the deployment has run out of *claimable* FL kit slots. One command mints, uploads,
-and activates `N` more (NVFLARE only):
+and activates `N` more (FLARE only):
 
 ```bash
 make add-fl-kits N=2 HUB=stag|prod   # YES=1 to skip both confirmation prompts (kit plan + Terraform plan)
@@ -1004,7 +1004,7 @@ does so silently, by succeeding.
 Staging's FL server still listens on `:8002`, so `FL_SERVER_PORT` stays 8002 in `.env.stag` and the port trusts
 dial is set separately (FLIP#1365):
 
-- **NVFLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
+- **FLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
   kit's `fed_client.json`.
 - **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.stag`, which `sync-trust-kit` copies
   into each kit (and refuses to default for a staging kit). It drives the Flower `--superlink`, the Kubernetes
@@ -2045,7 +2045,7 @@ commit a re-render whose only change is the graphviz that made it.
   - Automatic Docker and Docker Compose installation via user_data
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
-- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `MANAGE_DNS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **Internal NLB** (`module.fl_server_internal_nlb`, `fl_ingress_lza.tf`): one static private IP per app subnet, which the networking account's edge registers once as targets. A `:443` web listener forwards to the `ecs-flip-api-lza` target group (plain TCP until `MANAGE_DNS=true`, then TLS on the ACM certificate) and an `FL_SERVER_PORT` listener to the `fl-server-net-1` target group. Its security group admits the networking ingress CIDRs and the VPC CIDR. **Why an NLB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and a Layer 7 load balancer terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **Edge (networking account)**: CloudFront with its WAF, serving the UI bucket over cross-account OAC and relaying `/api/*`, and an internet-facing edge NLB for FL traffic — declared in aicentre-lza-iac, not here.
 - **ACM**: one `eu-west-2` certificate for the web listener, created once `MANAGE_DNS=true`.
 - **Route53**: a private hosted zone resolving the FL server's bare name to the internal NLB for in-VPC callers; the public records live in the networking account.
