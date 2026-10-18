@@ -355,14 +355,9 @@ Evaluation jobs
 
 *Who: researcher*
 
-FLIP can also **evaluate** a model that is already trained, for example to measure how well it performs on each
-trust's patients. An evaluation job is a special case of the flow above, with one difference at the end: there is a
-single round and no training.
-
-- The project, cohort query, approval and enrichment stages are the same.
-- In **File uploads**, the researcher picks the ``evaluation`` job type and uploads the checkpoint(s) to evaluate with
-  the evaluation code. The checkpoint stays on the FL server rather than being sent with the app.
-- **Job start** is the same.
+FLIP can also **evaluate** an existing model, for example to measure how well it performs on each trust's patients.
+This follows the same flow, with a single round and no training: each trust runs the model on its own data and
+returns metrics only.
 
 .. mermaid::
    :caption: Evaluation job: one round, metrics only.
@@ -382,14 +377,3 @@ single round and no training.
        C->>S: Metrics only
        S->>Hub: Metrics per trust
        Hub-->>R: Metrics on the model page, Download Results
-
-**1–2.** The FL server sends the model to each trust, which runs it on its own cohort. The model is not changed.
-
-**3–5.** Each trust returns **metrics only**, with no model update. They appear on the model page as one point per
-trust, and the results are available with **Download Results**.
-
-.. seealso::
-
-   *Job types* and *Evaluation metrics* on :doc:`components/component-fl-nets`, and the evaluation tutorials listed
-   there.
-
