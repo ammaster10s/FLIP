@@ -34,7 +34,7 @@ class PTModelLocator(ModelLocator):
         Args:
             exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
             model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
-                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
                 built at run time). ``None`` builds it from the app's ``models.get_model()``.
         """
         super(PTModelLocator, self).__init__()
@@ -98,7 +98,7 @@ class InitialPTModelLocator(ModelLocator):
         Args:
             exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
             model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
-                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
                 built at run time). ``None`` builds it from the app's ``models.get_model()``.
         """
         super(InitialPTModelLocator, self).__init__()
@@ -168,7 +168,7 @@ class EvaluationModelLocator(ModelLocator):
     Unlike the retired legacy locator (``EvaluationPTModelLocator``, deleted with the Executor
     syntax) — which returned a single ``DataKind.COLLECTION`` DXO for the equally retired
     ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
-    fl_ctx)`` contract so it drives NVFLARE's stock ``CrossSiteModelEval`` validate
+    fl_ctx)`` contract so it drives FLARE's stock ``CrossSiteModelEval`` validate
     workflow directly. Each model named in ``config.json['models']`` becomes one ``DataKind.WEIGHTS`` DXO that
     the server broadcasts to clients as a single ``FLModel`` for the Client-API ``is_evaluate()`` path.
 
