@@ -6,6 +6,9 @@ This page follows one project from the first cohort query to a trained model. It
 who acts, and what stays inside each trust. The step-by-step instructions for the web interface are in
 :doc:`user-guides`.
 
+The same flow covers **evaluating** an existing model at each trust instead of training one: the last stage then runs
+a single round and returns metrics only. See `Evaluation jobs`_.
+
 .. list-table::
    :header-rows: 1
    :widths: 22 30 48
@@ -31,6 +34,9 @@ who acts, and what stays inside each trust. The step-by-step instructions for th
    * - `Training and results`_
      - Automatic
      - A trained model and its metrics are ready to download.
+   * - `Evaluation jobs`_
+     - Researcher (optional)
+     - An existing model's metrics at each trust, from a single round.
 
 **How to read the diagrams.** Each diagram is a swimlane: one column per person or service, with time running
 downwards. The numbers on the arrows match the numbered steps in the text. Services on the left run in the Central
@@ -337,9 +343,53 @@ code recorded.
 appear as charts on the model page while training runs.
 
 **6–7.** After the last round, the final model and results are stored on the hub. Project members download them with
-
 **Download Results**.
 
 .. seealso::
 
    :ref:`training-metrics` and :ref:`view-results`.
+
+***************
+Evaluation jobs
+***************
+
+*Who: researcher*
+
+FLIP can also **evaluate** a model that is already trained, for example to measure how well it performs on each
+trust's patients. An evaluation job is a special case of the flow above, with one difference at the end: there is a
+single round and no training.
+
+- The project, cohort query, approval and enrichment stages are the same.
+- In **File uploads**, the researcher picks the ``evaluation`` job type and uploads the checkpoint(s) to evaluate with
+  the evaluation code. The checkpoint stays on the FL server rather than being sent with the app.
+- **Job start** is the same.
+
+.. mermaid::
+   :caption: Evaluation job: one round, metrics only.
+
+   sequenceDiagram
+       autonumber
+       actor R as Researcher
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
+           participant S as FL server
+       end
+       box rgb(234, 237, 242) Each approving trust
+           participant C as FL client
+       end
+       S->>C: Model to evaluate
+       C->>C: Evaluate on local data
+       C->>S: Metrics only
+       S->>Hub: Metrics per trust
+       Hub-->>R: Metrics on the model page, Download Results
+
+**1–2.** The FL server sends the model to each trust, which runs it on its own cohort. The model is not changed.
+
+**3–5.** Each trust returns **metrics only**, with no model update. They appear on the model page as one point per
+trust, and the results are available with **Download Results**.
+
+.. seealso::
+
+   *Job types* and *Evaluation metrics* on :doc:`components/component-fl-nets`, and the evaluation tutorials listed
+   there.
+
