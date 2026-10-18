@@ -29,8 +29,8 @@ See :ref:`create-cohort-query`.
    sequenceDiagram
        autonumber
        actor R as Researcher
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
        end
        box rgb(234, 237, 242) Each trust
            participant TA as trust-api
@@ -78,8 +78,8 @@ member is given access to the project in that XNAT.
        autonumber
        actor R as Researcher
        actor A as Trust Admin or FLIP admin
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
        end
        box rgb(234, 237, 242) Each trust
            participant TA as trust-api
@@ -137,8 +137,8 @@ whole cohort.
    sequenceDiagram
        autonumber
        actor M as Project member
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
        end
        box rgb(234, 237, 242) Each trust
            participant X as XNAT
@@ -164,8 +164,8 @@ the code needs. See :doc:`working-with-flip-apps` for how to write the code and 
    sequenceDiagram
        autonumber
        actor R as Researcher
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
        end
        R->>Hub: Create a model in the project
        R->>Hub: Upload training code and configuration
@@ -194,8 +194,8 @@ See the *Training* section of :doc:`user-guides/user-common`.
    sequenceDiagram
        autonumber
        actor R as Researcher
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
            participant S as FL server
        end
        box rgb(234, 237, 242) Each approving trust
@@ -230,8 +230,8 @@ the FLIP UI. See :ref:`view-results`.
    sequenceDiagram
        autonumber
        actor R as Researcher
-       box rgb(248, 234, 242) Central Hub on AWS
-           participant Hub as Central Hub
+       box rgb(248, 234, 242) Central Hub
+           participant Hub as Hub API and UI
            participant S as FL server
        end
        box rgb(234, 237, 242) Each approving trust
