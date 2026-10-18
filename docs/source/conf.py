@@ -106,6 +106,9 @@ extlinks = {"gh": (f"https://github.com/londonaicentre/FLIP/blob/{_gh_ref}/%s", 
 # Swimlane diagrams (sphinxcontrib-mermaid) in the FLIP design-system colours of _static/style.css.
 mermaid_light_theme = "base"
 mermaid_dark_theme = "base"  # the docs theme has no dark mode, so keep the same colours
+# Natural size, scaled down only to fit a narrow screen (the plugin default is a fixed 500px-high box).
+mermaid_width = "auto"
+mermaid_height = "auto"
 mermaid_init_config = {
     "startOnLoad": False,
     # Counter-based SVG ids: time-based ones can collide when several diagrams render in one millisecond.
@@ -127,7 +130,7 @@ mermaid_init_config = {
         "noteBorderColor": "#B88AC6",
         "sequenceNumberColor": "#FFFFFF",
     },
-    "sequence": {"mirrorActors": False, "showSequenceNumbers": True},
+    "sequence": {"mirrorActors": False, "showSequenceNumbers": True, "useMaxWidth": False},
 }
 
 # Renamed or moved pages keep their old URLs as HTML redirect stubs (target is relative to the old page).
