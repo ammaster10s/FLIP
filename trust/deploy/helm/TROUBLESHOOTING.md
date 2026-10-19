@@ -40,7 +40,7 @@ Moved to the docs: [XNAT has 0 'dcm2niix-scan' wrappers on the pinned ...](https
 
 ### 2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot
 
-Moved to the docs: [dcm2niix jobs swamp the node, or wait for a slot](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-dcm2niix-swamp).
+Moved to the docs: [dcm2niix jobs swamp the node, or wait for a slot](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-dcm2niix-jobs-cap).
 
 ### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
 

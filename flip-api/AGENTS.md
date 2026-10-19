@@ -206,7 +206,10 @@ Yes/No answers, the modality and the anatomy through concept joins — returns n
 "returned no cohort records". `make e2e_smoke` with `PROD` unset runs the sibling `query_novocab.sql` instead: the same
 studies and findings, with the two answer concepts named inline (`fl-tutorials/tests/test_xray_no_vocab_query.py`
 runs both against one synthetic OMOP database and fails if they disagree). A test-trust switch only; an explicit
-`QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries.
+`QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries. With `PROD` set (a deployed hub)
+such a trust needs it passed by hand:
+`QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql` (Flower:
+`fl-tutorials/flower/xray_classification/query_novocab.sql`).
 
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
