@@ -1,11 +1,10 @@
-API Reference
-=============
+Python API reference
+====================
+
+The ``flip`` package (``flip-utils`` on PyPI) is the library a FLIP app imports to reach trust data, report metrics
+and upload results. This reference is generated from its docstrings.
 
 .. toctree::
    :maxdepth: 1
 
    /autoapi/flip/index
-   /autoapi/flip_api/index
-   /autoapi/data_access_api/index
-   /autoapi/imaging_api/index
-   /autoapi/trust_api/index
