@@ -9,14 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mappings from source values to OMOP concept IDs, shared by the dataset converters.
+"""Mappings from source values to OMOP concept IDs, shared by the dataset converters."""
 
-Imported from ``londonaicentre/flip-omop-mock-data`` (FLIP#1092) so the provenance of FLIP's
-published mock OMOP data lives with the platform. Values are unchanged from that repo, except sex.
-"""
-
-# The OMOP Gender concepts (8507 MALE, 8532 FEMALE). That repo mapped sex to 442985 / 442986, which are
-# not Gender concepts, so anything reading the standard gender_concept_id found no sex at all.
+# Sex at birth, as OMOP records it: the Gender-domain concepts 8507 MALE / 8532 FEMALE.
 MAPPING_SEX = {"M": 8507, "F": 8532, "O": 0}
 
 MAPPING_MODALITY = {
