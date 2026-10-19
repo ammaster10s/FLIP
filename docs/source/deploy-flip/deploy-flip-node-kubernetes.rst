@@ -418,6 +418,9 @@ it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO
 ``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
 cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
 ``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``PROD`` unset) smokes such a trust with it.
+With ``PROD`` set, pass it by hand:
+``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
+``fl-tutorials/flower/xray_classification/query_novocab.sql``).
 
 .. seealso::
 
