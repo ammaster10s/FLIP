@@ -21,6 +21,8 @@ from fastapi import HTTPException
 from imaging_api.routers.schemas import Experiment, ImportStatus, ImportStudyResponse, Patient, Study
 from imaging_api.services.import_requests import DirectArchiveSession, PacsRequest, PrearchiveSession
 from imaging_api.services.retrieval import (
+    _RETRIEVALS_IN_FLIGHT,
+    _retrieval_in_flight,
     get_import_status,
     retrieve_images_for_project,
     retry_retrieve_images_for_project,
@@ -559,6 +561,36 @@ async def test_get_import_status_no_experiments(
 
     assert status.successful == []
     assert status.queue_failed == ["ACC1"]
+
+
+@patch("imaging_api.services.retrieval.get_project")
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_counts_an_unseen_accession_as_queued_while_its_retrieval_runs(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, mock_get_project, headers
+):
+    """A poll mid-queueing must not report the not-yet-queued studies as failed: the pull would be given up."""
+    mock_get_accession_ids.return_value = ["ACC1"]
+    mock_get_experiments.return_value = []
+
+    with _import_records(), _retrieval_in_flight("proj1"):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.queued == ["ACC1"]
+    assert status.queue_failed == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval._retrieve_images_for_project", new_callable=AsyncMock)
+async def test_retrieve_images_clears_its_in_flight_mark_even_when_it_fails(mock_retrieve, headers):
+    mock_retrieve.side_effect = HTTPException(status_code=500, detail="boom")
+
+    with pytest.raises(HTTPException):
+        await retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert "proj1" not in _RETRIEVALS_IN_FLIGHT
 
 
 # Built from the JSON XNAT serves (times in epoch milliseconds), so a wrong alias on the models fails
