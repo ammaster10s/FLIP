@@ -24,7 +24,13 @@ command below on the host where the stack runs.
    recording checkout (`make up BUILD=true` for your own stack; for a shared one, only the affected services, with
    `up -d --no-deps --force-recreate -V --pull missing`: `-V` gives flip-ui a fresh `node_modules`, and
    `--pull missing` stops `pull_policy: always` from pulling the published image over your build). Rebuild flip-ui
-   first when `flip-ui/package*.json` changed. Never `--remove-orphans`.
+   first when `flip-ui/package*.json` changed. Never `--remove-orphans`. Recreate trust services through the
+   trust Makefile (a helper target that runs `$(ensure_snapshot_dir)` before its `up`), never with bare compose
+   from a fresh checkout: otherwise Docker creates the cohort membership store
+   (`trust/data-access-api/.snapshots/Trust_N`) owned by root, every approval's freeze fails ("Cohort snapshot
+   store write failed"), and the take waits forever on an import that reads 0/0.
+   After moving the hub past FLIP#857 (cohort snapshots), freeze the projects approved before it:
+   `make -C flip-api backfill_cohort_snapshots EXTRA_ARGS="--dry-run"`, then without `--dry-run`.
 3. **Migrations.** flip-api runs `alembic upgrade head` at boot. Before recreating it from a newer checkout, list
    which revisions in `flip-api/src/flip_api/db/migrations/versions/` the database does not have yet, and tell the
    user. Migrations are forward-only, so an older checkout's flip-api then fails to boot against that database.
