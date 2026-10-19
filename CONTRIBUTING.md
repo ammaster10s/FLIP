@@ -1026,7 +1026,7 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
 
 ## Documentation GIFs
 
-The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+The animated walkthroughs in the user guides (`docs/source/user-guides/*.rst` and
 `docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
 fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
 run was 95% of a clone). Instead:
