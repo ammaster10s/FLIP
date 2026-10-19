@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Annotated
 
 import pandas as pd
@@ -68,6 +70,21 @@ _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
 # What _read_import_records returns: the queued requests, the direct-archive sessions, the prearchive
 # sessions and the executed requests.
 _ImportRecords = tuple[list[PacsRequest], list[DirectArchiveSession], list[PrearchiveSession], list[PacsRequest]]
+
+# Projects whose retrieval is still querying PACS and queueing. Their accessions reach the DQR queue
+# one by one while status polls run alongside, so one found in no import record has not been queued
+# *yet* rather than failed to queue. Process-local, which is enough: imaging-api runs as one worker
+# (entrypoint.sh). The retry path is not marked: it reads queue_failed to decide what to re-queue.
+_RETRIEVALS_IN_FLIGHT: set[str] = set()
+
+
+@contextmanager
+def _retrieval_in_flight(project_id: str) -> Iterator[None]:
+    _RETRIEVALS_IN_FLIGHT.add(project_id)
+    try:
+        yield
+    finally:
+        _RETRIEVALS_IN_FLIGHT.discard(project_id)
 
 
 def select_study_for_accession(accession_number: str, studies_found: list[Study], position: str) -> Study | None:
@@ -129,6 +146,12 @@ def has_default_pacs(project_id: str, headers: dict[str, str]) -> bool:
 
 
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
+    """Queue the project's cohort for import; see ``_retrieve_images_for_project``."""
+    with _retrieval_in_flight(project_id):
+        return await _retrieve_images_for_project(project_id, query, headers)
+
+
+async def _retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images associated with the given project.
 
@@ -192,7 +215,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         logger.info(f"Querying PACS for accession number {idx}/{total_accessions}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
@@ -226,7 +251,7 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):
@@ -402,7 +427,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             import_status.failed.append(accession_number)
         elif accession_number in in_progress_accessions:
             import_status.processing.append(accession_number)
-        elif accession_number in queued_accessions:
+        elif accession_number in queued_accessions or project_id in _RETRIEVALS_IN_FLIGHT:
             import_status.queued.append(accession_number)
         else:
             # Never entered the DQR queue (e.g. no matching study on PACS).
@@ -532,7 +557,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         logger.info(f"Querying PACS for accession number {idx}/{total_retries}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue
@@ -568,7 +595,7 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):

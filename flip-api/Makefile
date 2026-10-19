@@ -132,8 +132,8 @@ backfill_cohort_snapshots:
 # rather than `run`: no orphan
 # removal, so a running FL stack is left alone.
 create_demo_users:
-	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD \
-		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL $(service_name) \
+	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD -e DEMO_TRUST_ADMIN_PASSWORD \
+		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL -e DEMO_TRUST_ADMIN_EMAIL $(service_name) \
 		python -m flip_api.scripts.create_demo_users
 # Record the end-to-end demo video against the running dev stack (Playwright
 # segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
