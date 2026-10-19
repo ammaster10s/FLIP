@@ -1118,9 +1118,9 @@ def main(
                         )
                         if response.get("Contents"):
                             kit_files = [o["Key"] for o in response["Contents"]]
-                            print_status("PASS", f"NVFLARE Trust_1 kit present ({len(kit_files)} files)")
+                            print_status("PASS", f"FLARE Trust_1 kit present ({len(kit_files)} files)")
                         else:
-                            print_status("WARN", "NVFLARE Trust_1 kit not found in MinIO — run kit upload first")
+                            print_status("WARN", "FLARE Trust_1 kit not found in MinIO — run kit upload first")
                     else:
                         print_status("WARN", "MinIO bucket 'fl-kits' not found — create it and upload kits")
                 except Exception as e:
