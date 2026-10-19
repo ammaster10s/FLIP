@@ -192,7 +192,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         logger.info(f"Querying PACS for accession number {idx}/{total_accessions}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
@@ -226,7 +228,7 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):
@@ -532,7 +534,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         logger.info(f"Querying PACS for accession number {idx}/{total_retries}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue
@@ -568,7 +572,7 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):

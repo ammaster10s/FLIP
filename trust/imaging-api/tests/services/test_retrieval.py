@@ -109,6 +109,37 @@ async def test_retrieve_images_success(
 
 
 @pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_queries_pacs_off_the_event_loop(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, headers
+):
+    """One blocking PACS query per accession on the loop would stall imaging-api's /health for the whole cohort."""
+    mock_get_project.return_value = MagicMock(secondary_ID=HUB_PROJECT_ID)
+    mock_get_accession_ids.return_value = ["ACC1"]
+    threads = []
+
+    def query(accession_number, hdrs):
+        threads.append(current_thread())
+        return [_make_study("ACC1", "1.2.3.1")]
+
+    def queue(request, hdrs):
+        threads.append(current_thread())
+        return [_make_import_response("ACC1")]
+
+    mock_query.side_effect = query
+    mock_queue.side_effect = queue
+
+    await retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert len(threads) == 2
+    assert all(thread is not main_thread() for thread in threads)
+
+
+@pytest.mark.asyncio
 @patch("imaging_api.services.retrieval.get_project")
 async def test_retrieve_images_project_not_found(mock_get_project, headers):
     mock_get_project.side_effect = NotFoundError("not found")
