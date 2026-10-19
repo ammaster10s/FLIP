@@ -148,7 +148,7 @@ demo_video:
 #
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
 # `make e2e_smoke` invocation works against either stack. Both tutorials are
-# now in-tree under fl-tutorials/<backend>/ (NVFLARE at fl-tutorials/nvflare/,
+# now in-tree under fl-tutorials/<backend>/ (FLARE at fl-tutorials/nvflare/,
 # Flower at fl-tutorials/flower/). Both reuse the same query.sql
 # against the trust mock OMOP data. Default backend matches
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
@@ -163,12 +163,17 @@ demo_video:
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
 # TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
+# A development stack (PROD unset) smokes the vocabulary-free copy of the cohort query: its trusts
+# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, and
+# query.sql looks every concept up in omop.concept. Where the vocabulary is loaded the two return
+# the same rows. A deployed hub (PROD set) smokes query.sql.
+XRAY_QUERY_NAME := $(if $(strip $(PROD)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
-QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/query.sql
+QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/$(XRAY_QUERY_NAME)
 else
 MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
-QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
+QUERY_FILE ?= $(MODEL_FILES_DIR)/../$(XRAY_QUERY_NAME)
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
@@ -255,7 +260,7 @@ e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
 e2e_smoke_prostate: _require_flower_backend e2e_smoke
 
 # The prostate app exists for Flower only: fail before the ~6 min image pull rather than after it,
-# when an NVFLARE hub would reject the Flower bundle.
+# when a FLARE hub would reject the Flower bundle.
 _require_flower_backend:
 	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 
