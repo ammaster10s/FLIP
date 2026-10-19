@@ -512,7 +512,7 @@ class E2eSmokeQuery(unittest.TestCase):
     def test_no_vocab_picks_the_sibling_query_on_both_backends(self):
         for backend in ("nvflare", "flower"):
             path = self.query_file(f"FL_BACKEND={backend}", "NO_VOCAB=1")
-            assert path.endswith("/query_no_vocab.sql"), (backend, path)
+            assert path.endswith("/query_novocab.sql"), (backend, path)
             # The scratch copy holds Makefiles only; the file must exist where the path points in the repo.
             rel = path.split("/fl-tutorials/", 1)[1]
             assert (REPO / "fl-tutorials" / rel).is_file(), (backend, rel)

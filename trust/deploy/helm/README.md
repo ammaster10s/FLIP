@@ -221,8 +221,8 @@ pod, so anything NVFLARE leaves in `transfer/` goes with it.
 metadata endpoint, which on Azure hands out managed-identity tokens (`NO_VOCAB_LOAD=1` does the same for sync-kit on
 any other cluster without a route to AWS). The trust then runs without the OMOP vocabulary until one is loaded
 another way. Cohort queries that name concepts through `omop.concept` then return
-nothing; the x-ray tutorial ships `query_no_vocab.sql` for exactly this, and `make e2e_smoke NO_VOCAB=1`
-smokes such a trust with it.
+nothing; the x-ray tutorial ships `query_novocab.sql` for exactly this, and `make e2e_smoke` on a dev stack
+(PROD unset) smokes such a trust with it.
 
 ### 5. Install / upgrade the chart
 

@@ -14,7 +14,7 @@
 # A trust deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390) holds the
 # x-ray data but only a sliver of omop.concept, so query.sql — which names the Yes/No answers, the
 # modality and the anatomy through concept joins — returns zero rows there and staging refuses the
-# project. query_no_vocab.sql names the two answer concepts inline instead. It is a test-trust query,
+# project. query_novocab.sql names the two answer concepts inline instead. It is a test-trust query,
 # never the tutorial's canonical one, and it is only honest while it selects the same studies with the
 # same findings: so both run here against one synthetic OMOP database (SQLite, which speaks every
 # construct the two use) and must agree on everything the app reads.
@@ -46,7 +46,11 @@ EFFUSION = MAPPINGS.MAPPING_FINDING["pleural effusion"]
 EDEMA = MAPPINGS.MAPPING_FINDING["pulmonary edema"]
 NORMAL = MAPPINGS.MAPPING_FINDING["normal lungs"]
 OBSERVATION_FIELD = MAPPINGS.MAPPING_CXR["observation"]
-LUNG = MAPPINGS.MAPPING_CXR["lung_structure"]
+LUNG = MAPPINGS.MAPPING_CXR["lung_structure"]  # image_occurrence anatomy, as the cxr converter writes it
+# image_feature anatomy: the converter writes the finding's location, not the study-level lung structure
+# (datasets/cxr/omop_convert_cxr.py). query_novocab.sql names exactly these three inline, so the fixture
+# must use one of them or neither query returns a row.
+BOTH_LUNGS = MAPPINGS.MAPPING_ANATOMIC_SITE["both lungs"]
 
 
 def _omop(*, with_vocabulary: bool) -> sqlite3.Connection:
@@ -69,7 +73,7 @@ def _omop(*, with_vocabulary: bool) -> sqlite3.Connection:
     if with_vocabulary:
         db.executemany(
             "INSERT INTO omop.concept VALUES (?, ?)",
-            [(YES, "Yes"), (NO, "No"), (X_RAY, "X-ray"), (LUNG, "Lung structure")],
+            [(YES, "Yes"), (NO, "No"), (X_RAY, "X-ray"), (LUNG, "Lung structure"), (BOTH_LUNGS, "Both lungs")],
         )
     answers = [YES, NO, None]  # None: the finding was not recorded for that study
     feature_id = observation_id = 0
@@ -88,13 +92,13 @@ def _omop(*, with_vocabulary: bool) -> sqlite3.Connection:
             db.execute("INSERT INTO omop.observation VALUES (?, ?)", (observation_id, answer))
             db.execute(
                 "INSERT INTO omop.image_feature VALUES (?, ?, ?, ?, ?, ?)",
-                (feature_id, study, finding, LUNG, observation_id, OBSERVATION_FIELD),
+                (feature_id, study, finding, BOTH_LUNGS, observation_id, OBSERVATION_FIELD),
             )
         # A feature row that points at another table must not count as an answer in either query.
         feature_id += 1
         db.execute(
             "INSERT INTO omop.image_feature VALUES (?, ?, ?, ?, ?, ?)",
-            (feature_id, study, EFFUSION, LUNG, 999_999, OBSERVATION_FIELD + 1),
+            (feature_id, study, EFFUSION, BOTH_LUNGS, 999_999, OBSERVATION_FIELD + 1),
         )
     return db
 
@@ -112,11 +116,11 @@ def _app_view(rows: list[dict]) -> list[tuple]:
 @pytest.mark.parametrize("backend", sorted(QUERY_DIRS))
 def test_the_no_vocab_query_sits_beside_the_canonical_one(backend):
     assert (QUERY_DIRS[backend] / "query.sql").is_file()
-    assert (QUERY_DIRS[backend] / "query_no_vocab.sql").is_file()
+    assert (QUERY_DIRS[backend] / "query_novocab.sql").is_file()
 
 
 def test_both_backends_ship_the_same_no_vocab_query():
-    nvflare, flower = (QUERY_DIRS[b] / "query_no_vocab.sql" for b in ("nvflare", "flower"))
+    nvflare, flower = (QUERY_DIRS[b] / "query_novocab.sql" for b in ("nvflare", "flower"))
     assert nvflare.read_text() == flower.read_text()
 
 
@@ -126,13 +130,13 @@ def test_without_a_vocabulary_only_the_no_vocab_query_returns_the_cohort(backend
     db = _omop(with_vocabulary=False)
 
     assert _run(db, QUERY_DIRS[backend] / "query.sql") == []
-    assert len(_run(db, QUERY_DIRS[backend] / "query_no_vocab.sql")) == LIMIT
+    assert len(_run(db, QUERY_DIRS[backend] / "query_novocab.sql")) == LIMIT
 
 
 @pytest.mark.parametrize("backend", sorted(QUERY_DIRS))
 def test_the_no_vocab_query_hands_the_app_the_same_cohort(backend):
     canonical = _run(_omop(with_vocabulary=True), QUERY_DIRS[backend] / "query.sql")
-    no_vocab = _run(_omop(with_vocabulary=False), QUERY_DIRS[backend] / "query_no_vocab.sql")
+    no_vocab = _run(_omop(with_vocabulary=False), QUERY_DIRS[backend] / "query_novocab.sql")
 
     assert len(canonical) == LIMIT
     assert _app_view(no_vocab) == _app_view(canonical)
