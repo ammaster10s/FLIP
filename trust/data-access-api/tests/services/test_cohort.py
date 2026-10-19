@@ -1226,18 +1226,19 @@ def test_get_sex_distribution_reads_the_gender_concept_before_the_source_value()
         )
         connection.exec_driver_sql(
             "INSERT INTO omop.person VALUES (1, 442985, 'M'), (2, 8507, NULL), (3, 8532, ''), (4, 8532, 'M'), "
-            "(5, 0, NULL)"
+            "(5, 0, NULL), (6, 0, 'O')"
         )
 
         def run(query, params):
             return pd.read_sql(query, connection, params=params)
 
         with patch("data_access_api.services.cohort.get_records", side_effect=run):
-            result = get_sex_distribution(pd.DataFrame({"person_id": [1, 2, 3, 4, 5]}))
+            result = get_sex_distribution(pd.DataFrame({"person_id": [1, 2, 3, 4, 5, 6]}))
 
     counts = {row["value"]: row["count"] for row in result["results"] if not pd.isna(row["value"])}
-    assert counts == {"M": 2, "F": 2}  # only the person with no gender at all stays unknown
-    assert sum(row["count"] for row in result["results"]) == 5
+    # "O" has no Gender concept (0), so its source value carries it; only person 5, with neither, is unknown.
+    assert counts == {"M": 2, "F": 2, "O": 1}
+    assert sum(row["count"] for row in result["results"]) == 6
 
 
 # Tests for get_age_distribution
