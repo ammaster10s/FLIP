@@ -381,6 +381,8 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
         }
         | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
     )
+    # The prearchive read only adds failures: a session in any other prearchive status is in flight
+    # because its DQR request is, so it is counted below through `executed_pacs_requests`.
     in_progress_accessions = {
         (session.name or session.folder_name)
         for session in direct_archive_sessions
@@ -484,7 +486,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         headers (XNATAuthHeaders): The headers containing XNAT authentication details.
 
     Returns:
-        bool: True if all studies were re-archived or successfully queued, False otherwise.
+        bool: True if XNAT accepted a re-archive of every failed study or all were successfully queued, False
+            otherwise. The next status poll confirms a re-archive.
 
     Raises:
         HTTPException: If the request cannot be processed.

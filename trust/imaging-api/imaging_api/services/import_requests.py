@@ -83,7 +83,8 @@ class PrearchiveSession(BaseModel):
     name: str | None = None
     folder_name: str | None = Field(default=None, alias="folderName")
     status: str | None = None
-    # The session's prearchive path, which XNAT's archive service takes as ``src``.
+    # The session's prearchive path, which XNAT's archive service takes as ``src``. XNAT 1.10.0 gives it
+    # as ``/prearchive/projects/...``, without the ``/data`` prefix, and both callers rely on that form.
     url: str | None = None
 
 
@@ -355,7 +356,8 @@ def get_prearchive_sessions(project_id: str, headers: dict[str, str]) -> list[Pr
 def archive_prearchive_session(src: str, headers: dict[str, str]) -> bool:
     """Archives a prearchive session (``POST /data/services/archive``), appending to any archived session.
 
-    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession.
+    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession. That
+    is why this bypasses ``_send``, whose error carries the URL.
 
     Args:
         src (str): The session's prearchive path, as ``PrearchiveSession.url`` gives it.
@@ -380,7 +382,8 @@ def delete_prearchive_session(src: str, headers: dict[str, str]) -> bool:
     """Deletes a prearchive session (``DELETE /data/prearchive/projects/{project}/{timestamp}/{session}``).
 
     XNAT also clears the study's routing, so a study pulled from the PACS again lands in a fresh session.
-    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession.
+    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession. That
+    is why this bypasses ``_send``, whose error carries the URL.
 
     Args:
         src (str): The session's prearchive path, as ``PrearchiveSession.url`` gives it.
