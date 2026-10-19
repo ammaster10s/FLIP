@@ -58,7 +58,9 @@ This section is for the Trust's network and security teams.
 **The node never accepts a connection.** Its NIC carries its own network security group, which
 denies all inbound traffic, so a permissive site subnet cannot open it. The VM has no public IP,
 and nothing listens for SSH from outside. Operators reach it only through Azure Run Command,
-which travels over the VM agent's own outbound channel.
+which travels over the VM agent's own outbound channel. That holds while the PACS is the mock one
+on the node; a site PACS pushing studies into XNAT needs an inbound allow for ``XNAT_PORT``
+(8104) from its address only, which FLIP does not open yet (`FLIP#1561 <https://github.com/londonaicentre/FLIP/issues/1561>`_).
 
 **The hub admits the node by its credentials, never by its address.** Hub API calls carry the
 Trust's API key over HTTPS. FL traffic is TLS authenticated with the credentials in the Trust's FL
@@ -148,6 +150,11 @@ Build the node and test it
 
 ``init`` can be refused with a 403 for a minute or two after ``bootstrap``, while Azure applies
 your access to the new state storage; run it again. First boot takes a few minutes.
+
+The VM is built from Canonical's latest Ubuntu 24.04 image (``image_version = "latest"``). To record
+the exact build a node came from, run
+``az vm show -g <resource group> -n <vm name> --query storageProfile.imageReference.exactVersion -o tsv``.
+Setting ``image_version`` to that value rebuilds on the same image, and replaces the VM.
 
 A **second node in the same subscription** needs its own name and its own checkout: give every
 command the same ``NAME_PREFIX=<prefix>`` (default ``flipaz``), and run them from a separate clone.
