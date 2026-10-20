@@ -34,7 +34,9 @@ module.exports = {
             // first). `vite preview` gives SPA history fallback so the deep
             // link to /auth/login resolves to the app rather than a 404.
             startServerCommand: "npm run serve -- --port 4173 --strictPort",
-            startServerReadyPattern: "Local:",
+            // Vite colors `Local` with ANSI escapes in CI, so match the text
+            // across those codes as well as an optional space before the colon.
+            startServerReadyPattern: "Local(?:\\x1b\\[[0-9;]*m)*\\s*:",
             startServerReadyTimeout: 30000,
             url: ["http://localhost:4173/auth/login"],
             // Median of 3 runs — smooths the timing-based performance metrics;
