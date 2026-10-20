@@ -29,7 +29,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -83,6 +85,38 @@ class Gate:
     name: str
     steps: list[Step]
     metrics: Callable[[list[tuple[float, str]]], dict] = field(default=lambda _lines: {})
+    cleanup: Callable[[], list[str]] | None = None  # runs even when a step failed; returns what it did
+
+
+SIMULATOR = re.compile(r"flower-superlink|flwr-simulation|flwr-serverapp")
+
+
+def own_simulator_pids(ps_lines: list[str], repo: Path) -> list[int]:
+    """PIDs of Flower simulator processes started from this checkout (``pgrep -af`` lines: ``<pid> <args>``).
+
+    flwr keeps its local SuperLink running after a run, and ``sim-tutorial.sh`` refuses to run inside one another
+    checkout started, so a release worktree left behind would block the next release's Flower tutorials.
+    """
+    prefix = f"{repo}/"
+    pids = []
+    for line in ps_lines:
+        pid, _, args = line.strip().partition(" ")
+        if pid.isdigit() and prefix in args and SIMULATOR.search(args):
+            pids.append(int(pid))
+    return pids
+
+
+def stop_own_simulators() -> list[str]:
+    """Stop this checkout's Flower simulator processes; never another checkout's."""
+    ps = subprocess.run(
+        ["pgrep", "-af", "flower-superlink|flwr-simulation|flwr-serverapp"], capture_output=True, text=True
+    )
+    stopped = []
+    for pid in own_simulator_pids(ps.stdout.splitlines(), REPO):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(f"stopped simulator process {pid}")
+    return stopped
 
 
 def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
@@ -150,6 +184,9 @@ def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict
                 code = 1
             if code:
                 break
+        if gate.cleanup:
+            for done in gate.cleanup():
+                log.write(f"🧹 {done}\n")
     result = {
         **base,
         "gate": gate.name,
@@ -198,6 +235,7 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[
             "tutorials-flower",
             [["make", "-C", "fl-tutorials", "run-all-tutorials", "FL_BACKEND=flower"]],
             tutorial_metrics,
+            cleanup=stop_own_simulators,
         ),
         Gate("unit", [["make", "unit_test", *args]]),
         Gate("smoke-nvflare", [Check(verified), ["make", "e2e_smoke", "FL_BACKEND=nvflare", *args]], smoke_metrics),

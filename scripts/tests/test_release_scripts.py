@@ -238,6 +238,27 @@ class Gates(unittest.TestCase):
         results, _ = self.run_fake({"unit": 1}, keep_going=True)
         assert all(r["status"] == "passed" for n, r in results.items() if n != "unit")
 
+    def test_own_simulator_pids_only_matches_this_checkout(self):
+        repo = Path("/home/u/flip-wt-a")
+        ps = [
+            "11 /home/u/flip-wt-a/flip-utils/.venv/bin/python /home/u/flip-wt-a/flip-utils/.venv/bin/flower-superlink",
+            "12 /home/u/flip-wt-ab/flip-utils/.venv/bin/flower-superlink --insecure",  # a sibling with a longer name
+            "13 /home/u/flip-wt-b/flip-utils/.venv/bin/flwr-simulation --run-once",  # another checkout's
+            "14 /usr/local/bin/flower-superlink --insecure",  # a dev stack's container, visible on the host
+            "15 /home/u/flip-wt-a/flip-utils/.venv/bin/python -m pytest",  # ours, but not a simulator
+            "16 /home/u/flip-wt-a/flip-utils/.venv/bin/flwr-serverapp --insecure",
+        ]
+        assert gates.own_simulator_pids(ps, repo) == [11, 16]
+
+    def test_cleanup_runs_after_a_failed_step(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        gate = gates.Gate("x", [[sys.executable, "-c", "raise SystemExit(2)"]], cleanup=lambda: ["stopped 42"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = gates.run_gate(gate, tmp, {}, {})
+        assert result["status"] == "failed"
+        assert "🧹 stopped 42" in (tmp / "x.log").read_text()
+
     def test_a_failing_check_fails_its_gate(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
