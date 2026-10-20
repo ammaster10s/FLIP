@@ -10,8 +10,8 @@
 # limitations under the License.
 
 {{- if .Values.flClient.enabled }}
-{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (gt (int .Values.flClient.gpu.count) 1) }}
-{{- fail "flClient.gpu.count is above 1, but the fl-client pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0), so the NVFLARE client would refuse to start. Set flClient.gpu.count to 1." }}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (ne (int .Values.flClient.gpu.count) 1) }}
+{{- fail "flClient.gpu.count must be 1 when GPU mode is enabled on NVFLARE: the pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0). Set flClient.gpu.count to 1, or disable flClient.gpu.enabled for CPU-only mode." }}
 {{- end }}
 ---
 apiVersion: v1
@@ -39,7 +39,7 @@ data:
   NET_ID: {{ .Values.flClient.netId | quote }}
   # The GPUs the NVFLARE client offers its scheduler: none when the pod is given none.
   NUM_AVAILABLE_GPUS: {{ ternary .Values.flClient.gpu.count 0 .Values.flClient.gpu.enabled | quote }}
-  MEMORY_PER_GPU_IN_GIB: "7"
+  MEMORY_PER_GPU_IN_GIB: {{ .Values.flClient.gpu.memoryPerGpuInGiB | quote }}
   LOCAL_DEV: "false"
   IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
   DATA_ACCESS_API_URL: "http://data-access-api:8000"
@@ -246,7 +246,7 @@ spec:
               set -euo pipefail
               chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
               export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
-              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
+              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-7}
               export LOG_LEVEL=${LOG_LEVEL:-INFO}
               # Tell NVFLARE's scheduler the GPUs this pod has. The kit ships resources.template.json, the
               # provisioned resources.json with the GPU count and memory left as ${NUM_AVAILABLE_GPUS} and
@@ -261,7 +261,14 @@ spec:
                 cp /app/local/resources.json.default /app/local/resources.json \
                   || { echo "cannot copy the kit's local/resources.json.default to /app/local/resources.json" >&2; exit 1; }
               fi
-              cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Render the kit's log level, retaining the default-file path for older kits.
+              if [ -f /app/local/log_config.template.json ]; then
+                envsubst '${LOG_LEVEL}' < /app/local/log_config.template.json > /app/local/log_config.json \
+                  || { echo "cannot write /app/local/log_config.json" >&2; exit 1; }
+              else
+                cp /app/local/log_config.json.default /app/local/log_config.json \
+                  || { echo "cannot copy the kit's local/log_config.json.default to /app/local/log_config.json" >&2; exit 1; }
+              fi
               # Site privacy policy (FLIP#851, FLIP#1259): render or remove /app/local/privacy.json
               # from FL_SITE_PRIVACY_* or the governance document's [fl_privacy.nvflare] section.
               # `set -euo pipefail` above makes an invalid configuration fail the pod (fail
@@ -292,6 +299,8 @@ spec:
               value: /app/governance/governance.fl_privacy.toml
             {{- end }}
             {{- if eq .Values.flBackend "nvflare" }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
             # Keep policy values in the pod template, rather than only the ConfigMap,
             # so a Helm value change triggers a Deployment rollout.
             - name: FL_SITE_PRIVACY_POLICY

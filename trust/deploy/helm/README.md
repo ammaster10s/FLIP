@@ -741,6 +741,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    memoryPerGpuInGiB: 7
 ```
 
 Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
@@ -749,10 +750,20 @@ images ship PyTorch built for CUDA 13. The operator installs the driver itself, 
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
 
+`flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
+scheduler. Set it to the memory available for jobs on the site's GPU.
+
 On NVFLARE, `flClient.gpu.count` is also the number of GPUs the client offers its scheduler: 0 or 1, since the pod
-sees GPU 0 only. A job that declares more is not scheduled on this trust; NVFLARE retries it ten times, over about 40
-minutes, then ends it as `FINISHED:CAN_NOT_SCHEDULE`. With a count of 1, the client stops at start unless
+sees GPU 0 only. When `flClient.gpu.enabled` is true, the count must be 1; the chart refuses other counts.
+Use `flClient.gpu.enabled: false` for CPU-only mode. A job that requires more resources than the available clients
+can offer is retried according to the FL server's scheduler configuration. If it remains unschedulable until the
+retry limit is reached, it ends as `FINISHED:CAN_NOT_SCHEDULE`; the elapsed time depends on that configuration.
+With a count of 1, the client stops at start unless
 `nvidia-smi` in the pod sees a GPU (see [Pods in CrashLoopBackOff](#pods-in-crashloopbackoff)).
+
+The NVFLARE client renders the kit's `log_config.template.json` using `logLevel` (default `INFO`).
+Older kits without that template use `log_config.json.default` unchanged. Missing or unwritable log
+configuration stops the client with an explicit error.
 
 ### Autoscaling
 

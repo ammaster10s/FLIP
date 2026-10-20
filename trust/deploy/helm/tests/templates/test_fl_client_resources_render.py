@@ -161,9 +161,79 @@ def test_a_pod_without_a_gpu_offers_none():
     assert _configmap(rendered)["data"]["NUM_AVAILABLE_GPUS"] == "0"
 
 
-def test_more_gpus_than_the_pod_sees_is_refused_at_render():
-    # The pod sees GPU 0 only (CUDA_VISIBLE_DEVICES), so NVFLARE would refuse a count of 2 at start.
-    result = _helm("--set", "flClient.gpu.enabled=true", "--set", "flClient.gpu.count=2")
+@pytest.mark.parametrize("count", [-1, 0, 2])
+def test_enabled_gpu_requires_one_gpu_at_render(count):
+    # Zero silently offers no GPU; counts above one exceed the pod's GPU 0 visibility.
+    result = _helm("--set", "flClient.gpu.enabled=true", "--set", f"flClient.gpu.count={count}")
 
     assert result.returncode != 0
     assert "flClient.gpu.count" in result.stderr
+
+
+@pytest.mark.parametrize("memory", [7, 24])
+def test_gpu_memory_reaches_the_client(memory):
+    rendered = _render("--set", f"flClient.gpu.memoryPerGpuInGiB={memory}")
+    assert _configmap(rendered)["data"]["MEMORY_PER_GPU_IN_GIB"] == str(memory)
+
+
+def _run_log_step(local: Path) -> subprocess.CompletedProcess:
+    rendered = _render("--set", "logLevel=DEBUG")
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(rendered)
+        if doc
+        and doc.get("kind") == "Deployment"
+        and doc["metadata"]["labels"].get("app.kubernetes.io/component") == "fl-client"
+    )
+    container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "fl-client")
+    level = next(e["value"] for e in container["env"] if e["name"] == "LOG_LEVEL")
+    match = re.search(
+        r"if \[ -f /app/local/log_config\.template\.json \]; then\n.*?\n\s*fi\n", _client_command(rendered), re.S
+    )
+    assert match, "the NVFLARE client must render the log template"
+    script = match.group(0).replace("/app/local", str(local)) + f"echo {SENTINEL}\n"
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"], "LOG_LEVEL": level},
+        timeout=30,
+    )
+
+
+@needs_envsubst
+def test_log_level_renders_without_substituting_other_variables(tmp_path):
+    (tmp_path / "log_config.template.json").write_text('{"level": "${LOG_LEVEL}", "note": "$OTHER"}')
+    assert _run_log_step(tmp_path).returncode == 0
+    assert json.loads((tmp_path / "log_config.json").read_text()) == {"level": "DEBUG", "note": "$OTHER"}
+
+
+def test_log_config_falls_back_to_the_shipped_default(tmp_path):
+    (tmp_path / "log_config.json.default").write_text('{"level": "INFO"}')
+    assert _run_log_step(tmp_path).returncode == 0
+    assert json.loads((tmp_path / "log_config.json").read_text()) == {"level": "INFO"}
+
+
+def test_missing_log_config_stops_the_client(tmp_path):
+    _assert_stops(_run_log_step(tmp_path), "log_config.json.default")
+
+
+@needs_envsubst
+@pytest.mark.parametrize("source", ["log_config.template.json", "log_config.json.default"])
+def test_unwritable_log_config_stops_the_client(tmp_path, source):
+    (tmp_path / source).write_text('{"level": "INFO"}')
+    # A non-directory parent behind the output symlink makes both writes fail, including as root.
+    (tmp_path / "log_config.json").symlink_to(tmp_path / "blocked" / "config.json")
+    (tmp_path / "blocked").write_text("not a directory")
+    _assert_stops(_run_log_step(tmp_path), "cannot")
+
+
+def test_enabling_gpu_without_setting_count_is_refused():
+    result = _helm("--set", "flClient.gpu.enabled=true")
+    assert result.returncode != 0
+    assert "flClient.gpu.count must be 1" in result.stderr
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_nvflare_count_guard_does_not_restrict_flower(count):
+    _render("--set", "flBackend=flower", "--set", "flClient.gpu.enabled=true", "--set", f"flClient.gpu.count={count}")

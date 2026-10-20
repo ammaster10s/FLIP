@@ -512,10 +512,12 @@ flClient:
   shmSize: 8Gi
   # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the chart renders the kit's
   # local/resources.template.json with it at start (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
-  # NVFLARE a count above 1 is refused.
+  # NVFLARE an enabled GPU requires count 1; use gpu.enabled=false for CPU-only mode.
   gpu:
     enabled: false
     count: 0
+    # GPU memory offered to the NVFLARE scheduler, per GPU; set for the site's hardware.
+    memoryPerGpuInGiB: 7
     operator:
       # Set to true to enable GPU operator validation resources
       enabled: false
