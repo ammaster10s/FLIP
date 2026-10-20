@@ -261,7 +261,8 @@ class Record(unittest.TestCase):
         }
         text = record.render(results)
         assert "[ ]" not in text, text
-        assert "NVIDIA RTX 5090, gpu-box, 20 October 2026" in text
+        assert "NVIDIA RTX 5090 workstation, 20 October 2026" in text
+        assert "gpu-box" not in text  # the public notes never name the host
         assert "xray 53 s" in text
         assert "`aaaaaaaaa`" in text
 

@@ -70,7 +70,8 @@ def _tutorials(label: str, result: dict | None) -> str:
 def render(results: dict[str, dict]) -> str:
     """The *Release checks* section for these results (all boxes empty when there are none)."""
     any_result = next((r for r in results.values() if r.get("sha")), {})
-    host = ", ".join(x for x in (any_result.get("gpu"), any_result.get("host")) if x)
+    # The notes are public: name the hardware, never the host (its name stays in the JSON).
+    host = f"{any_result['gpu']} workstation" if any_result.get("gpu") else ""
     started = [r["start"] for r in results.values() if r.get("start")]
     date = datetime.fromisoformat(min(started)).strftime("%-d %B %Y") if started else ""
     tn, tf = results.get("tutorials-nvflare"), results.get("tutorials-flower")
