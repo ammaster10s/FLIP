@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""Run a release's pre-release gates in order and record each as JSON (FLIP#1608).
+
+``make release-gates TAG=v0.13.0 [INSTANCE=rel0130] [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]``
+
+Gates, in this order: both tutorial suites; ``make unit_test``; the FLARE smoke (after ``release-verify``);
+the switch to Flower (``restart-fl``, then verify again); the Flower smoke, reusing the FLARE smoke's project
+so the images are pulled once; ``make integration_test`` (after the smokes, since it writes to the instance's
+hub database); and teardown, which runs even after a failure unless ``KEEP=1``.
+
+Each gate writes ``release-gates/<TAG>/<gate>.json`` (commit, host, GPU, times, exit code, log path, metrics)
+beside its log. A failed gate stops the run — later gates are recorded as not run — unless ``CONTINUE=1``.
+``make release-record`` turns the JSON into the release notes' *Release checks* section.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import verify as verify_mod  # noqa: E402
+from release_lib import (  # noqa: E402
+    REPO,
+    ReleaseError,
+    assert_at_pr_head,
+    assert_clean,
+    default_instance,
+    gates_dir,
+    instance_env,
+    instance_make_args,
+    load_results,
+)
+
+ORDER = (
+    "tutorials-nvflare",
+    "tutorials-flower",
+    "unit",
+    "smoke-nvflare",
+    "switch-flower",
+    "smoke-flower",
+    "integration",
+    "teardown",
+)
+
+
+@dataclass
+class Check:
+    """A Python step: returns its problems, and an empty list passes."""
+
+    fn: Callable[[], list[str]]
+
+
+# A step is a command, a command built when its turn comes (it may need an earlier gate's result), or a check.
+Step = list[str] | Callable[[], list[str]] | Check
+
+
+@dataclass
+class Gate:
+    """One gate: its steps and how to read metrics out of its output."""
+
+    name: str
+    steps: list[Step]
+    metrics: Callable[[list[tuple[float, str]]], dict] = field(default=lambda _lines: {})
+
+
+def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
+    """Per-tutorial pass/fail and seconds from ``run-all-tutorials`` output (one ``🚀 Running`` line each)."""
+    runs: list[dict] = []
+    for t, line in lines:
+        start = re.search(r"🚀 Running (?:FLARE|Flower) tutorial (\S+)", line)
+        if start:
+            if runs:
+                runs[-1].setdefault("seconds", round(t - runs[-1].pop("_t")))
+            runs.append({"name": Path(start[1]).name, "passed": True, "_t": t})
+        elif re.search(r"❌ tutorial \S+ failed", line) and runs:
+            runs[-1]["passed"] = False
+    if runs and "_t" in runs[-1]:
+        runs[-1]["seconds"] = round(lines[-1][0] - runs[-1].pop("_t"))
+    return {"tutorials": runs, "passed": sum(r["passed"] for r in runs), "total": len(runs)}
+
+
+def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
+    """The smoke's closing summary: project, model and final status."""
+    out = {}
+    for _t, line in lines:
+        m = re.match(r"\s*(project_id|model_id|final_status)\s*=\s*(\S+)", line)
+        if m:
+            out[m[1]] = m[2]
+    return out
+
+
+def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
+    """Run one command, streaming output to the log and keeping timed lines for the metric parsers."""
+    log.write(f"▶ {' '.join(cmd)}\n")
+    log.flush()
+    with subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            lines.append((time.monotonic(), line.rstrip("\n")))
+            log.write(line)
+            log.flush()
+    return proc.returncode
+
+
+def _run_check(check: Check, log) -> int:
+    with contextlib.redirect_stdout(log):
+        try:
+            return 1 if check.fn() else 0
+        except (ReleaseError, subprocess.CalledProcessError, KeyError) as e:
+            log.write(f"❌ {e}\n")
+            return 1
+
+
+def run_gate(gate: Gate, out_dir: Path, base: dict, env: dict[str, str]) -> dict:
+    """Run a gate's steps until one fails; write and return its result."""
+    log_path = out_dir / f"{gate.name}.log"
+    lines: list[tuple[float, str]] = []
+    start, t0, code = datetime.now(timezone.utc), time.monotonic(), 0
+    with log_path.open("w") as log:
+        for step in gate.steps:
+            try:
+                if isinstance(step, Check):
+                    code = _run_check(step, log)
+                else:
+                    code = _run_command(step() if callable(step) else step, log, env, lines)
+            except ReleaseError as e:
+                log.write(f"❌ {e}\n")
+                code = 1
+            if code:
+                break
+    result = {
+        **base,
+        "gate": gate.name,
+        "status": "passed" if code == 0 else "failed",
+        "exit_code": code,
+        "start": start.isoformat(timespec="seconds"),
+        "end": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "seconds": round(time.monotonic() - t0),
+        "log": str(log_path),
+        "metrics": gate.metrics(lines) if lines else {},
+    }
+    (out_dir / f"{gate.name}.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(f"{'✅' if code == 0 else '❌'} {gate.name} ({result['seconds']} s) → {log_path}", flush=True)
+    return result
+
+
+def skip_gate(name: str, out_dir: Path, base: dict) -> dict:
+    """Record a gate the run did not reach, so a stale result from an earlier run cannot stand in for it."""
+    result = {**base, "gate": name, "status": "not-run"}
+    (out_dir / f"{name}.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[str, Gate]:
+    """The gates, each through the repo's own make targets and with the instance's settings."""
+    args = instance_make_args(instance)
+
+    def verified() -> list[str]:
+        return verify_mod.verify(tag, instance)
+
+    def nothing_left() -> list[str]:
+        left = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"name=^{instance}-"], capture_output=True, text=True, check=True
+        ).stdout.split()
+        svcs = verify_mod.services(instance)
+        return (
+            [f"{len(left)} container(s) and {len(svcs)} service(s) named {instance}-* remain"] if left or svcs else []
+        )
+
+    def smoke_flower() -> list[str]:
+        return ["make", "e2e_smoke", "FL_BACKEND=flower", f"EXTRA_ARGS=--project-id {project_id()}", *args]
+
+    gates = [
+        Gate("tutorials-nvflare", [["make", "-C", "fl-tutorials", "run-all-tutorials"]], tutorial_metrics),
+        Gate(
+            "tutorials-flower",
+            [["make", "-C", "fl-tutorials", "run-all-tutorials", "FL_BACKEND=flower"]],
+            tutorial_metrics,
+        ),
+        Gate("unit", [["make", "unit_test", *args]]),
+        Gate("smoke-nvflare", [Check(verified), ["make", "e2e_smoke", "FL_BACKEND=nvflare", *args]], smoke_metrics),
+        Gate("switch-flower", [["make", "restart-fl", "FL_BACKEND=flower", *args], Check(verified)]),
+        Gate("smoke-flower", [smoke_flower], smoke_metrics),
+        Gate("integration", [["make", "integration_test", *args]]),
+        Gate(
+            "teardown",
+            [
+                ["make", "down", "FL_BACKEND=flower", *args],
+                ["make", "down", "FL_BACKEND=nvflare", *args],
+                ["make", "remove-networks", f"FLIP_INSTANCE={instance}"],
+                Check(nothing_left),
+            ],
+        ),
+    ]
+    return {g.name: g for g in gates}
+
+
+def run(
+    gates: dict[str, Gate], selected: list[str], out_dir: Path, base: dict, env: dict[str, str], keep_going: bool
+) -> dict[str, dict]:
+    """Run the selected gates in order; after a failure the rest are not run (bar teardown) unless ``keep_going``."""
+    results: dict[str, dict] = {}
+    failed = False
+    try:
+        for name in selected:
+            if name == "teardown":
+                continue
+            if failed and not keep_going:
+                results[name] = skip_gate(name, out_dir, base)
+                continue
+            results[name] = run_gate(gates[name], out_dir, base, env)
+            failed = failed or results[name]["status"] == "failed"
+    finally:
+        if "teardown" in selected:
+            results["teardown"] = run_gate(gates["teardown"], out_dir, base, env)
+    return results
+
+
+def _gpu() -> str:
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, check=True
+        )
+        return ", ".join(sorted(set(out.stdout.split("\n")) - {""}))
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--instance", default="")
+    parser.add_argument("--pr", default="")
+    parser.add_argument("--gates", default="", help=f"comma-separated subset of: {', '.join(ORDER)}")
+    parser.add_argument("--continue-on-failure", action="store_true")
+    parser.add_argument("--keep", action="store_true", help="leave the instance up (skip teardown)")
+    a = parser.parse_args(argv)
+    try:
+        instance = a.instance or default_instance(a.tag)
+        assert_clean()
+        sha = assert_at_pr_head(a.pr or None)
+        wanted = [g.strip() for g in a.gates.split(",") if g.strip()] or list(ORDER)
+        unknown = sorted(set(wanted) - set(ORDER))
+        if unknown:
+            raise ReleaseError(f"unknown gate(s) {', '.join(unknown)}; choose from {', '.join(ORDER)}")
+        selected = [g for g in ORDER if g in wanted and not (a.keep and g == "teardown")]
+    except (ReleaseError, subprocess.CalledProcessError) as e:
+        print(f"❌ {e}", file=sys.stderr)
+        return 1
+
+    out_dir = gates_dir(a.tag)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = {"tag": a.tag, "instance": instance, "sha": sha, "host": socket.gethostname(), "gpu": _gpu()}
+
+    def project_id() -> str:
+        pid = load_results(a.tag).get("smoke-nvflare", {}).get("metrics", {}).get("project_id")
+        if not pid:
+            raise ReleaseError("the Flower smoke reuses the FLARE smoke's project; run smoke-nvflare first")
+        return pid
+
+    gates = build_gates(a.tag, instance, project_id)
+    results = run(gates, selected, out_dir, base, instance_env(instance), a.continue_on_failure)
+    failed = [n for n, r in results.items() if r["status"] == "failed"]
+    print(f"{'❌ failed: ' + ', '.join(failed) if failed else '✅ all selected gates passed'} — results in {out_dir}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

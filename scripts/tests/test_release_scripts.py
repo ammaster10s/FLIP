@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""Tests for scripts/release/ — the deterministic release pipeline (FLIP#1608).
+
+Only the parts that need no Docker, GPU, network or GitHub: env and kit generation, the provenance checks
+against fake ``docker inspect`` output, the gate runner's bookkeeping, the *Release checks* rendering and the
+version-bump rules.
+
+Usage:
+    python3 scripts/tests/test_release_scripts.py
+"""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import re
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "release"))
+
+import gates  # noqa: E402
+import instance  # noqa: E402
+import prepare  # noqa: E402
+import record  # noqa: E402
+import verify  # noqa: E402
+from release_lib import ReleaseError, default_instance, documented_value, placeholders, read_env  # noqa: E402
+
+HUB_EXAMPLE = (ROOT / ".env.development.example").read_text()
+KIT_EXAMPLES = sorted((ROOT / "trust").glob(".env.*.development.example"))
+# Kit ports that live inside the trust's own network: the same in every instance.
+TRUST_CONTAINER_PORTS = {"PACS_QR_PORT", "DATA_ACCESS_API_PORT", "IMAGING_API_PORT", "TRUST_API_PORT"}
+SECRETS = {"POSTGRES_PASSWORD": "pg-SECRET", "AES_KEY_BASE64": "aes-SECRET", "ADMIN_USER_PASSWORD": "admin-SECRET"}
+MINTED = {**SECRETS, "INTERNAL_SERVICE_KEY": "isk-SECRET", "INTERNAL_SERVICE_KEY_HASH": "hash"}
+
+
+def refused(fn, *args) -> ReleaseError:
+    """Call ``fn`` and return the ReleaseError it raises (fail if it does not)."""
+    try:
+        fn(*args)
+    except ReleaseError as e:
+        return e
+    raise AssertionError("ReleaseError not raised")
+
+
+def numeric_ports(text: str) -> set[str]:
+    return {m[1] for m in re.finditer(r"^(?:# ?)?([A-Z0-9_]+_PORT)=(\d+)", text, re.M)}
+
+
+class Instance(unittest.TestCase):
+    def test_default_instance_name(self):
+        assert default_instance("v0.13.0") == "rel0130"
+        refused(default_instance, "v0.13.0-rc.1")
+
+    def test_every_hub_host_port_is_moved(self):
+        # A port added to the example without being listed would leave the instance on the default stack's.
+        assert numeric_ports(HUB_EXAMPLE) <= set(instance.HUB_HOST_PORTS), numeric_ports(HUB_EXAMPLE)
+        text = instance.hub_env(HUB_EXAMPLE, "rel0130", 10000, MINTED)
+        for key in instance.HUB_HOST_PORTS:
+            assert read_env_text(text)[key] == str(int(documented_value(HUB_EXAMPLE, key)) + 10000), key
+
+    def test_hub_env_targets_the_instance(self):
+        env = read_env_text(instance.hub_env(HUB_EXAMPLE, "rel0130", 10000, MINTED))
+        assert env["FLIP_INSTANCE"] == "rel0130"
+        assert env["CENTRAL_HUB_API_URL"] == env["FLIP_E2E_BASE_URL"] == "http://localhost:18080/api"
+        assert env["KEYCLOAK_PUBLIC_URL"] == "http://localhost:18180"
+        assert env["DOCKER_TAG"] == env["DOCKER_FL_TAG"] == "rel0130"
+        assert env["DOCKER_FL_REGISTRY"] == ""
+        assert not placeholders(instance.hub_env(HUB_EXAMPLE, "rel0130", 10000, MINTED))
+
+    def test_minted_secrets_are_real(self):
+        env = read_env_text(instance.hub_env(HUB_EXAMPLE, "x", 10000))
+        import base64
+        import hashlib
+
+        assert len(base64.b64decode(env["AES_KEY_BASE64"])) == 32
+        assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
+
+    def test_unknown_placeholder_is_refused(self):
+        refused(instance.hub_env, HUB_EXAMPLE + "\nNEW_SECRET=<fill-me>\n", "x", 10000, MINTED)
+
+    def test_port_out_of_range_is_refused(self):
+        refused(instance.hub_env, HUB_EXAMPLE, "x", 60000, MINTED)
+
+    def test_trust_kits_move_host_ports_only(self):
+        assert KIT_EXAMPLES
+        for example in KIT_EXAMPLES:
+            text = example.read_text()
+            assert numeric_ports(text) <= set(instance.TRUST_HOST_PORTS) | TRUST_CONTAINER_PORTS, example
+            kit = read_env_text(instance.trust_kit(text, "rel0130", 10000))
+            for key in instance.TRUST_HOST_PORTS:
+                assert kit[key] == str(int(documented_value(text, key)) + 10000), (example, key)
+            for key in TRUST_CONTAINER_PORTS:
+                assert kit[key] == documented_value(text, key), (example, key)
+            assert kit["OMOP_DB_TAG"] == "rel0130"
+
+    def test_write_files_refuses_to_overwrite_and_hides_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            shutil.copy(ROOT / ".env.development.example", repo)
+            (repo / "trust").mkdir()
+            for example in KIT_EXAMPLES:
+                shutil.copy(example, repo / "trust")
+            out = io.StringIO()
+            with mock.patch.object(instance, "_mint", return_value=MINTED), contextlib.redirect_stdout(out):
+                written = instance.write_files("rel0130", 10000, False, repo)
+            assert len(written) == 1 + len(KIT_EXAMPLES)
+            assert all(p.stat().st_mode & 0o777 == 0o600 for p in written)
+            assert not any(s in out.getvalue() for s in MINTED.values())
+            refused(instance.write_files, "rel0130", 10000, False, repo)
+            with contextlib.redirect_stdout(io.StringIO()):
+                instance.write_files("rel0130", 10000, True, repo)
+
+
+def read_env_text(text: str) -> dict[str, str]:
+    with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+        f.write(text)
+    try:
+        return read_env(Path(f.name))
+    finally:
+        Path(f.name).unlink()
+
+
+def container(name: str, image: str, workdir: str | None, service: str = "", stack: bool = False) -> dict:
+    labels = {"com.docker.compose.service": service} if service else {}
+    if workdir is not None:
+        labels["com.docker.compose.project.working_dir"] = workdir
+    if stack:
+        labels["com.docker.stack.namespace"] = name.split("_")[0]
+    return {"Name": f"/{name}", "Config": {"Image": image, "Labels": labels}, "State": {"Running": True}}
+
+
+class Verify(unittest.TestCase):
+    REPO = Path("/w/flip")
+
+    def test_this_checkout_at_the_instance_tag_passes(self):
+        found = [
+            container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/flip/deploy"),
+            container("rel0130-deploy-flip-ui-1", "rel0130-deploy-flip-ui", "/w/flip/deploy"),
+            container("rel0130-deploy-flip-db-1", "postgres:17", "/w/flip/deploy"),
+            container("rel0130-trust1-fl-client-net-1-1", "flare-fl-client:rel0130", "/w/flip/trust"),
+            container(
+                "rel0130-xnat1_xnat-web.1.x", "ghcr.io/londonaicentre/xnat-web:rel0130@sha256:ab", None, stack=True
+            ),
+        ]
+        assert verify.check_containers(found, "rel0130", self.REPO) == []
+
+    def test_pulled_or_foreign_containers_fail(self):
+        found = [
+            container("rel0130-trust1-omop-db-1", "ghcr.io/londonaicentre/omop-db:stag", "/w/flip/trust"),
+            container("rel0130-deploy-fl-server-net-1-1", "flare-fl-server:dev", "/w/flip/deploy"),
+            container("rel0130-deploy-flip-api-1", "ghcr.io/londonaicentre/flip-api:rel0130", "/w/other/deploy"),
+            container("rel0130-stray", "busybox", None),
+        ]
+        problems = verify.check_containers(found, "rel0130", self.REPO)
+        assert len(problems) == 4, problems
+        assert verify.check_containers([], "rel0130", self.REPO)
+
+    def test_services_must_be_replicated_at_the_instance_tag(self):
+        ok = {"Name": "rel0130-xnat1_xnat-web", "Replicas": "1/1", "Image": "ghcr.io/londonaicentre/xnat-web:rel0130"}
+        proxy = {"Name": "rel0130-xnat1_proxy", "Replicas": "1/1", "Image": "tecnativa/docker-socket-proxy:v0.4.2"}
+        assert verify.check_services([ok, proxy], "rel0130") == []
+        stuck = {**ok, "Replicas": "0/1"}
+        pulled = {**ok, "Image": "ghcr.io/londonaicentre/xnat-web:stag"}
+        assert len(verify.check_services([stuck, pulled], "rel0130")) == 2
+
+
+class Gates(unittest.TestCase):
+    def test_tutorial_metrics(self):
+        lines = [
+            (0.0, "🚀 Running FLARE tutorial xray_classification"),
+            (60.0, "🚀 Running FLARE tutorial 3d_spleen_segmentation"),
+            (100.0, "❌ tutorial 3d_spleen_segmentation failed"),
+        ]
+        m = gates.tutorial_metrics(lines)
+        assert m["total"] == 2
+        assert m["passed"] == 1
+        assert m["tutorials"][0] == {"name": "xray_classification", "passed": True, "seconds": 60}
+        assert m["tutorials"][1]["passed"] is False
+        assert m["tutorials"][1]["seconds"] == 40
+        flower = gates.tutorial_metrics([(0.0, "🚀 Running Flower tutorial fl-tutorials/flower/xray_classification")])
+        assert flower["tutorials"][0]["name"] == "xray_classification"
+
+    def test_smoke_metrics(self):
+        lines = [
+            (0.0, "   project_id   = a02be724"),
+            (0.0, "   model_id     = 440df334"),
+            (0.0, "   final_status = RESULTS_UPLOADED"),
+        ]
+        assert gates.smoke_metrics(lines) == {
+            "project_id": "a02be724",
+            "model_id": "440df334",
+            "final_status": "RESULTS_UPLOADED",
+        }
+
+    def run_fake(self, codes: dict[str, int], keep_going: bool = False) -> tuple[dict, Path]:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        fake = {n: gates.Gate(n, [[sys.executable, "-c", f"raise SystemExit({codes.get(n, 0)})"]]) for n in gates.ORDER}
+        with contextlib.redirect_stdout(io.StringIO()):
+            results = gates.run(fake, list(gates.ORDER), tmp, {"sha": "abc"}, {}, keep_going)
+        return results, tmp
+
+    def test_a_failure_stops_the_run_but_not_teardown(self):
+        results, tmp = self.run_fake({"unit": 3})
+        assert results["unit"]["status"] == "failed"
+        assert results["unit"]["exit_code"] == 3
+        assert results["smoke-nvflare"]["status"] == "not-run"
+        assert results["teardown"]["status"] == "passed"
+        written = json.loads((tmp / "smoke-flower.json").read_text())
+        assert written == {"sha": "abc", "gate": "smoke-flower", "status": "not-run"}
+
+    def test_continue_runs_every_gate(self):
+        results, _ = self.run_fake({"unit": 1}, keep_going=True)
+        assert all(r["status"] == "passed" for n, r in results.items() if n != "unit")
+
+    def test_a_failing_check_fails_its_gate(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        gate = gates.Gate("x", [gates.Check(lambda: ["not this commit"]), [sys.executable, "-c", "print('never')"]])
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = gates.run_gate(gate, tmp, {}, {})
+        assert result["status"] == "failed"
+        assert "never" not in (tmp / "x.log").read_text()
+
+
+def result(gate: str, status: str = "passed", **metrics) -> dict:
+    return {
+        "gate": gate, "status": status, "sha": "a" * 40, "instance": "rel0130", "host": "gpu-box",
+        "gpu": "NVIDIA RTX 5090", "start": "2026-10-20T21:00:00+00:00", "seconds": 90, "exit_code": 0,
+        "log": f"/x/{gate}.log", "metrics": metrics,
+    }  # fmt: skip
+
+
+class Record(unittest.TestCase):
+    def test_passing_results_tick_every_box(self):
+        results = {
+            "tutorials-nvflare": result("tutorials-nvflare", tutorials=[{"name": "xray", "seconds": 53}], total=1),
+            "tutorials-flower": result("tutorials-flower", tutorials=[], total=5),
+            "smoke-nvflare": result("smoke-nvflare", final_status="RESULTS_UPLOADED"),
+            "smoke-flower": result("smoke-flower", final_status="RESULTS_UPLOADED"),
+            "unit": result("unit"),
+            "integration": result("integration"),
+        }
+        text = record.render(results)
+        assert "[ ]" not in text, text
+        assert "NVIDIA RTX 5090, gpu-box, 20 October 2026" in text
+        assert "xray 53 s" in text
+        assert "`aaaaaaaaa`" in text
+
+    def test_failed_or_missing_gates_stay_unticked(self):
+        text = record.render({"tutorials-nvflare": result("tutorials-nvflare", "failed")})
+        assert text.count("[x]") == 1  # only host and date
+        assert "FLARE: failed (exit 0, log `tutorials-nvflare.log`)" in text
+        assert "Flower: not run" in text
+        assert record.render({}).count("[ ]") == 5
+
+    def test_only_the_section_is_replaced(self):
+        template = record.TEMPLATE.read_text()
+        new = record.replace_section(template, record.render({}))
+        before, after = template.split(record.HEADING)
+        assert new.startswith(before)
+        assert new.endswith(after[after.index("\n## ") + 1 :])
+
+    def test_results_from_another_commit_are_refused(self):
+        results = {"a": result("a"), "b": {**result("b"), "sha": "b" * 40}}
+        refused(record.check_commit, results, "a" * 40)
+        record.check_commit({"a": result("a")}, "a" * 40)
+        with mock.patch.object(record, "git", return_value=".github/RELEASE_NOTES_TEMPLATE.md"):
+            record.check_commit({"a": result("a")}, "c" * 40)
+        with mock.patch.object(record, "git", return_value="flip-api/x.py\n.github/RELEASE_NOTES_TEMPLATE.md"):
+            refused(record.check_commit, {"a": result("a")}, "c" * 40)
+
+
+class Prepare(unittest.TestCase):
+    def test_step_and_bump(self):
+        assert prepare.step("v0.12.0", "v0.13.0") == "minor"
+        assert prepare.step("v0.12.0", "v0.12.1") == "patch"
+        assert prepare.step("v0.12.3", "v1.0.0") == "major"
+        refused(prepare.step, "v0.13.0", "v0.13.0")
+        assert prepare.bump("0.9.4", "minor") == "0.10.0"
+        assert prepare.bump("0.9.4", "patch") == "0.9.5"
+        assert prepare.bump("0.9.4", "major") == "1.0.0"
+
+    def test_tests_and_markdown_do_not_count(self):
+        assert prepare.counts_as_change("flip-api/src/x.py", "flip-api")
+        assert not prepare.counts_as_change("flip-api/tests/unit/x.py", "flip-api")
+        assert not prepare.counts_as_change("trust/trust-api/README.md", "trust/trust-api")
+        assert not prepare.counts_as_change("flip-api-other/x.py", "flip-api")
+
+    def test_plan_bumps_changed_services_only(self):
+        changed = ["flip-api/src/a.py", "trust/trust-api/tests/b.py", "flip-utils/flip/c.py", "flip-ui/src/d.vue"]
+        versions = prepare.plan("v9.9.0", "v9.8.0", "flip-utils-v99.0.0", changed, ROOT)
+        assert versions["pyproject.toml"] == "9.9.0"
+        assert set(versions) == {
+            "pyproject.toml",
+            "flip-api/pyproject.toml",
+            "flip-ui/package.json",
+            prepare.FLIP_UTILS,
+        }
+        assert versions[prepare.FLIP_UTILS] == "99.1.0"  # strictly above the last flip-utils tag
+
+    def test_version_files_round_trip(self):
+        for rel in ("pyproject.toml", "flip-ui/package.json", prepare.FLIP_UTILS):
+            path = ROOT / rel
+            new = prepare.write_version(path.read_text(), path.suffix, "9.9.9")
+            assert re.search(prepare.VERSION_PATTERNS[path.suffix], new, re.M)[2] == "9.9.9"
+            assert len(new.splitlines()) == len(path.read_text().splitlines())
+        lock = prepare.set_package_lock((ROOT / "flip-ui/package-lock.json").read_text(), "9.9.9")
+        data = json.loads(lock)
+        assert data["version"] == data["packages"][""]["version"] == "9.9.9"
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

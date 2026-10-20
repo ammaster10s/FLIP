@@ -17,7 +17,8 @@
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
-		demo-video demo-users seed-demo-projects reset-keycloak
+		demo-video demo-users seed-demo-projects reset-keycloak \
+		_release-tag release-prepare release-instance release-verify release-gates release-record
 
 # What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
@@ -529,6 +530,29 @@ unit_test:
 integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
+
+# Release pipeline (FLIP#1608, CONTRIBUTING § Cutting a release). Each step is one script under
+# scripts/release/; TAG=vX.Y.Z throughout, INSTANCE defaults to rel<XYZ>. PR=<n> pins the gates to the
+# release PR's head.
+#   release-prepare   bump versions, make lock, empty Release checks (DRY_RUN=1 previews)
+#   release-instance  isolated instance from this checkout, every image built at :INSTANCE (PORT_OFFSET, FORCE=1)
+#   release-verify    prove the instance runs this commit (images, working dir, /health, AES key)
+#   release-gates     tutorials, suites, both smokes, teardown -> release-gates/<TAG>/*.json (GATES, CONTINUE, KEEP)
+#   release-record    render Release checks from those results (APPLY=1 writes the notes template)
+RELEASE_ARGS = --tag "$(TAG)" $(if $(INSTANCE),--instance "$(INSTANCE)") $(if $(PR),--pr "$(PR)")
+_release-tag:
+	@[ -n "$(TAG)" ] || { echo "❌ TAG=vX.Y.Z required"; exit 1; }
+release-prepare: _release-tag
+	@python3 scripts/release/prepare.py --tag "$(TAG)" $(if $(DRY_RUN),--dry-run)
+release-instance: _release-tag
+	@python3 scripts/release/instance.py $(RELEASE_ARGS) $(if $(PORT_OFFSET),--port-offset $(PORT_OFFSET)) $(if $(FORCE),--force)
+release-verify: _release-tag
+	@python3 scripts/release/verify.py $(RELEASE_ARGS)
+release-gates: _release-tag
+	@python3 scripts/release/gates.py $(RELEASE_ARGS) $(if $(GATES),--gates "$(GATES)") \
+		$(if $(CONTINUE),--continue-on-failure) $(if $(KEEP),--keep)
+release-record: _release-tag
+	@python3 scripts/release/record.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(APPLY),--apply)
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
 UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base

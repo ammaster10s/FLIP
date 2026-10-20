@@ -512,3 +512,6 @@ flip-utils/**/*.ts
 
 # Galaxy roles (namespace.role) installed beside the shared trust-host roles (FLIP#1213)
 trust/deploy/ansible/roles/*.*/
+
+# make release-gates results and logs (FLIP#1608)
+release-gates/
