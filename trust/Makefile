@@ -512,7 +512,7 @@ else
 	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
 	@ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
 	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
-	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/scripts/check_governance.py
+	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/data_access_api/scripts/check_governance.py
 	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
 	@tmp=$$(mktemp -d) && trap 'rmdir "$$tmp"' EXIT && \
 	    ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" $(SITE_PRIVACY_KIT_ENV) \
