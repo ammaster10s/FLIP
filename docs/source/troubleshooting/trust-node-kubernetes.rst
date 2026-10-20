@@ -154,6 +154,35 @@ leaves those keys alone:
 
 Helm 3 never raises this conflict.
 
+.. _ts-k8s-recreate-forbidden:
+
+Upgrade refused: ``rollingUpdate: Forbidden`` on a ``Recreate`` Deployment
+==========================================================================
+
+.. code-block:: text
+
+   Error: UPGRADE FAILED: server-side apply failed for object flip-trust/trust-release-flip-trust-data-access-api
+   apps/v1, Kind=Deployment: Deployment.apps "trust-release-flip-trust-data-access-api" is invalid:
+   spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy `type` is 'Recreate'
+
+The release stays on its previous revision.
+
+**Cause.** The chart now renders as ``Recreate`` a Deployment the cluster created as ``RollingUpdate``. FLIP#857
+did this to data-access-api when its snapshot store is ReadWriteOnce. The API server filled in ``rollingUpdate``
+defaults when the Deployment was created, and no field manager owns them, so Helm 4's server-side apply keeps them
+beside the new ``type: Recreate`` and the object is invalid.
+
+**Fix.** ``make deploy`` (and so ``deploy-trust-k8s`` and ``upgrade-trust-k8s``) switches such Deployments before
+the upgrade (FLIP#1524, ``scripts/migrate-strategy.sh``). A plain ``helm upgrade`` does not; patch the named
+Deployment once, then upgrade:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust patch deploy trust-release-flip-trust-data-access-api --type=json \
+     -p '[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+
+Setting ``rollingUpdate: null`` in the chart does not help. Helm 3 applies client-side and never raises this.
+
 .. _ts-k8s-xnat-init-timeout:
 
 Deploy fails with ``resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready``
