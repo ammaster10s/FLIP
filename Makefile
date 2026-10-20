@@ -18,7 +18,7 @@
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak \
-		_release-tag release-prepare release-instance release-verify release-gates release-record
+		_release-tag release-prepare release-instance release-verify release-gates release-record release-main-check
 
 # What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
@@ -539,6 +539,7 @@ integration_test:
 #   release-verify    prove the instance runs this commit (images, working dir, /health, AES key)
 #   release-gates     tutorials, suites, both smokes, teardown -> release-gates/<TAG>/*.json (GATES, CONTINUE, KEEP)
 #   release-record    render Release checks from those results (APPLY=1 writes the notes template)
+#   release-main-check  read-only: is the develop -> main PR ready; the after-merge checklist (OWED=<file>)
 RELEASE_ARGS = --tag "$(TAG)" $(if $(INSTANCE),--instance "$(INSTANCE)") $(if $(PR),--pr "$(PR)")
 _release-tag:
 	@[ -n "$(TAG)" ] || { echo "❌ TAG=vX.Y.Z required"; exit 1; }
@@ -553,6 +554,8 @@ release-gates: _release-tag
 		$(if $(CONTINUE),--continue-on-failure) $(if $(KEEP),--keep)
 release-record: _release-tag
 	@python3 scripts/release/record.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(APPLY),--apply)
+release-main-check: _release-tag
+	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
 UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base

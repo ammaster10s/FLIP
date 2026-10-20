@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "release"))
 
 import gates  # noqa: E402
 import instance  # noqa: E402
+import main_check  # noqa: E402
 import prepare  # noqa: E402
 import record  # noqa: E402
 import verify  # noqa: E402
@@ -333,6 +334,51 @@ class Prepare(unittest.TestCase):
         lock = prepare.set_package_lock((ROOT / "flip-ui/package-lock.json").read_text(), "9.9.9")
         data = json.loads(lock)
         assert data["version"] == data["packages"][""]["version"] == "9.9.9"
+
+
+def release_pr(**overrides) -> dict:
+    pr = {
+        "number": 1700, "baseRefName": "main", "headRefName": "develop", "mergeable": "MERGEABLE",
+        "statusCheckRollup": [
+            {"workflowName": main_check.ORIGIN_WORKFLOW, "conclusion": "SUCCESS"},
+            {"workflowName": main_check.VERSION_WORKFLOW, "conclusion": "SUCCESS"},
+            {"workflowName": "CodeQL", "conclusion": "SUCCESS"},
+        ],
+        "comments": [{"body": f"{main_check.PREVIEW_MARKER}\n## Release notes preview"}],
+    }  # fmt: skip
+    return {**pr, **overrides}
+
+
+class MainCheck(unittest.TestCase):
+    def test_a_ready_pr_passes(self):
+        assert main_check.problems(release_pr(), flip_utils_changed=True) == []
+
+    def test_each_gate_is_required(self):
+        assert main_check.problems(release_pr(mergeable="CONFLICTING"), True)
+        assert main_check.problems(release_pr(headRefName="feature"), True)
+        assert main_check.problems(release_pr(comments=[]), True)
+        no_origin = release_pr(statusCheckRollup=release_pr()["statusCheckRollup"][1:])
+        assert main_check.problems(no_origin, True)
+
+    def test_the_version_check_is_required_only_when_flip_utils_changed(self):
+        # check-version-bump.yml only triggers on flip-utils/**, so its absence is fine otherwise.
+        rollup = [c for c in release_pr()["statusCheckRollup"] if c["workflowName"] != main_check.VERSION_WORKFLOW]
+        assert main_check.problems(release_pr(statusCheckRollup=rollup), flip_utils_changed=False) == []
+        assert main_check.problems(release_pr(statusCheckRollup=rollup), flip_utils_changed=True)
+        failed = [*rollup, {"workflowName": main_check.VERSION_WORKFLOW, "conclusion": "FAILURE"}]
+        assert main_check.problems(release_pr(statusCheckRollup=failed), flip_utils_changed=False)
+
+    def test_create_command_carries_the_title_checklist_and_owed_items(self):
+        import shlex
+
+        argv = shlex.split(main_check.create_command("v0.13.0", ["Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB"]))
+        assert argv[:7] == ["gh", "pr", "create", "--base", "main", "--head", "develop"]
+        assert argv[argv.index("--title") + 1] == "Release v0.13.0 (develop → main)"
+        body = argv[argv.index("--body") + 1]
+        assert "merge commit" in body
+        assert "fl_quiesced" in body
+        assert "`:v0.13.0` on all twelve images" in body
+        assert "- [ ] Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" in body
 
 
 if __name__ == "__main__":

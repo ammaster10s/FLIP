@@ -845,6 +845,7 @@ The mechanical steps are make targets (FLIP#1608), each a script under [`scripts
 | `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
 | `make release-gates TAG=… PR=<n>` | Both tutorial suites, `unit_test`, both smokes, `integration_test`, teardown; one JSON result per gate under `release-gates/<TAG>/`. |
 | `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+| `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
 
 The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
 

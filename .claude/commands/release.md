@@ -34,7 +34,8 @@ On top of it, for Claude Code:
   and on the GPU host) and existing `release-gates/<TAG>/*.json`; rerun only the gates that did not pass at the
   current head (`GATES=…`).
 - **Memory.** If your memory has release notes or owed items tied to "next release" or "release→main", such as
-  GitHub environment variable cleanups, put them in the `main`-PR body as after-merge steps. Also follow any
+  GitHub environment variable cleanups, write them one per line to a file and pass it as
+  `make release-main-check OWED=<file>`, so they land in the `main`-PR body as after-merge steps. Also follow any
   turn-taking rules it records for the shared host.
 - **Remote runs.** Start `release-instance` and `release-gates` with `run_in_background`
   (`ssh <alias> 'cd <wt> && make release-gates TAG=… PR=<n> > release-gates.out 2>&1'`) and wait for the

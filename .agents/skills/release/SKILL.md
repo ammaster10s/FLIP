@@ -76,9 +76,12 @@ ask only if you find none. Keep a release worktree there at the PR head and run 
 
 ## After the bump PR merges (only on request)
 
-Open `develop` → `main` titled `Release v<X.Y.Z> (develop → main)`. Check that it is MERGEABLE, that
-`check-version-bump` and `validate_branch_origin` pass, and read the release-notes preview comment. Merge it **with
-a merge commit**.
+Opening and merging the `develop` → `main` PR each need the user's explicit request. `make release-main-check
+TAG=v<X.Y.Z> [OWED=<file>]` is read-only and does the rest. With no PR yet, it prints the `gh pr create` command,
+with a body carrying the after-merge checklist and the owed items (one per line in `OWED`; take them from your
+notes). Run that command only when asked. With the PR open, it fails unless the PR is MERGEABLE,
+`validate_branch_origin` passed, `check-version-bump` passed (when flip-utils changed), and the release-notes
+preview comment is present. Read that comment. When asked to merge, merge it **with a merge commit**.
 
 The merge triggers two prod Terraform applies: the push apply at `sha-`, then the `release.yml` apply at
 `v<X.Y.Z>` once the twelve image builds are green. Both can hold on the FL gate. Only the user may attest

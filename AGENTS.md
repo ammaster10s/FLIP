@@ -302,6 +302,7 @@ make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # GPU h
 make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
 make release-gates TAG=vX.Y.Z [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # tutorials, suites, both smokes, teardown -> release-gates/<TAG>/*.json
 make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
+make release-main-check TAG=vX.Y.Z [PR=<n>] [OWED=<file>]  # read-only: develop->main PR ready? + after-merge checklist (or the gh pr create command)
 ```
 
 Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` runs them), tests in
