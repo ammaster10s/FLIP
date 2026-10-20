@@ -63,14 +63,7 @@
       "replacement-key": "#PROJECT#"
     }
   ],
-  "outputs": [
-    {
-      "name": "analysis-results",
-      "description": "updated analysis results",
-      "required": true,
-      "mount": "output"
-    }
-  ],
+  "outputs": [],
   "xnat": [
     {
       "name": "export_mask-assessor",
@@ -161,15 +154,7 @@
           "provides-value-for-command-input": "project"
         }
       ],
-      "output-handlers": [
-        {
-          "name": "analysis-resource",
-          "accepts-command-output": "analysis-results",
-          "as-a-child-of-wrapper-input": "session",
-          "type": "Resource",
-          "label": "analysis"
-        }
-      ]
+      "output-handlers": []
     }
   ]
 }

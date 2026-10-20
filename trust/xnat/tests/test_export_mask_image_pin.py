@@ -48,3 +48,12 @@ def test_the_command_line_calls_the_script_the_image_ships() -> None:
     script = command_line.split()[1]
     assert script == "/app/src/export_mask.py"
     assert (XNAT_DIR / "export-mask" / "src" / Path(script).name).is_file()
+
+
+def test_masks_are_uploaded_only_by_the_converter() -> None:
+    # The converter uploads into assessor/SEG itself; a CS output handler would
+    # also publish the scratch files as duplicate session-level masks.
+    command = json.loads(COMMAND.read_text())
+    assert command["outputs"] == []
+    assert all(wrapper["output-handlers"] == [] for wrapper in command["xnat"])
+    assert {"name": "output", "writable": True, "path": "/output"} in command["mounts"]

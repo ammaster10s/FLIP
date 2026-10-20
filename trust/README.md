@@ -369,7 +369,7 @@ The trust's kit file carries the rest of the settings:
 | `MONAI_LABEL_PORT` | `8030` | Host port the server listens on. |
 | `MONAI_LABEL_MODELS` | `deepedit` | Comma-separated radiology models. `all` loads nine, each downloading its own weights. |
 | `MONAI_LABEL_PROJECTS` | *(empty)* | XNAT projects the server may read. Empty means **every** project on this trust. |
-| `MONAI_LABEL_PUBLIC_URL` | `http://localhost:$MONAI_LABEL_PORT` | See below — this one matters. |
+| `MONAI_LABEL_PUBLIC_URL` | Dev: `http://localhost:$MONAI_LABEL_PORT`; required in production | See below — this one matters. |
 | `MONAI_LABEL_SHM_SIZE` | `8gb` | Shared memory for dataloader workers. |
 | `MONAI_LABEL_BIND_HOST` | `127.0.0.1` | Host interface `MONAI_LABEL_PORT` is published on. Loopback by default — see below. |
 | `MONAI_LABEL_AUTH_ENABLE` | `false` | MONAI Label's own auth. Upstream default; enabling it needs an OAuth realm FLIP does not run. |
@@ -377,7 +377,8 @@ The trust's kit file carries the rest of the settings:
 **`MONAI_LABEL_PUBLIC_URL` is the setting people get wrong.** XNAT stores this URL and hands it
 to the OHIF viewer, which calls it **from the clinician's browser** — XNAT never proxies the
 request. So it must resolve on the clinician's machine: a Docker service name, or `0.0.0.0`,
-will not work. The default only works when the browser runs on the trust host itself. Two
+will not work. Production Compose refuses an empty value. The development default only works
+when the browser runs on the trust host itself. Two
 further consequences on a real trust:
 
 - If XNAT is served over **HTTPS**, the browser blocks a plain-`http://` MONAI Label URL as

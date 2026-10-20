@@ -73,6 +73,19 @@ monailabel start_server \
   --conf models "${MONAI_LABEL_MODELS}" &
 server_pid=$!
 
+# Cover model loading and registration as well as the final wait. Stop startup
+# after a signal, and reap the server before PID 1 exits so it can shut down cleanly.
+stop_server() {
+  local status="$1"
+  trap - TERM INT
+  echo "Received termination signal — stopping the MONAI Label server..."
+  kill -TERM "$server_pid" 2>/dev/null || true
+  wait "$server_pid" || true
+  exit "$status"
+}
+trap 'stop_server 143' TERM
+trap 'stop_server 130' INT
+
 # --- Wait for it to be serving ------------------------------------------------------
 # Poll instead of sleeping: loading models downloads pretrained weights, which takes minutes
 # on a cold volume and seconds on a warm one.
@@ -126,12 +139,4 @@ echo "Registered. NOTE: each user must also enable it in the viewer under"
 echo "  Options -> Preferences -> Experimental -> MONAILabel Tools"
 
 # Hand the container's lifetime back to the server process.
-#
-# The trap is load-bearing: this script is PID 1, and a bare `wait` does not forward signals.
-# Without it `docker stop` (and a k8s pod termination) delivers SIGTERM to bash only, bash
-# exits, and the server is SIGKILLed when the grace period expires — killed mid-inference,
-# with nothing in the log explaining the hard stop. Forward the signal so it shuts down
-# cleanly. Exiting 143 on SIGTERM is the normal, expected result of a clean stop.
-trap 'echo "Received termination signal — stopping the MONAI Label server..."; \
-      kill -TERM "$server_pid" 2>/dev/null || true' TERM INT
 wait "$server_pid"

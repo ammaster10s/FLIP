@@ -55,22 +55,13 @@ RUN apt-get update \
 # resolution pulls nvidia-*-cu13 and produces an image that cannot run here, because cu13
 # requires NVIDIA driver >= 580 and the trust hosts run 575.x. Restricting the index to cu128
 # removes the choice. cu128 also carries the Blackwell (sm_120) kernels the RTX 5090 needs.
-RUN pip install --no-cache-dir torch torchvision \
+# Checked-in runtime constraints come from the last successful image build. Apply
+# them to BOTH stages so torch and the rest of the runtime cannot drift on rebuild.
+COPY constraints.txt /workspace/constraints.txt
+RUN pip install --no-cache-dir -c /workspace/constraints.txt torch torchvision \
       --index-url https://download.pytorch.org/whl/cu128
 
-# Freeze exactly what that resolved, so the MONAI Label install below — whose dependency tree
-# (monai, sam2, pytorch-ignite) also declares torch — cannot quietly swap it for a PyPI build.
-RUN python - <<'PY' > /tmp/torch_constraints.txt
-import importlib
-for m in ("torch", "torchvision"):
-    try:
-        print(f"{m}=={importlib.import_module(m).__version__}")
-    except Exception:
-        pass
-PY
-RUN echo "Torch constraints:" && cat /tmp/torch_constraints.txt
-
-RUN pip install --no-cache-dir -c /tmp/torch_constraints.txt \
+RUN pip install --no-cache-dir -c /workspace/constraints.txt \
       "pydicom<3" \
       monai \
       "monailabel @ git+https://github.com/Project-MONAI/MONAILabel.git@${MONAILABEL_REF}" \
