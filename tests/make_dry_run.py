@@ -104,6 +104,8 @@ def run_target(
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
             "flip-api/Makefile",
+            "fl-services/flower/Makefile",
+            "fl-services/nvflare/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
         ):
