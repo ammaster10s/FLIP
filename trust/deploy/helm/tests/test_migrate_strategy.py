@@ -30,12 +30,14 @@ SCRIPT = CHART_DIR / "scripts" / "migrate-strategy.sh"
 RELEASE = "trust-release"
 DAA = f"{RELEASE}-flip-trust-data-access-api"
 API = f"{RELEASE}-flip-trust-trust-api"
+ORTHANC = f"{RELEASE}-flip-trust-orthanc"
 
 FAKE_KUBECTL = """#!/bin/sh
 echo "$*" >> "$KUBECTL_LOG"
 case "$*" in
   *"create --dry-run=client"*) cat > /dev/null; printf '%s' "$RENDERED" ;;
   *"get deployment"*) printf '%s' "$LIVE" ;;
+  *"patch deployment"*) cat > /dev/null ;;
 esac
 """
 
@@ -76,6 +78,17 @@ def test_a_deployment_the_chart_now_recreates_is_switched_before_the_upgrade(tmp
     assert patch.startswith("--context ctx -n flip-trust ")
     assert '"op":"remove","path":"/spec/strategy/rollingUpdate"' in patch
     assert '"path":"/spec/strategy/type","value":"Recreate"' in patch
+
+
+def test_every_deployment_the_chart_now_recreates_is_switched(tmp_path):
+    # The fake kubectl drains stdin on patch, so a patch reading the loop's input would skip ORTHANC.
+    rendered = f"Deployment/{DAA} Recreate\nDeployment/{ORTHANC} Recreate\nDeployment/{API} \n"
+    live = f"{DAA} RollingUpdate\n{API} RollingUpdate\n{ORTHANC} RollingUpdate\n"
+
+    result, calls = _run(tmp_path, rendered, live)
+
+    assert result.returncode == 0, result.stderr
+    assert _patched(calls) == [DAA, ORTHANC]
 
 
 def test_only_the_releases_own_deployments_are_read(tmp_path):

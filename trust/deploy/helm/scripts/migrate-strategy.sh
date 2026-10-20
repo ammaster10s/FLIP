@@ -33,9 +33,10 @@ recreate=$($KUBECTL create --dry-run=client -f - -o jsonpath='{.kind}/{.metadata
 live=$($KUBECTL -n "$NAMESPACE" get deployment -l "app.kubernetes.io/instance=$RELEASE_NAME" \
     -o jsonpath='{range .items[*]}{.metadata.name} {.spec.strategy.type}{"\n"}{end}')
 
+# </dev/null keeps the patch off the loop's stdin, which still holds the rest of the live list.
 while read -r name strategy; do
     [ "$strategy" = RollingUpdate ] && grep -qxF "$name" <<<"$recreate" || continue
     echo "🔧 $name: RollingUpdate -> Recreate before the upgrade (FLIP#1524)"
     $KUBECTL -n "$NAMESPACE" patch deployment "$name" --type=json \
-        -p='[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+        -p='[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]' </dev/null
 done <<<"$live"
