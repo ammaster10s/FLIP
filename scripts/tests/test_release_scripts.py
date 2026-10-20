@@ -154,6 +154,42 @@ def container(name: str, image: str, workdir: str | None, service: str = "", sta
     return {"Name": f"/{name}", "Config": {"Image": image, "Labels": labels}, "State": {"Running": True}}
 
 
+class RunStep(unittest.TestCase):
+    """A build or download step gets one retry for a transient failure; any other step fails at once."""
+
+    def flaky(self, tmp: Path, target: str, failures: int) -> list[str]:
+        script = (
+            "import pathlib, sys; c = pathlib.Path(sys.argv[1]); n = int(c.read_text() or 0) + 1; c.write_text(str(n));"
+            f" sys.exit(1 if n <= {failures} else 0)"
+        )
+        counter = tmp / "count"
+        counter.write_text("")
+        return [sys.executable, "-c", script, str(counter), target]
+
+    def run_step(self, step: list[str]) -> tuple[int, bool]:
+        """How many times the step ran, and whether run_step raised."""
+        raised = False
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                instance.run_step(step, self.tmp, {})
+            except instance.subprocess.CalledProcessError:
+                raised = True
+        return int((self.tmp / "count").read_text()), raised
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def test_a_transient_build_failure_is_retried_once(self):
+        assert self.run_step(self.flaky(self.tmp, "build-fl", failures=1)) == (2, False)
+
+    def test_a_build_failing_twice_fails(self):
+        assert self.run_step(self.flaky(self.tmp, "build-fl", failures=2)) == (2, True)
+
+    def test_other_steps_are_not_retried(self):
+        assert self.run_step(self.flaky(self.tmp, "up", failures=1)) == (1, True)
+
+
 class Verify(unittest.TestCase):
     REPO = Path("/w/flip")
 

@@ -170,8 +170,23 @@ def bring_up(instance: str, repo: Path = REPO) -> None:
     ]
     env = instance_env(instance, repo)
     for step in steps:
-        print(f"▶ {' '.join(step)}", flush=True)
-        subprocess.run(step, cwd=repo, env=env, check=True)
+        run_step(step, repo, env)
+
+
+# Image builds and artefact downloads are safe to repeat, and on a shared host BuildKit or the registry can
+# fail transiently ("frontend grpc server closed unexpectedly"), so they get one retry. Nothing else does.
+RETRY_ONCE = ("build-fl", "prepare-artifacts")
+
+
+def run_step(step: list[str], repo: Path, env: dict[str, str]) -> None:
+    """Run one make step, failing on a non-zero exit; a retryable step gets a second attempt first."""
+    print(f"▶ {' '.join(step)}", flush=True)
+    if subprocess.run(step, cwd=repo, env=env).returncode == 0:
+        return
+    if not any(target in step for target in RETRY_ONCE):
+        raise subprocess.CalledProcessError(1, step)
+    print(f"↻ retrying once: {' '.join(step)}", flush=True)
+    subprocess.run(step, cwd=repo, env=env, check=True)
 
 
 def main(argv: list[str] | None = None) -> int:
