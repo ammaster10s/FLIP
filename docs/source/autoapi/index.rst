@@ -10,6 +10,5 @@ packages' docstrings.
    /autoapi/flip/index
    /autoapi/flip_api/index
    /autoapi/data_access_api/index
-   /autoapi/check_governance/index
    /autoapi/imaging_api/index
    /autoapi/trust_api/index
