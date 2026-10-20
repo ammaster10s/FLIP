@@ -19,6 +19,7 @@ normalisation the suffix matching relies on.
 """
 
 import logging
+import os
 
 import pytest
 from pydantic import ValidationError
@@ -291,8 +292,15 @@ def test_keycloak_backend_is_rejected_in_production():
     assert "AUTH_BACKEND" in str(exc_info.value)
 
 
-def test_keycloak_backend_requires_its_urls_and_admin_secret():
+def _clear_keycloak_env(monkeypatch):
+    """Drop every KEYCLOAK_* the caller exported (a second dev instance's env file sets its own)."""
+    for key in [k for k in os.environ if k.startswith("KEYCLOAK_")]:
+        monkeypatch.delenv(key)
+
+
+def test_keycloak_backend_requires_its_urls_and_admin_secret(monkeypatch):
     """A keycloak backend with no Keycloak coordinates fails at boot, naming every missing field."""
+    _clear_keycloak_env(monkeypatch)
     with pytest.raises(ValidationError) as exc_info:
         Settings(AUTH_BACKEND="keycloak")
     message = str(exc_info.value)
@@ -303,7 +311,7 @@ def test_keycloak_backend_requires_its_urls_and_admin_secret():
 
 def test_dev_settings_carry_working_keycloak_defaults(monkeypatch):
     """Dev needs no Keycloak lines in its env file: the defaults match the compose service."""
-    monkeypatch.delenv("KEYCLOAK_PORT", raising=False)
+    _clear_keycloak_env(monkeypatch)
     settings = DevSettings(AUTH_BACKEND="keycloak")
     assert settings.KEYCLOAK_URL == "http://keycloak:8080"
     assert settings.KEYCLOAK_PUBLIC_URL == "http://localhost:8180"
