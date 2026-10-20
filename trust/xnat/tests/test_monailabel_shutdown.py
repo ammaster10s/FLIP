@@ -64,7 +64,7 @@ def test_startup_termination_reaps_server(tmp_path: Path, phase: str) -> None:
         MONAI_LABEL_PORT="8030",
         MONAI_LABEL_DATASTORE_URL="http://xnat.test",
         MONAI_LABEL_DATASTORE_USERNAME="test",
-        MONAI_LABEL_DATASTORE_PASSWORD="test",
+        MONAI_LABEL_DATASTORE_PASSWORD="test",  # pragma: allowlist secret — test fixture only
         MONAI_LABEL_MODELS="deepedit",
         MONAI_LABEL_PUBLIC_URL="https://labels.test",
     )

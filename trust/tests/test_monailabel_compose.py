@@ -32,7 +32,7 @@ def test_production_requires_explicit_public_url(public_url):
         NUM_AVAILABLE_GPUS="1",
         MONAI_LABEL_XNAT_ARCHIVE_DIR="/tmp/archive",
         XNAT_SERVICE_USER="test",
-        XNAT_SERVICE_PASSWORD="test",
+        XNAT_SERVICE_PASSWORD="test",  # pragma: allowlist secret — test fixture only
     )
     env.pop("MONAI_LABEL_PUBLIC_URL", None)
     if public_url is not None:
