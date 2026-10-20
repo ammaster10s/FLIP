@@ -303,7 +303,13 @@ module "flip_db" {
   skip_final_snapshot              = var.environment != "prod"
   deletion_protection              = var.environment == "prod"
   final_snapshot_identifier_prefix = "flip-database-final"
-  family                           = "postgres${split(".", var.postgres_version)[0]}"
+  # Stated explicitly rather than inherited from the module default, so a module bump or
+  # refactor cannot silently drop it (FLIP#1576). kms_key_id is deliberately left unset:
+  # existing instances use the AWS managed aws/rds key, and both arguments force a
+  # replacement of the instance, so moving to flip_app_key is a snapshot, encrypted copy
+  # and restore migration, not an argument change.
+  storage_encrypted = true
+  family            = "postgres${split(".", var.postgres_version)[0]}"
 }
 
 ############################
