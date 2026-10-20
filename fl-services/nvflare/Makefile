@@ -25,10 +25,12 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # for the LZA estate, FLIP#749), the upload vars (AICENTRE_BUCKET_NAME,
 # FLARE_KIT_DATE) used by upload-kits-to-s3.
 include $(REPO_ROOT)/deploy/env_mode.mk
-MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# MAIN_ENV_FILE is a bare filename in the repo root, as everywhere else; a second instance passes its own.
+MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
+MAIN_ENV_PATH := $(REPO_ROOT)/$(MAIN_ENV_FILE)
+ifneq ("$(wildcard $(MAIN_ENV_PATH))","")
+include $(MAIN_ENV_PATH)
+export $(shell sed 's/=.*//' $(MAIN_ENV_PATH))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 

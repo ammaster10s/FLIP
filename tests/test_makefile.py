@@ -543,6 +543,34 @@ class GenerateInternalServiceKey(unittest.TestCase):
         assert self.env_file_arg("ENV_FILE=/abs/.env.x") == "/abs/.env.x"
 
 
+class FlEnvFile(unittest.TestCase):
+    """The FL Makefiles load MAIN_ENV_FILE from the repo root, like every other Makefile (FLIP#1608).
+
+    A command-line MAIN_ENV_FILE (a bare filename, as the root passes it) used to override the FL
+    Makefiles' absolute path, so the include resolved inside fl-services/<backend>/, matched nothing
+    and was skipped silently: the FL targets of a second instance ran with no env at all.
+    """
+
+    PROBE = "__env_path: ; @echo env_path=[$(MAIN_ENV_PATH)]\n"
+
+    def env_path(self, backend: str, *extra: str) -> str:
+        out = run_target("__env_path", *extra, subdir=f"fl-services/{backend}", probe=self.PROBE)
+        assert out.returncode == 0, out.stdout + out.stderr
+        return re.search(r"env_path=\[(.*)\]", out.stdout).group(1)
+
+    def test_default_is_the_prod_selected_file_in_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend))
+            assert path.name == ".env.production", path
+            assert "fl-services" not in path.parts, path
+
+    def test_a_command_line_env_file_resolves_against_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend, "MAIN_ENV_FILE=.env.b.development"))
+            assert path.name == ".env.b.development", path
+            assert "fl-services" not in path.parts, path
+
+
 class BuildFl(unittest.TestCase):
     """`make build-fl` tags the whole FL image chain with DOCKER_FL_TAG from the command line, else :dev (FLIP#1605).
 
