@@ -24,24 +24,24 @@ procedure, the scope limits and the GPU-host gates. Also read the CONTRIBUTING s
 
 On top of it, for Claude Code:
 
-- **GPU host.** If this session is not on the GPU host (a laptop or Mac), every gate runs there over SSH. Only
-  `gh`/`git` and notes work stays local. Take the host from the arguments, or else from memory. Ask only if
-  neither has it, and name the example: the core team uses `bioeng625-pc`. Use the user's own SSH alias for it,
-  and check it with `ssh <alias> 'nvidia-smi -L && docker info -f {{.Name}}'` before starting any gate.
-  Non-interactive SSH may not load the login PATH, so tools such as `uv` in `~/.local/bin` can be missing. Export
-  the PATH in each gate script.
-- **Resume, don't restart.** Look for an open `Release v<X.Y.Z>` PR and an existing `release-v<X.Y.Z>`
-  worktree, both locally and on the GPU host, and pick up from the first unticked step.
+- **GPU host.** If this session is not on the GPU host (a laptop or Mac), the `release-instance` and
+  `release-gates` targets run there over SSH; `release-prepare`, `release-record` and the `gh`/`git` work stay
+  local. Take the host from the arguments, or else from memory. Ask only if neither has it, and name the example:
+  the core team uses `bioeng625-pc`. Use the user's own SSH alias for it, and check it with
+  `ssh <alias> 'nvidia-smi -L && docker info -f {{.Name}}'` first. The scripts put `~/.local/bin` on the PATH
+  themselves, since non-interactive SSH may not load it.
+- **Resume, don't restart.** Look for an open `Release v<X.Y.Z>` PR, an existing `release-v<X.Y.Z>` worktree (locally
+  and on the GPU host) and existing `release-gates/<TAG>/*.json`; rerun only the gates that did not pass at the
+  current head (`GATES=…`).
 - **Memory.** If your memory has release notes or owed items tied to "next release" or "release→main", such as
   GitHub environment variable cleanups, put them in the `main`-PR body as after-merge steps. Also follow any
   turn-taking rules it records for the shared host.
-- **Remote gates.** Start each gate with `run_in_background`
-  (`ssh <alias> 'cd <wt> && make … > ~/e2e-logs/release-v<X.Y.Z>/<gate>.log 2>&1'`) and wait for it with
-  Monitor. Don't poll in a loop. If the host needs `sudo`, give the user the command with `!`. To stop a remote
-  process, kill it by PID or use a bracketed pattern (`pgrep -f "[e]2e_smoke"`). A bare `pkill -f <pattern>`
-  matches the SSH shell that carries the pattern and kills that shell first.
-- **Images.** Before each smoke, list the instance's containers with their images. Any repo-built image not at the
-  release tag (`:stag`, `:dev`, `:latest`) means the gate did not test the release head.
-- **Parallelism.** Run the Dependabot fixes, labelling and notes curation while the remote gates run.
-- **Report.** End with a checklist that marks each gate passed, pending or failed, gives its evidence (host,
-  SHA, log path, timings), and lists the PR links with their reviewer requests verified.
+- **Remote runs.** Start `release-instance` and `release-gates` with `run_in_background`
+  (`ssh <alias> 'cd <wt> && make release-gates TAG=… PR=<n> > release-gates.out 2>&1'`) and wait for the
+  notification; don't poll in a loop. Copy `release-gates/<TAG>/` back to the local checkout for `release-record`
+  (or run it on the host). If the host needs `sudo`, give the user the command with `!`. To stop a remote process,
+  kill it by PID or use a bracketed pattern (`pgrep -f "[e]2e_smoke"`): a bare `pkill -f <pattern>` matches the
+  SSH shell that carries the pattern and kills that shell first.
+- **Parallelism.** Curate the notes and fix Dependabot alerts while the remote gates run.
+- **Report.** End with a checklist that marks each gate passed, pending or failed from its JSON (commit, timings,
+  log path), and lists the PR links with their reviewer requests verified.

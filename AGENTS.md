@@ -294,6 +294,19 @@ make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE
 make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch; report only without LAUNCH (trust/deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
 
+### Release pipeline (FLIP#1608)
+
+```bash
+make release-prepare TAG=vX.Y.Z [DRY_RUN=1]          # version bumps + make lock + empty Release checks; refuses unlabelled merged PRs
+make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # GPU host: isolated rel<XYZ> instance, every image built here
+make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
+make release-gates TAG=vX.Y.Z [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # tutorials, suites, both smokes, teardown -> release-gates/<TAG>/*.json
+make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
+```
+
+Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` runs them), tests in
+`scripts/tests/test_release_scripts.py`. The agent procedure on top: `.agents/skills/release/SKILL.md` (`/release`).
+
 ### Site release upgrades (FLIP#1204)
 
 ```bash

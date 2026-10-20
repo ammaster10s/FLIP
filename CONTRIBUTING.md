@@ -836,6 +836,18 @@ The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the 
 
 Before opening the release PR from `develop` to `main`:
 
+The mechanical steps are make targets (FLIP#1608), each a script under [`scripts/release/`](scripts/release/):
+
+| Target | Does |
+|---|---|
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-instance TAG=… PR=<n>` | On the GPU host: an isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. |
+| `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
+| `make release-gates TAG=… PR=<n>` | Both tutorial suites, `unit_test`, both smokes, `integration_test`, teardown; one JSON result per gate under `release-gates/<TAG>/`. |
+| `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+
+The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
+
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.

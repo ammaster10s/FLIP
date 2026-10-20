@@ -47,8 +47,14 @@ HUB_EXAMPLE = (ROOT / ".env.development.example").read_text()
 KIT_EXAMPLES = sorted((ROOT / "trust").glob(".env.*.development.example"))
 # Kit ports that live inside the trust's own network: the same in every instance.
 TRUST_CONTAINER_PORTS = {"PACS_QR_PORT", "DATA_ACCESS_API_PORT", "IMAGING_API_PORT", "TRUST_API_PORT"}
-SECRETS = {"POSTGRES_PASSWORD": "pg-SECRET", "AES_KEY_BASE64": "aes-SECRET", "ADMIN_USER_PASSWORD": "admin-SECRET"}
-MINTED = {**SECRETS, "INTERNAL_SERVICE_KEY": "isk-SECRET", "INTERNAL_SERVICE_KEY_HASH": "hash"}
+# Stand-ins for what instance._mint returns, recognisable in any output that leaks them.
+MINTED = {
+    "POSTGRES_PASSWORD": "pg-SECRET",  # pragma: allowlist secret
+    "AES_KEY_BASE64": "aes-SECRET",  # pragma: allowlist secret
+    "ADMIN_USER_PASSWORD": "admin-SECRET",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY": "isk-SECRET",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY_HASH": "hash",  # pragma: allowlist secret
+}
 
 
 def refused(fn, *args) -> ReleaseError:
