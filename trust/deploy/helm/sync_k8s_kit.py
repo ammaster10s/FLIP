@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6.0.3"]
+#
+# [tool.uv]
+# exclude-newer = "3 days"
+# ///
 #
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -358,8 +365,9 @@ def _slot_pattern(secret_key: str) -> re.Pattern[str]:
 def _yaml() -> ModuleType:
     """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
 
-    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
-    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    The Makefile runs this script with ``uv run``, which installs PyYAML from the inline metadata
+    at the top; a bare ``python3`` without it reaches the refusal below. This one step needs a
+    real parser: the only trustworthy statement about a hand-edited file is what
     ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
     tell whether the file we are about to write says what we meant, so we refuse rather than
     write an unverified credentials file.

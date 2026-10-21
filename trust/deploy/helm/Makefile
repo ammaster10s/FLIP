@@ -392,7 +392,7 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s PROD=stag"; exit 1)
-	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
@@ -404,7 +404,7 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)
-	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
@@ -422,7 +422,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s PROD=stag"; exit 1)
-	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+	@uv run --no-config $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
