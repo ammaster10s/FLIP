@@ -136,3 +136,23 @@ def test_observability_role_creates_the_dir_of_every_file_it_copies() -> None:
     created = set(dirs_task.get("loop") or [])
     missing = {str(Path(f).parent) for f in _observability_config_files()} - created
     assert not missing, f"the copy task would write into directories the role never creates: {sorted(missing)}"
+
+
+def test_trust_dirs_role_creates_the_cohort_membership_stores() -> None:
+    """Every play composing flip_trust_dirs gets the FLIP#857 stores, owned by data-access-api's uid.
+
+    The stores moved into this role from the plays; one dropped in a later refactor is a host that
+    provisions cleanly and then fails every project approval's freeze, refusing all row-level data.
+    """
+    defaults = _load(ROLES_DIR / "flip_trust_dirs" / "defaults" / "main.yml") or {}
+    assert defaults.get("flip_cohort_snapshot_dirs") == [
+        "{{ flip_dir }}/cohort-snapshots/trust-1",
+        "{{ flip_dir }}/cohort-snapshots/trust-2",
+    ], "the default stores must be the production compose defaults for slots 1 and 2, under flip_dir"
+    tasks = _load(ROLES_DIR / "flip_trust_dirs" / "tasks" / "main.yml") or []
+    [stores] = [task for task in tasks if "flip_cohort_snapshot_dirs" in str(task.get("loop", ""))]
+    body = stores["file"]
+    assert (body["owner"], body["group"], body["mode"]) == ("1000", "1000", "0750"), (
+        "data-access-api runs as uid 1000 in its image and must be able to write its store"
+    )
+    assert "flkit" in (stores.get("tags") or []), "an EC2 --tags flkit re-stage must lay the stores down too"

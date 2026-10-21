@@ -147,7 +147,7 @@ make provision-local-trust
        and fails loudly if it cannot), so the trap is a `net-N` created root-owned by
        a path that bypasses make: then every image download 500s and training later
        fails with a misleading `num_samples=0`. Ownership is **backend-aware**, driven by
-       the `fl_backend` extra-var the make target passes: NVFLARE's client shares
+       the `fl_backend` extra-var the make target passes: FLARE's client shares
        imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
        (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
        the playbook (or fix by hand) if you switch `FL_BACKEND`.
@@ -156,10 +156,15 @@ make provision-local-trust
        `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
        `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
        XNAT-directory warning below.
+     - the **approved-cohort membership stores** (FLIP#857) `/opt/flip/cohort-snapshots/trust-1`
+       and `trust-2`, owned by **UID/GID 1000** (data-access-api's in-image user) under a
+       root-owned `/opt/flip/cohort-snapshots`. If data-access-api cannot write there, every
+       project approval fails to freeze its cohort and the trust refuses that project's
+       row-level data. `make up-trust` prepares any other slot's store itself.
    - Pre-creates the **FL participant kit tree** for the tarball you extract by hand (`flip_fl_kit` with
      `fl_kit_source: precreate`) under `/opt/flip/fl-kit` — the
      default `FL_KIT_DIR`, matching what the prod trust compose mounts:
-     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for NVFLARE
+     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for FLARE
      and `${FL_KIT_DIR}/net-1/{certificates,keys}` for Flower. The slot
      sub-tree defaults to **`Trust_2`** (`fl_kit_precreate_slot` in the role's defaults).
      If the hub assigned this trust a different slot (check `FL_KIT_SLOT` in
@@ -246,7 +251,7 @@ images tree). Roles are found beside the play, so no `roles_path` configuration 
 | --- | --- | --- |
 | `flip_dir` | `/opt/flip` | Root application directory |
 | `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
-| `fl_kit_precreate_slot` | `Trust_2` | The NVFLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
+| `fl_kit_precreate_slot` | `Trust_2` | The FLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
 
 **Data.** The playbook puts no data on the host. The OMOP and Orthanc stores start empty and
 `make -C trust up-trust` seeds them from the canonical dataset at bring-up (FLIP#1187,

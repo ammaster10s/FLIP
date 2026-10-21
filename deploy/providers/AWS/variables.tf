@@ -254,7 +254,7 @@ variable "fl_backend" {
 }
 
 variable "flare_kit_date" {
-  description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
+  description = "Date stamp for the FLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
   type        = string
   default     = ""
 }
@@ -265,20 +265,14 @@ variable "flower_kit_date" {
   default     = ""
 }
 
-# Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
-# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
-# This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;
-# the GPUs are provided by the fl-clients (trust hosts). Default 0 = no GPU
-# requirement (a CPU-only tutorial). Set to 1 in the env file (TF_VAR_...) for
-# GPU jobs such as the Ark+ evaluation.
+# The GPUs the fl-api writes into a FLARE job's meta when the job declares
+# none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.production.nvflare.yml).
+# A job declares its own in its meta.json (the Ark+ tutorials do), and a
+# researcher can override it per run (FLIP#70), so keep this 0: a non-zero
+# default keeps every job off a CPU-only trust (FLIP#1390). The GPUs are the
+# fl-clients' (trust hosts); the hub's Fargate tasks are CPU-only.
 variable "JOB_RESOURCE_SPEC_NUM_GPUS" {
-  description = "Number of GPUs requested per FL client in a training/eval job's NVFLARE resource_spec"
-  type        = number
-  default     = 0
-}
-
-variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
-  description = "Memory (GiB) requested per GPU in a training/eval job's NVFLARE resource_spec"
+  description = "GPUs requested per FL client by a FLARE job whose meta.json declares none"
   type        = number
   default     = 0
 }
@@ -447,7 +441,7 @@ variable "INTERNAL_SERVICE_KEY_HEADER" {
 }
 
 variable "FL_ADMIN_DIRECTORY" {
-  description = "Container path that fl-api looks at for NVFLARE admin secrets (local + startup subdirs)."
+  description = "Container path that fl-api looks at for FLARE admin secrets (local + startup subdirs)."
   type        = string
   default     = "/app/admin"
 }

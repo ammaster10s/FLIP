@@ -1,7 +1,7 @@
 # Flower run-config overrides for this evaluation app.
 #
 # fl-api-flower's submit_run (a platform submit) passes this file to `flwr run --run-config`;
-# a tutorial submit (run-tutorial.sh) does not, and runs pyproject.toml's values (FLIP#1432). Keys here override
+# a tutorial submit (`make -C fl-services/flower submit`) does not, and runs pyproject.toml's values (FLIP#1432). Keys here override
 # values already declared in pyproject.toml's [tool.flwr.app.config] -- they cannot introduce
 # new keys. The FL API injects flip-model-id / flip-project-id / flip-cohort-query /
 # flip-min-clients at upload time, and flip-job-dir at submit time.

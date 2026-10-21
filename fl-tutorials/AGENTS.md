@@ -6,8 +6,8 @@ built on the templates in `fl-apps/`; the images they run on are built from
 
 | Path | Purpose |
 |------|---------|
-| `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
-| `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
+| `nvflare/image_*` | FLARE imaging tutorials — all Client-API apps |
+| `nvflare/tabular_classification` | FLARE tabular (OMOP-only) EHR risk-prediction tutorial |
 | `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
 | `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
@@ -23,9 +23,9 @@ make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app +
 
 ## Running the tutorials
 
-The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the `*_client_api`
+The FLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the `*_client_api`
 job-type names are accepted aliases for models created under those names). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
-`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+`make run` delegates to `make sim`, which runs the FLARE simulator (SimEnv) in the flip-utils venv
 with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
 GPU). From the repo root:
 
@@ -34,13 +34,15 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
-make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # simulator, no containers
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (= sim-tutorial)
 ```
 
-`sim-tutorial` means "no containers" on both backends. On NVFLARE it is an alias for
-`run-tutorial`, which already runs the simulator; on Flower it runs `flwr run` against a local
-SuperLink flwr starts itself (no SuperLink container, no SuperNodes, no fl-api, no Docker) where
-`run-tutorial` brings up the standalone compose stack (`flower/run-tutorial.sh`, whose header covers the run values, the GPU switch and the exit status, FLIP#1432). The app code is identical either way — site identity comes from
+The two backends mirror each other: `run-tutorial` and `run-all-tutorials` (the release check) run
+the simulator, and `sim-tutorial` is an alias for `run-tutorial`. On Flower that is `flwr run` against
+a local SuperLink flwr starts itself (`flower/sim-tutorial.sh`: no SuperLink container, no
+SuperNodes, no fl-api, no Docker). On both backends the FL images, the fl-api submit path and
+SuperNode registration are exercised by `make e2e_smoke` on the dev stack (FLIP#1435);
+`fl-services/flower`'s `make up` / `make submit` runs the Flower containers by hand. The app code is identical either way — site identity comes from
 `context.node_config`'s `partition-id`, falling back to the `SUPERNODE_NAME` a container sets
 (`flip.flower.identity`). Under `LOCAL_DEV` both paths hand every client the same
 `DEV_DATAFRAME`, so `partition_cohort` slices it per site; deployed, each trust's
@@ -61,7 +63,7 @@ matches a worktree nested under it), so the fix is to stop the named pid (or run
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
 `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
 
-The three NVFLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
+The three FLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
 the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile default `128`, a
 deterministic class-balanced subset — `cap_dataframe` in each app's `data_utils.py`), so a plain
 `make sim` is a few-minute smoke; `MAX_SAMPLES=0` runs the full dataset, and `reproduce-overhead`
