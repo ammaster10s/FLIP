@@ -65,7 +65,10 @@
 <!-- These checks are release evidence and must be run for v0.13.0. Do not carry forward results
      from an earlier release. Record the host, date and outcome before merging the release PR. -->
 
-Run at `a60570cec` on an RTX 5090 workstation, 20 October 2026. The commits after it change only these notes.
+Run at `a60570cec` on an RTX 5090 workstation, 20 October 2026. After it, besides these notes, only #1615 changed
+code: a failed trust's entry in the project-approval response carries a fixed message instead of the exception
+text (the error branch only). flip-api's unit and integration suites passed on it in CI; the tutorials do not use
+flip-api, and the smokes take that endpoint's success path.
 
 Tutorial suite, on a GPU host:
 
