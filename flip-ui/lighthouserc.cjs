@@ -39,6 +39,11 @@ const SIGNED_IN_PATHS = [
     "/models",
     "/admin/users",
 ];
+// Each page twice, light then dark: lighthouse-auth.cjs sets the theme from
+// the `#dark` fragment, which reaches neither the server nor the router. Both
+// login passes come first, while the browser is still signed out.
+const PATHS = ["/auth/login", ...(SIGNED_IN ? SIGNED_IN_PATHS : [])];
+const URLS = SIGNED_IN ? PATHS.flatMap((path) => [path, `${path}#dark`]) : PATHS;
 // Chrome on CI runners needs --no-sandbox; --disable-gpu avoids headless GPU
 // flakiness. --disable-extensions keeps the profile clean (the whole point of
 // re-running — the prod capture was polluted by ad-blocker extension scripts).
@@ -60,9 +65,7 @@ module.exports = {
             // across those codes as well as an optional space before the colon.
             startServerReadyPattern: "Local(?:\\x1b\\[[0-9;]*m)*\\s*:",
             startServerReadyTimeout: 30000,
-            // The login page first: it is audited signed out, before the
-            // puppeteer script signs the browser in for the rest.
-            url: [`${BASE_URL}/auth/login`, ...(SIGNED_IN ? SIGNED_IN_PATHS.map((path) => BASE_URL + path) : [])],
+            url: URLS.map((path) => BASE_URL + path),
             // With a puppeteerScript lhci launches Chrome through puppeteer and
             // ignores settings.chromeFlags, so the flags move to its launch args.
             ...(SIGNED_IN && {
@@ -90,10 +93,10 @@ module.exports = {
             // signed-in pages, so they fail `is-crawlable` by design.
             assertMatrix: [
                 {
-                    matchingUrlPattern: "/auth/login$",
+                    matchingUrlPattern: "/auth/login(#dark)?$",
                     assertions: { ...ASSERTIONS, "categories:seo": ["warn", { minScore: 0.95 }] },
                 },
-                { matchingUrlPattern: "^(?!.*/auth/login$)", assertions: ASSERTIONS },
+                { matchingUrlPattern: "^(?!.*/auth/login(#dark)?$)", assertions: ASSERTIONS },
             ],
         },
         upload: {
