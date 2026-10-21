@@ -118,6 +118,14 @@ def test_aks_destroy_needs_no_ip_lookup(tmp_path):
     assert destroy.endswith(" -var operator_ip=192.0.2.1")
 
 
+def test_aks_destroy_on_a_site_subnet_needs_no_egress_ips(tmp_path):
+    result, calls = run_make(tmp_path, "aks-destroy", SUBNET_ID="/sub/x", NODE_EGRESS_IPS="")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    (destroy,) = [c for c in calls if c.startswith("terraform -chdir=aks destroy")]
+    assert 'node_egress_ips=["192.0.2.1"]' in destroy, "a teardown never applies the allowlist"
+
+
 def test_plan_hands_the_site_egress_ips_to_terraform(tmp_path):
     result, calls = run_make(
         tmp_path,
@@ -132,12 +140,11 @@ def test_plan_hands_the_site_egress_ips_to_terraform(tmp_path):
     assert 'node_egress_ips=["198.51.100.9","198.51.100.10"]' in plan
 
 
-@pytest.mark.parametrize("target", ["aks-plan", "aks-destroy"])
 @pytest.mark.parametrize("ips", ["198.51.100.0/24", "198.51.100.9 198.51.100.10", '198.51.100.9"]; touch PWNED; ["'])
-def test_anything_but_ipv4_addresses_is_refused_as_node_egress(tmp_path, target, ips):
+def test_anything_but_ipv4_addresses_is_refused_as_node_egress(tmp_path, ips):
     sentinel = str(tmp_path / "PWNED")
     result, calls = run_make(
-        tmp_path, target, OPERATOR_IP="203.0.113.7", NODE_EGRESS_IPS=ips.replace("PWNED", sentinel)
+        tmp_path, "aks-plan", OPERATOR_IP="203.0.113.7", NODE_EGRESS_IPS=ips.replace("PWNED", sentinel)
     )
 
     assert result.returncode != 0

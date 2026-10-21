@@ -32,7 +32,7 @@ FLIP/
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare) + deploy/keycloak/ (the dev identity provider's realm, FLIP#919); FL network provisioning lives under fl-services/<backend>/
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
 │       ├── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
-│       └── azure/      # Azure trust node (#1390): bootstrap root (state, budget alert, static egress IP), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test), and aks root (a one-node AKS cluster for the flip-trust chart, instead of the VM); driven by its own Makefile, the VM over Run Command, AZ_SUBSCRIPTION mandatory
+│       └── azure/      # Azure trust node (#1390): bootstrap root (state, budget alert; no outbound IP, the node's network owns its egress), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test), and aks root (a one-node AKS cluster for the flip-trust chart, instead of the VM); driven by its own Makefile, the VM over Run Command, AZ_SUBSCRIPTION mandatory
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```

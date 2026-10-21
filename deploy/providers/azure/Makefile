@@ -50,6 +50,8 @@ AKS_NAME = $(NAME_PREFIX)-aks
 # (TEST-NET-1) satisfies the variable's check without looking the operator's IP up, so a blocked
 # api.ipify.org never stands between the operator and a teardown.
 DESTROY_OPERATOR_IP := 192.0.2.1
+# Likewise the SSH key: Azure needs one only to create the VM, so a teardown needs no key file.
+DESTROY_SSH_PUBLIC_KEY := ssh-ed25519 AAAA destroy-only
 
 define require_subscription
 	@[ -n "$(AZ_SUBSCRIPTION)" ] || { echo "❌ AZ_SUBSCRIPTION=<trial subscription name or id> is required (never the CLI default)."; exit 1; }
@@ -152,7 +154,7 @@ destroy: ## Destroy the node and its network, keep bootstrap (asks first)
 	$(TF) -chdir=vm destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "existing_subnet_id=$(SUBNET_ID)" \
-		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
+		-var "admin_ssh_public_key=$(DESTROY_SSH_PUBLIC_KEY)" -var "flip_ref=$(FLIP_REF)" \
 		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node or the cluster exists; asks first)
@@ -256,16 +258,17 @@ aks-apply: ## Show the saved AKS plan and the subscription, then apply it only a
 	$(TF) -chdir=aks apply aks.tfplan
 	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
 
+# The same placeholder stands in for the site's egress IPs: a teardown never applies the allowlist.
 aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
-	$(require_node_egress_ips)
 	$(require_subscription)
 	$(TF) -chdir=aks destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(DESTROY_OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" -var 'node_egress_ips=["$(DESTROY_OPERATOR_IP)"]' \
+		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	$(require_subscription)
-	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (brew install Azure/kubelogin/kubelogin)"; exit 1; }
+	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (the Azure CLI installs it with kubectl on any platform: aks install-cli)"; exit 1; }
 	az aks get-credentials --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
 	kubelogin convert-kubeconfig -l azurecli
 

@@ -41,7 +41,8 @@ variable "node_egress_ips" {
   default     = []
 
   validation {
-    condition     = alltrue([for ip in var.node_egress_ips : can(cidrhost("${ip}/32", 0))])
+    # cidrhost alone admits IPv6 ("2001:db8::1/32" is a valid IPv6 prefix), hence the dotted quad.
+    condition     = alltrue([for ip in var.node_egress_ips : can(cidrhost("${ip}/32", 0)) && length(split(".", ip)) == 4])
     error_message = "node_egress_ips must be IPv4 addresses."
   }
   validation {
@@ -55,7 +56,7 @@ variable "operator_ip" {
   type        = string
 
   validation {
-    condition     = can(cidrhost("${var.operator_ip}/32", 0))
+    condition     = can(cidrhost("${var.operator_ip}/32", 0)) && length(split(".", var.operator_ip)) == 4
     error_message = "operator_ip must be an IPv4 address: the API server admits only it. The Makefile looks it up from api.ipify.org: if that failed, pass OPERATOR_IP=<your public IPv4>."
   }
 }

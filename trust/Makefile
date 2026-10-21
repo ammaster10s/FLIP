@@ -1023,10 +1023,11 @@ create-trust-network:
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_fl-net-1 $(INSTANCE_PREFIX)deploy_fl-net-2 2>/dev/null || true
-	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 $(if $(TRUST_NUM),$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)) 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
-recreate-networks: remove-networks create-networks
+# With a KIT on slot 3 or above, its own network comes back too (create-trust-network).
+recreate-networks: remove-networks create-networks $(if $(filter-out 1 2,$(TRUST_NUM)),create-trust-network)
 	@echo "✅ All trust networks recreated with swarm support!"
 
 # First registered dev trust — the default KIT for the debug targets when none
