@@ -147,11 +147,13 @@ metadata:
 spec:
   podSelector: {}
   egress:
-{{- /* AWS IMDS (169.254.169.254, EC2 metadata / node IAM role) is reachable only for its one
-     consumer: the omop-db vocab-load Job reaching S3 through the node instance role (it is
-     rendered, and carries no mounted credentials). The chart has no IRSA path. Everywhere else
-     (kind, AKS — FLIP#1390) the metadata endpoint, an SSRF/credential-theft target, is excluded
-     from the any-destination ports rule below as well, since IMDS listens on port 80. */}}
+{{- /* AWS IMDS (169.254.169.254, EC2 metadata / node IAM role) is opened for one consumer: the
+     omop-db vocab-load Job reaching S3 through the node instance role (it is rendered, and
+     carries no mounted credentials; the chart has no IRSA path). This policy selects every pod,
+     so while that Job is rendered IMDS is reachable namespace-wide, fl-client included; scoping
+     it to the Job needs its own policy with a pod selector. Otherwise (kind, AKS — FLIP#1390)
+     the metadata endpoint, an SSRF/credential-theft target, is excluded from the any-destination
+     ports rule below as well, since IMDS listens on port 80. */}}
 {{- $vocab := .Values.omopDb.vocabLoad }}
 {{- $imds := and .Values.omopDb.enabled $vocab.enabled $vocab.s3Bucket (not $vocab.hostAwsMount.enabled) }}
     # Allow configured egress ports (defaults include DNS/HTTP/HTTPS)

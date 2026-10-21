@@ -282,8 +282,11 @@ download) against the **live dev stack** and assembles one mp4. Local dev tool, 
 the slow platform waits (cohort responses, ~6 min imaging import, FL training) **off-camera** between them, reusing
 `tests/e2e_smoke.py`'s wait functions. Prerequisites: stack up, Playwright's browser (`uv run playwright install
 chromium`), ffmpeg on PATH, and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads
-`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants
-their roles; without them the recorder falls back to the well-known admin for both parts, and says so on camera.
+`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` / `DEMO_TRUST_ADMIN_PASSWORD` from env, never committed) then
+restart flip-api so seeding grants their roles; without them the recorder falls back to the well-known admin for both
+parts, and says so on camera. Segment 2 is the demo Trust Admin approving on **My Trust** for the first trust; the
+recorder grants it Trust Admin there only for that segment (while it holds it, the hub admin cannot approve at that
+trust) and approves the other trusts off camera. Without `DEMO_TRUST_ADMIN_*` the admin approves at every trust.
 
 How a segment is recorded (`tests/demo_recorder.py`): each is a fresh browser context, signed in and loaded off camera,
 then recorded through Chromium's screencast from `rec.start()`; every frame is written with its timestamp and encoded to
