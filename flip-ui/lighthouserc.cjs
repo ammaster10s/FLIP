@@ -43,6 +43,11 @@ const SIGNED_IN_PATHS = [
 // flakiness. --disable-extensions keeps the profile clean (the whole point of
 // re-running — the prod capture was polluted by ad-blocker extension scripts).
 const CHROME_FLAGS = ["--no-sandbox", "--disable-gpu", "--disable-extensions"];
+const ASSERTIONS = {
+    "categories:accessibility": ["warn", { minScore: 0.95 }],
+    "categories:best-practices": ["warn", { minScore: 0.9 }],
+    "categories:performance": ["warn", { minScore: 0.9 }],
+};
 
 module.exports = {
     ci: {
@@ -81,12 +86,15 @@ module.exports = {
             // Leave best-practices at `warn`: it's dinged by the known-deferred
             // console 401s (#702) and CSP (#703). Leave performance at `warn`:
             // it's timing-based and varies run-to-run on shared CI runners.
-            assertions: {
-                "categories:accessibility": ["warn", { minScore: 0.95 }],
-                "categories:seo": ["warn", { minScore: 0.95 }],
-                "categories:best-practices": ["warn", { minScore: 0.9 }],
-                "categories:performance": ["warn", { minScore: 0.9 }],
-            },
+            // SEO is asserted on the login page only: robots.txt disallows the
+            // signed-in pages, so they fail `is-crawlable` by design.
+            assertMatrix: [
+                {
+                    matchingUrlPattern: "/auth/login$",
+                    assertions: { ...ASSERTIONS, "categories:seo": ["warn", { minScore: 0.95 }] },
+                },
+                { matchingUrlPattern: "^(?!.*/auth/login$)", assertions: ASSERTIONS },
+            ],
         },
         upload: {
             // Keep reports inside GitHub (uploaded as a build artifact by the
