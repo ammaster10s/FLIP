@@ -73,6 +73,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
+- [Node.js 24 LTS](https://nodejs.org/) (npm **>= 11.10**) for flip-ui work outside Docker (`npm ci`, lint, unit
+  tests): earlier npm ignores `flip-ui/.npmrc`'s `min-release-age` without a word, so installs skip the cooldown
+  (see [Dependency cooldown](#dependency-cooldown-supply-chain-protection)). The stack itself builds flip-ui in Docker.
 - No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
   [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
   downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
@@ -180,9 +183,8 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
-  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
-  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  `flip-ui/package.json`'s `engines` field asks for Node >= 24 and npm >= 11.10, so npm warns (`EBADENGINE`) on an
+  older toolchain instead of dropping the cooldown unnoticed — develop against Node 24 locally to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
   enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
