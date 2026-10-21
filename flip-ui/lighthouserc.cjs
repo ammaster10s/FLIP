@@ -16,9 +16,13 @@
 // environment (headless Chrome on a CI runner, no browser extensions) —
 // which is exactly what the original prod capture lacked.
 //
-// Scope: the pre-auth `/auth/login` route only. That page talks to AWS
-// Cognito (Amplify), never to flip-api, so no backend / trust / FL stack is
-// needed — a production `vite build` served by `vite preview` is enough.
+// Scope: `/auth/login`, then — when LHCI_USERNAME is set — the main signed-in
+// pages. The workflow starts the AWS-free hub (flip-api + the dev Keycloak),
+// seeds one project (LHCI_PROJECT_ID) and signs in as the seeded admin through
+// lighthouse-auth.cjs. Keycloak and Cognito ship in the same bundle (the
+// backend is picked at runtime from js/window.js), so this audits the JS prod
+// serves. Without LHCI_USERNAME (a local run with no hub) only the login page
+// is audited.
 // `staticDistDir` is deliberately NOT used: it can't do SPA history fallback,
 // so a deep link to /auth/login would 404. `vite preview` serves the built
 // bundle *and* falls back to index.html, matching how CloudFront serves prod.
@@ -27,6 +31,19 @@
 // item on #586) depend on CloudFront response headers, which `vite preview`
 // does not emit — those can only be validated against a real deployment, not
 // here.
+const BASE_URL = "http://localhost:4173";
+const SIGNED_IN = Boolean(process.env.LHCI_USERNAME);
+const SIGNED_IN_PATHS = [
+    "/projects",
+    ...(process.env.LHCI_PROJECT_ID ? [`/project/${process.env.LHCI_PROJECT_ID}`] : []),
+    "/models",
+    "/admin/users",
+];
+// Chrome on CI runners needs --no-sandbox; --disable-gpu avoids headless GPU
+// flakiness. --disable-extensions keeps the profile clean (the whole point of
+// re-running — the prod capture was polluted by ad-blocker extension scripts).
+const CHROME_FLAGS = ["--no-sandbox", "--disable-gpu", "--disable-extensions"];
+
 module.exports = {
     ci: {
         collect: {
@@ -38,18 +55,22 @@ module.exports = {
             // across those codes as well as an optional space before the colon.
             startServerReadyPattern: "Local(?:\\x1b\\[[0-9;]*m)*\\s*:",
             startServerReadyTimeout: 30000,
-            url: ["http://localhost:4173/auth/login"],
+            // The login page first: it is audited signed out, before the
+            // puppeteer script signs the browser in for the rest.
+            url: [`${BASE_URL}/auth/login`, ...(SIGNED_IN ? SIGNED_IN_PATHS.map((path) => BASE_URL + path) : [])],
+            // With a puppeteerScript lhci launches Chrome through puppeteer and
+            // ignores settings.chromeFlags, so the flags move to its launch args.
+            ...(SIGNED_IN && {
+                puppeteerScript: "./lighthouse-auth.cjs",
+                puppeteerLaunchOptions: { args: CHROME_FLAGS },
+            }),
             // Median of 3 runs — smooths the timing-based performance metrics;
             // the accessibility / SEO audits are deterministic regardless.
             numberOfRuns: 3,
             settings: {
                 // Match the original audit (Lighthouse v13, desktop form factor).
                 preset: "desktop",
-                // Chrome on CI runners needs --no-sandbox; --disable-gpu avoids
-                // headless GPU flakiness. --disable-extensions keeps the profile
-                // clean (the whole point of re-running — the prod capture was
-                // polluted by ad-blocker extension scripts).
-                chromeFlags: "--no-sandbox --disable-gpu --disable-extensions",
+                ...(!SIGNED_IN && { chromeFlags: CHROME_FLAGS.join(" ") }),
             },
         },
         assert: {
