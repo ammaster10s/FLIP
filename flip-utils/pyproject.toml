@@ -111,7 +111,10 @@ constraint-dependencies = [
     "filelock>=3.20.3",          # CVE-2025-68146, CVE-2026-22701
     "fonttools>=4.62.0",         # arbitrary code execution (dev-only, via matplotlib)
     "idna>=3.15",                # CVE-2026-45409
-    "pillow>=12.3.0",            # CVE-2026-42311/42310/42309/42308/40192/25990
+    # GHSA-58r4-6rv3-gfh8, GHSA-8g5g-8vmr-9782, GHSA-pchr-8j38-3x4p, GHSA-vx6w-vv9f-6gvg, GHSA-q45j-58j2-45rg,
+    # GHSA-c6hw-5grf-ff96, GHSA-65qm-jvmh-6pqg, GHSA-p4wg-p73j-c528, GHSA-462x-pgg6-55fp;
+    # prior hardening: CVE-2026-42311/42310/42309/42308/40192/25990.
+    "pillow>=13.0.0",
     "protobuf>=6.33.5",          # CVE-2026-0994
     "pygments>=2.20.0",          # CVE-2026-4539
     "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597
