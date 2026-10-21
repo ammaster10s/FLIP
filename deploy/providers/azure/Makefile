@@ -50,6 +50,8 @@ AKS_NAME = $(NAME_PREFIX)-aks
 # (TEST-NET-1) satisfies the variable's check without looking the operator's IP up, so a blocked
 # api.ipify.org never stands between the operator and a teardown.
 DESTROY_OPERATOR_IP := 192.0.2.1
+# Likewise the SSH key: Azure needs one only to create the VM, so a teardown needs no key file.
+DESTROY_SSH_PUBLIC_KEY := ssh-ed25519 AAAA destroy-only
 
 define require_subscription
 	@[ -n "$(AZ_SUBSCRIPTION)" ] || { echo "❌ AZ_SUBSCRIPTION=<trial subscription name or id> is required (never the CLI default)."; exit 1; }
@@ -152,7 +154,7 @@ destroy: ## Destroy the node and its network, keep bootstrap (asks first)
 	$(TF) -chdir=vm destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
 		-var "existing_subnet_id=$(SUBNET_ID)" \
-		-var "admin_ssh_public_key=$$(cat $(SSH_PUBLIC_KEY_FILE))" -var "flip_ref=$(FLIP_REF)" \
+		-var "admin_ssh_public_key=$(DESTROY_SSH_PUBLIC_KEY)" -var "flip_ref=$(FLIP_REF)" \
 		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 destroy-bootstrap: ## Destroy everything bootstrap made (refuses while the node exists; asks first)

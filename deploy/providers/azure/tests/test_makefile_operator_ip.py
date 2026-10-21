@@ -83,12 +83,11 @@ def test_a_refused_kit_upload_names_the_ip_and_never_runs_the_answer(tmp_path, a
     assert not (tmp_path / "PWNED").exists(), "the answer was run as a command"
 
 
-def test_destroy_needs_no_ip_lookup(tmp_path):
-    key = tmp_path / "id.pub"
-    key.write_text("ssh-ed25519 AAAA test\n")
-
-    result, calls = run_make(tmp_path, "destroy", ipify=[""], SSH_PUBLIC_KEY_FILE=str(key))
+def test_destroy_needs_no_ip_lookup_and_no_key_file(tmp_path):
+    result, calls = run_make(tmp_path, "destroy", ipify=[""], SSH_PUBLIC_KEY_FILE=str(tmp_path / "missing.pub"))
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not _curls(calls), "a failed lookup must not stand between the operator and a teardown"
-    assert _terraform(calls, "destroy").endswith(" -var operator_ip=192.0.2.1")
+    destroy = _terraform(calls, "destroy")
+    assert destroy.endswith(" -var operator_ip=192.0.2.1")
+    assert "admin_ssh_public_key=ssh-ed25519 " in destroy, "a teardown reads no local key file"
