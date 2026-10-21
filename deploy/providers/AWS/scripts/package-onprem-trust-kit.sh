@@ -16,31 +16,31 @@
 # admin) together with the operator's slice of the FL participant kit S3
 # bucket.
 #
-# Admin pre-steps (run before this script):
-#   1. Open the prod UI, click Add Trust, fill in the trust's name/code/region.
-#      Copy the 5 KEY=VALUE lines the modal surfaces ONCE (TRUST_API_KEY,
-#      TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER,
-#      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>.<env>, replacing
-#      the <run-make-register-trusts> placeholders.
-#   2. Run `make sync-trust-kit KIT=<slot> HUB=prod` (from the repo root) to
-#      populate the Hub-shared block in trust/.env.<KIT>.<env>, replacing the
-#      <run-make-sync-trust-kit> placeholders.
+# Admin pre-steps (run before this script; from the repo root unless noted):
+#   1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod` writes
+#      trust/.env.<CODE>.prod.
+#   2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod`
+#      fills the Kit credentials (incl. FL_KIT_SLOT).
+#   3. `make sync-trust-kit KIT=<CODE> HUB=prod` fills the Hub-shared block, and
+#      `make generate-xnat-credentials KIT=<CODE> HUB=prod` the XNAT passwords.
+#   4. Run this through `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>
+#      KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`, <slot> being the kit's FL_KIT_SLOT.
 #
 # This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
-#   3. Validate the kit file has no unfilled placeholders.
-#   4. Read FL_BACKEND, FLARE_KIT_DATE / FLOWER_KIT_DATE, FL_KIT_SLOT,
+#   5. Validate the kit file has no unfilled placeholders.
+#   6. Read FL_BACKEND, FLARE_KIT_DATE / FLOWER_KIT_DATE, FL_KIT_SLOT,
 #      FL_KIT_SLOT_NUMBER from the kit file, and AICENTRE_BUCKET_NAME from
 #      the admin's $(MAIN_ENV_FILE) (which the AWS Makefile includes +
 #      exports — it's the hub-side bucket that holds the provisioned FL
 #      participant kits, not per-trust).
-#   5. Sync only this operator's portion of the FL participant kit out of S3
+#   7. Sync only this operator's portion of the FL participant kit out of S3
 #      (net-1/services/<slot>/ for nvflare; net-1/certificates/ + one
 #      supernode_credentials_<N> for flower).
-#   6. Tarball trust/.env.<KIT>.<env> + fl-kit/ into
+#   8. Tarball trust/.env.<KIT>.<env> + fl-kit/ into
 #      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):
-#   7. Extract, copy .env.<slot>.<env> into trust/, edit Host-local profile +
+#   9. Extract, copy .env.<slot>.<env> into trust/, edit Host-local profile +
 #      Trust-local credentials sections (set FL_KIT_DIR to the extracted
 #      fl-kit/ absolute path, override ports/dirs/passwords as needed for
 #      their host), then `sudo -E make up-onprem-trust KIT=<slot>` (sudo:
@@ -66,7 +66,8 @@ KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-tru
 KIT_FILE="${KIT_FILE:-$REPO_ROOT/trust/$KIT_NAME}"
 if [ ! -f "$KIT_FILE" ]; then
     log_error "Kit file $KIT_FILE not found."
-    log_error "Scaffold and register it first: make new-trust TRUST_CODE=${KIT} ... HUB=${HUB}"
+    log_error "Pass the trust's registered kit by path (KIT is its FL_KIT_SLOT):"
+    log_error "    make package-onprem-trust-kit KIT=${KIT} KIT_FILE=\$PWD/trust/.env.<CODE>.${HUB} HUB=${HUB}"
     exit 1
 fi
 
@@ -78,9 +79,10 @@ fi
 if grep -qE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE"; then
     n="$(grep -cE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE")"
     log_error "$KIT_FILE still has $n unfilled <run-make-…> placeholder(s)."
-    log_error "Fill them in first:"
-    log_error "  - Kit credentials (5 lines): UI → Add Trust → paste the modal output."
-    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<slot> HUB=${HUB}' from repo root."
+    log_error "Fill them in on trust/.env.<CODE>.${HUB} (from the repo root), then package it again:"
+    log_error "  - Kit credentials: make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=${HUB}"
+    log_error "  - Hub-shared block: make sync-trust-kit KIT=<CODE> HUB=${HUB}"
+    log_error "  - XNAT passwords:   make generate-xnat-credentials KIT=<CODE> HUB=${HUB}"
     exit 1
 fi
 
@@ -94,13 +96,13 @@ slot="$(get_var FL_KIT_SLOT)"
 slot_number="$(get_var FL_KIT_SLOT_NUMBER)"
 
 # Validate the kit-file values that drive S3 paths. These are populated by
-# the admin's UI Add-Trust + sync-trust-kit steps; missing values mean
+# the admin's register-trusts + sync-trust-kit steps; missing values mean
 # those steps didn't run yet.
 for k in FL_BACKEND FL_KIT_SLOT FL_KIT_SLOT_NUMBER; do
     if [ -z "$(get_var "$k")" ]; then
         log_error "$k is empty in $KIT_FILE — fill the kit file first:"
-        log_error "  - UI → Add Trust → paste the 5 modal lines into the kit file."
-        log_error "  - Then run: make sync-trust-kit KIT=$KIT HUB=${HUB} (from repo root)."
+        log_error "  - Run register-trusts and sync-trust-kit with KIT=<CODE> HUB=${HUB} (see the header), then"
+        log_error "    package it again."
         exit 1
     fi
 done

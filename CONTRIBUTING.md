@@ -198,8 +198,18 @@ than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock`
 For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
 
 - **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
-  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
-  the exception is visible in the pull request and `uv lock --check` still passes.
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock --upgrade-package <package>`.
+  The entry is committed, so the exception is visible in the pull request and `uv lock --check` still passes. To
+  keep the exception narrow:
+  - Set the timestamp just after the fixed release's upload time on PyPI, not to "now", so no later, uncooled release
+    can get in.
+  - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
+  - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
+    until someone removes it.
+  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
+    `fl-services/flower/fl-base/Dockerfile`.
+
+  The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
   command.
 
@@ -1006,7 +1016,7 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
 
 ## Documentation GIFs
 
-The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+The animated walkthroughs in the user guides (`docs/source/user-guides/*.rst` and
 `docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
 fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
 run was 95% of a clone). Instead:
