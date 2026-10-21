@@ -82,6 +82,13 @@ DESTRUCTIVE = (
 )
 
 
+def _without_make_vars(environ: os._Environ[str] | dict[str, str]) -> dict[str, str]:
+    """The caller's environment minus what a calling make adds: MAKEFLAGS and each command-line variable it names."""
+    names = {"MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL"}
+    names |= {tok.split("=", 1)[0] for tok in environ.get("MAKEFLAGS", "").split() if "=" in tok and tok[0] != "-"}
+    return {k: v for k, v in environ.items() if k not in names}
+
+
 def run_target(
     target: str,
     *extra: str,
@@ -139,7 +146,7 @@ def run_target(
             ],
             capture_output=True,
             text=True,
-            env={**os.environ, "PROD": "true", **(env or {})},
+            env={**_without_make_vars(os.environ), "PROD": "true", **(env or {})},
             timeout=60,
         )
 
