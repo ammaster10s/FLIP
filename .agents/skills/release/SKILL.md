@@ -41,8 +41,11 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
    worktree off `origin/develop` (branch `release-v<X.Y.Z>`); leave the main checkout's untracked files alone.
    `develop` CI must be green and every intended PR merged.
 2. **`make release-prepare TAG=v<X.Y.Z>`** (`DRY_RUN=1` first). It refuses while a merged PR is unlabelled — label
-   it from `.github/release.yml`'s categories and rerun. It prints the open Dependabot alerts: fix actionable ones in
-   **separate** PRs, never in the bump PR. It bumps the versions, runs `make lock` and empties *Release checks*.
+   it from `.github/release.yml`'s categories and rerun. It prints the open Dependabot alerts: fix every actionable one
+   **together, in one** `v<X.Y.Z> dependency fixes` PR (never one PR per package, and never in the bump PR), merged
+   before the gates run so they test it. A fix still inside the 72 h install cooldown is not installable: add it to
+   that PR once the cooldown expires, or ship without it and name it in the report. It bumps the versions, runs
+   `make lock` and empties *Release checks*.
 3. **Notes and the draft PR.** Curate `.github/RELEASE_NOTES_TEMPLATE.md`, especially *Site upgrade* (required or
    not, hub/site order or one Deployment-Mode window, refreshed kit or not), from the merged PRs. Commit (signed
    off), push, and open the draft `Release v<X.Y.Z>` → `develop`. The gates run at its head; if the head moves,

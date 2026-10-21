@@ -43,6 +43,6 @@ On top of it, for Claude Code:
   (or run it on the host). If the host needs `sudo`, give the user the command with `!`. To stop a remote process,
   kill it by PID or use a bracketed pattern (`pgrep -f "[e]2e_smoke"`): a bare `pkill -f <pattern>` matches the
   SSH shell that carries the pattern and kills that shell first.
-- **Parallelism.** Curate the notes and fix Dependabot alerts while the remote gates run.
+- **Parallelism.** Curate the notes and prepare the single dependency-fixes PR while the remote gates run.
 - **Report.** End with a checklist that marks each gate passed, pending or failed from its JSON (commit, timings,
   log path), and lists the PR links with their reviewer requests verified.
