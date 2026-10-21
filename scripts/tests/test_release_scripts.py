@@ -458,6 +458,7 @@ class MainCheck(unittest.TestCase):
         argv = shlex.split(main_check.create_command("v0.13.0", ["Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB"]))
         assert argv[:7] == ["gh", "pr", "create", "--base", "main", "--head", "develop"]
         assert argv[argv.index("--title") + 1] == "Release v0.13.0 (develop → main)"
+        assert argv[argv.index("--label") + 1] == "release"  # excluded from the generated notes
         body = argv[argv.index("--body") + 1]
         assert "merge commit" in body
         assert "fl_quiesced" in body

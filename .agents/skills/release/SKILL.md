@@ -48,7 +48,8 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
    `make lock` and empties *Release checks*.
 3. **Notes and the draft PR.** Curate `.github/RELEASE_NOTES_TEMPLATE.md`, especially *Site upgrade* (required or
    not, hub/site order or one Deployment-Mode window, refreshed kit or not), from the merged PRs. Commit (signed
-   off), push, and open the draft `Release v<X.Y.Z>` → `develop`. The gates run at its head; if the head moves,
+   off), push, and open the draft `Release v<X.Y.Z>` → `develop` with the `release` label, which keeps release
+   plumbing out of the generated notes. The gates run at its head; if the head moves,
    rerun the gates it affects.
 4. **On the GPU host, at the PR head:** `make release-gates TAG=… PR=<n>`. It refuses a dirty checkout or one that
    is not the PR head. It runs the quickest gates first (unit, integration, then both tutorial suites) on a quiet

@@ -103,7 +103,10 @@ def create_command(tag: str, owed: list[str]) -> str:
         *(f"- [ ] {item}" for item in owed),
     ]
     body = "\n".join(lines)
-    return f"gh pr create --base main --head develop --title {shlex.quote(title(tag))} --body {shlex.quote(body)}"
+    return (
+        f"gh pr create --base main --head develop --label release --title {shlex.quote(title(tag))}"
+        f" --body {shlex.quote(body)}"
+    )
 
 
 def find_pr(tag: str) -> str | None:
