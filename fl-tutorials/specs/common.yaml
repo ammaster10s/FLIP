@@ -127,19 +127,19 @@ rules:
     level: SHOULD
     statement: README quotes the simulator command for this tutorial
     enforced_by: tests/test_fl_tutorials_make_targets.py (every quoted target must resolve)
-    check: {type: file_regex, path: README.md, pattern: 'make -C fl-tutorials run-tutorial TUTORIAL={name}'}
+    check: {type: file_regex, path: README.md, pattern: 'make -C fl-tutorials run-tutorial TUTORIAL={name}\b'}
   - id: COMMON-23
     level: SHOULD
     statement: fl-tutorials/README.md lists the tutorial
-    check: {type: file_regex, path: '{fl_tutorials}/README.md', pattern: '{name}'}
+    check: {type: file_regex, path: '{fl_tutorials}/README.md', pattern: '\b{name}\b'}
   - id: COMMON-24
     level: SHOULD
     statement: fl-tutorials/AGENTS.md lists the tutorial
-    check: {type: file_regex, path: '{fl_tutorials}/AGENTS.md', pattern: '{name}'}
+    check: {type: file_regex, path: '{fl_tutorials}/AGENTS.md', pattern: '\b{name}\b'}
   - id: COMMON-25
     level: SHOULD
     statement: The root AGENTS.md repo-structure block names the tutorial
-    check: {type: file_regex, path: '{repo_root}/AGENTS.md', pattern: '{name}'}
+    check: {type: file_regex, path: '{repo_root}/AGENTS.md', pattern: '\b{name}\b'}
   - id: COMMON-26
     level: MUST
     statement: ruff is clean over the tutorial directory (repo rule set; Flower tutorials add their own [tool.ruff])

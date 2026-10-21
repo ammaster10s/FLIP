@@ -178,6 +178,7 @@ make -C fl-tutorials download-arkplus-eval-data          # Ark+ HOLD-OUT splits 
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (sim-tutorial is the same)
 make -C fl-tutorials test                                # ruff + both CPU-only pytest suites (tutorial-app + per-dataset)
+make -C fl-tutorials check-tutorial TUTORIAL=xray_classification   # the tutorial contract (fl-tutorials/specs/, #1444): static rules, guard suites, sync script, GPU-free export — never the simulator; check-all-tutorials for the catalogue
 ```
 
 `make run` delegates to `make sim` (FLARE simulator, needs a GPU; per-tutorial `make export` builds

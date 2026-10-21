@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import json
 import re
 import subprocess
@@ -115,17 +116,20 @@ def load_yaml(path: Path) -> Any:
         return yaml.safe_load(handle)
 
 
+@functools.cache
 def load_profile() -> dict[str, Any]:
     return load_yaml(PROFILE_FILE)
 
 
+@functools.cache
 def load_specs() -> dict[str, dict[str, Any]]:
     """Every spec file in this directory, keyed by file name (``profile.yaml`` is not a spec)."""
     return {p.name: load_yaml(p) for p in sorted(SPECS_DIR.glob("*.yaml")) if p.name != PROFILE_FILE.name}
 
 
+@functools.cache
 def discover_tutorials() -> list[Tutorial]:
-    """Every tutorial directory the two harnesses would discover, manifest or not."""
+    """Every tutorial directory the two harnesses would discover, manifest or not (read once per run)."""
     found: list[Tutorial] = []
     for env in sorted((FL_TUTORIALS / "nvflare").glob("*/*/.env.app")):
         found.append(_tutorial(env.parent, "nvflare"))
@@ -191,7 +195,7 @@ def applicable_specs(tutorial: Tutorial, profile: dict[str, Any], specs: dict[st
     names = [COMMON_SPEC]
     for axis, mapping in profile["specs"].items():
         value = get_field(tutorial.manifest, AXIS_FIELDS[axis])
-        entry = mapping.get(value) if value is not None else None
+        entry = mapping.get(value) if isinstance(value, str) else None
         if entry and entry["spec"] not in names:
             names.append(entry["spec"])
     return [n for n in names if n in specs]
@@ -274,8 +278,9 @@ def check_file_regex(check, tutorial, ctx):
     p = _resolve(check["path"], tutorial, ctx)
     if not p.is_file():
         return False, f"{p} missing"
-    found = re.search(render(check["pattern"], ctx), _read(p), _flags(check)) is not None
-    return found, "matched" if found else f"no match for {check['pattern']!r} in {p.relative_to(REPO_ROOT)}"
+    pattern = render(check["pattern"], ctx)
+    found = re.search(pattern, _read(p), _flags(check)) is not None
+    return found, "matched" if found else f"no match for {pattern!r} in {p.relative_to(REPO_ROOT)}"
 
 
 def check_file_not_regex(check, tutorial, ctx):
@@ -367,10 +372,13 @@ def check_make_target(check, tutorial, ctx):
     result = subprocess.run(
         ["make", "-n", "-C", str(makefile_dir), str(target)], capture_output=True, text=True, timeout=60
     )
-    unresolved = "No rule to make target" in result.stderr
-    return not unresolved, f"make -C {makefile_dir.relative_to(REPO_ROOT)} {target}: " + (
-        "resolves" if not unresolved else "no rule"
-    )
+    where = f"make -C {makefile_dir.relative_to(REPO_ROOT)} {target}"
+    if result.returncode == 0:
+        return True, f"{where}: resolves"
+    # A missing rule, a parse error in the Makefile or an include it cannot read all mean the target
+    # the manifest names would not run; say which.
+    error = next((ln for ln in result.stderr.splitlines() if ln.strip()), f"exit {result.returncode}")
+    return False, f"{where}: {error[:200]}"
 
 
 def check_case_entry(check, tutorial, ctx):
@@ -381,20 +389,28 @@ def check_case_entry(check, tutorial, ctx):
     return found, "case entry present" if found else f"no case entry for {tutorial.name} in {p.relative_to(REPO_ROOT)}"
 
 
-def check_pytest(check, tutorial, ctx):
-    files = [str(FL_TUTORIALS / "tests" / f) for f in check["files"]]
+@functools.cache
+def _run_pytest(files: tuple[str, ...]) -> tuple[bool, str]:
     result = subprocess.run([*PYTEST_CMD, *files], capture_output=True, text=True, cwd=FL_TUTORIALS, timeout=1800)
     tail = (result.stdout.strip().splitlines() or [""])[-1]
     return result.returncode == 0, tail
 
 
-def check_shell(check, tutorial, ctx):
-    cwd = Path(render(check.get("cwd", "{repo_root}"), ctx))
-    result = subprocess.run(
-        ["bash", "-c", render(check["cmd"], ctx)], capture_output=True, text=True, cwd=cwd, timeout=1800
-    )
+@functools.cache
+def _run_shell(cmd: str, cwd: str) -> tuple[bool, str]:
+    result = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, cwd=cwd, timeout=1800)
     lines = [ln for ln in (result.stdout + result.stderr).splitlines() if ln.strip()]
     return result.returncode == 0, (lines[-1] if lines else f"exit {result.returncode}")[:200]
+
+
+# The guard suites and the sync script are the same command for every tutorial, so under ``--all`` they
+# run once per invocation; a command that interpolates the tutorial (``make export``) runs per tutorial.
+def check_pytest(check, tutorial, ctx):
+    return _run_pytest(tuple(str(FL_TUTORIALS / "tests" / f) for f in check["files"]))
+
+
+def check_shell(check, tutorial, ctx):
+    return _run_shell(render(check["cmd"], ctx), str(Path(render(check.get("cwd", "{repo_root}"), ctx))))
 
 
 def check_manual(check, tutorial, ctx):
@@ -405,7 +421,7 @@ def check_manual(check, tutorial, ctx):
 
 
 def builtin_manifest_valid(check, tutorial, ctx):
-    errors = manifest_errors(tutorial, _PROFILE, _SPECS)
+    errors = manifest_errors(tutorial, load_profile(), load_specs())
     return not errors, "; ".join(errors) if errors else "valid"
 
 
@@ -472,6 +488,7 @@ def builtin_twin_query_in_sync_pairs(check, tutorial, ctx):
     return pinned, "pinned in PAIRS" if pinned else f"{mine} / {theirs} not in PAIRS"
 
 
+@functools.cache
 def _demo_apps() -> dict[str, Any] | None:
     source = _read(REPO_ROOT / "flip-api" / "tests" / "demo_video.py")
     for node in ast.walk(ast.parse(source)):
@@ -558,10 +575,6 @@ CHECKS: dict[str, CheckFn] = {
     "manual": check_manual,
 }
 
-_PROFILE: dict[str, Any] = {}
-_SPECS: dict[str, dict[str, Any]] = {}
-
-
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -571,8 +584,6 @@ def evaluate(
     tutorial: Tutorial, profile: dict[str, Any], specs: dict[str, dict[str, Any]], static_only: bool
 ) -> list[Outcome]:
     """Every applicable rule of every applicable spec, as outcomes (manifest problems first)."""
-    global _PROFILE, _SPECS
-    _PROFILE, _SPECS = profile, specs
     ctx = context_for(tutorial)
     waivers = tutorial.manifest.get("waivers") or {}
     outcomes: list[Outcome] = []
@@ -593,7 +604,9 @@ def evaluate(
                 passed, detail = CHECKS[check["type"]](check, tutorial, ctx)
             except Exception as exc:  # a broken check is a failure with the cause, never a crash of the whole run
                 passed, detail = False, f"{type(exc).__name__}: {exc}"
-            if passed:
+            if passed and rule["id"] in waivers:
+                status, detail = "warn", f"passes — the waiver is stale, remove it ({waivers[rule['id']]})"
+            elif passed:
                 status = "pass"
             elif rule["id"] in waivers and str(waivers[rule["id"]]).strip():
                 status, detail = "waived", f"{waivers[rule['id']]} ({detail})"

@@ -90,7 +90,8 @@ rules:
 
 Levels: a failing **MUST** fails the run; a failing **SHOULD** is a warning; a `manual` check is
 listed for the reviewer (ⓘ) and never fails; a rule the manifest **waives** is shown as ⏭ with
-its reason. The catalogue passes when no MUST fails.
+its reason; a waived rule that **passes** is reported as a warning naming the stale waiver, so remove it.
+The catalogue passes when no MUST fails.
 
 ### Check types
 
@@ -115,7 +116,8 @@ interpolated into paths, patterns and commands (double any literal brace in a re
 | `shell` | `cmd`, `cwd` | exit 0 — **heavy** |
 | `manual` | — | always listed, never fails |
 
-`--static-only` skips the heavy types; that is what `tests/test_tutorial_specs.py` runs over
+A heavy command that does not interpolate the tutorial (the guard suites, the sync script) runs once per
+invocation, however many tutorials `--all` covers. `--static-only` skips the heavy types; that is what `tests/test_tutorial_specs.py` runs over
 every tutorial in CI, so a MUST that a static check can see is enforced on every PR.
 
 ## Adding a rule, a value or a category

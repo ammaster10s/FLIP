@@ -102,7 +102,7 @@ DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 #   make -C fl-tutorials check-tutorial TUTORIAL=<name> [FL_BACKEND=nvflare|flower]
 #   make -C fl-tutorials check-all-tutorials
 CHECK_TUTORIAL ?= uv run --project ../flip-utils --extra full --group dev python specs/check_tutorial.py
-CHECK_BACKEND := $(if $(filter command line,$(origin FL_BACKEND)),$(FL_BACKEND),both)
+CHECK_BACKEND := $(if $(findstring command line,$(origin FL_BACKEND)),$(FL_BACKEND),both)
 
 .PHONY: check-tutorial check-all-tutorials
 check-tutorial:

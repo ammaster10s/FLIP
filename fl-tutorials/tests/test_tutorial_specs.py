@@ -33,9 +33,9 @@ CHECKER = SPECS_DIR / "check_tutorial.py"
 
 def _load_checker():
     spec = importlib.util.spec_from_file_location("check_tutorial", CHECKER)
-    module = importlib.util.module_from_spec(spec)
     assert spec is not None
     assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses resolve `from __future__ import annotations` through sys.modules
     spec.loader.exec_module(module)
     return module
