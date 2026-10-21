@@ -93,25 +93,6 @@ PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
 DATASET_TEST_PROJECTS ?= spleen cxr synthea brain_mri prostate
 DATASET_UTILS_PROJECT ?= $(firstword $(DATASET_TEST_PROJECTS))
 
-# ---------------------------------------------------------------------------
-# The tutorial contract: fl-tutorials/specs/*.yaml, one rule per requirement, selected per
-# tutorial by its tutorial.yaml manifest and run by specs/check_tutorial.py (specs/README.md).
-# Static rules plus the guard suites, the sync script and a GPU-free NVFLARE `make export` —
-# never the simulator. Runs in flip-utils' environment like the tutorial-app tests (pyyaml comes
-# with monai). FL_BACKEND on the command line narrows the check to that backend; otherwise both.
-#   make -C fl-tutorials check-tutorial TUTORIAL=<name> [FL_BACKEND=nvflare|flower]
-#   make -C fl-tutorials check-all-tutorials
-CHECK_TUTORIAL ?= uv run --project ../flip-utils --extra full --group dev python specs/check_tutorial.py
-CHECK_BACKEND := $(if $(findstring command line,$(origin FL_BACKEND)),$(FL_BACKEND),both)
-
-.PHONY: check-tutorial check-all-tutorials
-check-tutorial:
-	@test -n "$(TUTORIAL)" || { echo "Set TUTORIAL=<name> (see: make -C fl-tutorials list-tutorials)"; exit 1; }
-	$(CHECK_TUTORIAL) $(TUTORIAL) --backend $(CHECK_BACKEND)
-
-check-all-tutorials:
-	$(CHECK_TUTORIAL) --all --backend $(CHECK_BACKEND)
-
 .PHONY: pytest pytest-datasets test unit_test
 pytest:
 	$(PYTEST) tests --ignore=tests/datasets

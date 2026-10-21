@@ -1,8 +1,20 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
 # The README every tutorial shares
 
-Backend-specific section lists live in the backend sub-skills; the category sub-skills say what the
-figure and the performance section look like for their kind of tutorial. This file is what is
-common. Spec rules: `common.yaml` COMMON-18 to COMMON-22.
+Backend-specific section lists live in the skill's §3 and §4; §5 says what the figure and the
+performance section look like for each shape. This file is what is common.
 
 Every README must state: what to upload (`app_files/` or `app/`), the job type, whether the
 project has imaging on or off, the dataset download target, and the simulator command. Every
@@ -52,7 +64,7 @@ A reader's first simulator run ends with numbers and no way to judge them, so th
   `docs/`, a committed `docs/make_training_curve.py` that reads those artefacts, under 1000 KB.
   No tutorial has one yet; the first one written should be generic enough to move to
   `fl-tutorials/datasets/` or `scripts/` and be shared. A statistical tutorial has no curve: its
-  reference is an agreement table (see `new-tutorial-statistical`).
+  reference is a table of agreement between runs.
 - The **numbers in prose**: the metric range the shipped config reaches, after how many rounds it
   plateaus, which config knobs that depends on (the EHR README's "a narrower layer or fewer rounds
   plateaus lower" is the model), and the known **failure signatures** a reader might mistake for
@@ -82,8 +94,8 @@ Each tutorial gets a walkthrough video recorded against the live dev stack by
 adding a profile there — `project_name`, `model_name`, `model_description`, `has_imaging: False`
 for tabular cohorts (skips the XNAT/OHIF segment), and per-backend `app_dir` / `query_file`
 pointing at the tutorial. `flip-api/tests/unit/test_demo_video_helpers.py` parametrises over
-`APPS`, so the new profile's paths are checked by `make -C flip-api unit_test`. The manifest's
-`platform.demo_profile` names the profile; COMMON-18 checks it points at this tutorial.
+`APPS`, so the new profile's paths are checked by `make -C flip-api unit_test`.
+`platform.demo_profile` names the profile;  checks it points at this tutorial.
 
 ```bash
 make demo-video DEMO_ARGS="--app <name>"                      # NVFLARE, ~30–45 min, needs the dev stack up + cohort seeded
@@ -94,9 +106,8 @@ Segmentation tutorials add the same `--data-enrichment-cwd/-cmd` pair the e2e sm
 `--publish-segmentations` for the DICOM-SEG overlay beat (copy the spleen invocation in
 `flip-ui/test/cypress/demo/README.md`). The segments assume a *training* job (create model →
 initiate training → live metrics → download); an `evaluation` tutorial needs a look at segments
-4–5 before it can be recorded faithfully — say so rather than record a misleading video, and waive
-COMMON-18 in the manifest with that reason (EVAL-10). A tutorial on access-controlled data waives it
-too: a recording would show derived values (DATA-08). Output lands in the gitignored
+4–5 before it can be recorded faithfully — say so rather than record a misleading video. A tutorial on access-controlled data gets no
+video either: a recording would show derived values. Output lands in the gitignored
 `flip-ui/test/cypress/demo/out/flip-demo-<app>.mp4`; it is not committed. Where it is published
 (and how the README links it) is decided per the repo's video policy — ask if none is set yet; the
 docs GIFs precedent is a versioned HF dataset (`aicentreflip/docs-gifs`, #1236).

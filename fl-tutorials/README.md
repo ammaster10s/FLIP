@@ -81,17 +81,14 @@ backends before a release is published. The record of that run is the *Release c
 
 The tutorial contract — the file set per backend, the files that must stay byte-identical to the `fl-apps`
 templates, the hand-maintained lists a tutorial has to be added to, and the README shape (task figure, reference
-training curve, references, demo video) — is written down once as **specs**: [`specs/`](specs/README.md) holds one
-YAML file per tutorial category (common, per backend, imaging / tabular, deep-learning / statistical, evaluation /
-training variants, datasets), one rule per requirement with an id and a MUST / SHOULD level. Every tutorial directory
-carries a `tutorial.yaml` manifest naming its profile (backend, data, model, loop, dataset tier, platform wiring),
-which selects the specs that apply. `make -C fl-tutorials check-tutorial TUTORIAL=<name> [FL_BACKEND=nvflare|flower]`
-runs them for one tutorial (static rules, the guard tests, the sync script, a GPU-free NVFLARE job export) and
-`make -C fl-tutorials check-all-tutorials` for the catalogue; neither runs the simulator. CI runs the static half over
-every tutorial (`tests/test_tutorial_specs.py`). The agent-facing guide is the `new-tutorial` project skill in
-[`.claude/skills/new-tutorial/`](../.claude/skills/new-tutorial/SKILL.md), a router that profiles the tutorial and
-loads the matching `new-tutorial-*` sub-skills (one per category, each explaining its spec); the skills read as plain
-Markdown without Claude Code. See [#1444](https://github.com/londonaicentre/FLIP/issues/1444).
+training curve, references, demo video) — is written down once, as the `tutorial-contract` project skill in
+[`.claude/skills/tutorial-contract/`](../.claude/skills/tutorial-contract/SKILL.md) with its two references
+(`readme-shape.md`, `registration-checklist.md`); it reads as plain Markdown without Claude Code. Two commands drive it:
+`/new-tutorial` (shape questions, copy the nearest tutorial, registrations, verify) and `/audit-tutorial <name>` (guards,
+GPU-free export, registrations, the README checklist). The guards stay the source of truth: `make -C fl-tutorials test`
+runs them, including `tests/test_tutorial_catalogue.py` (a twin pair's cohort query pinned in the sync script, `fl_job/`
+ignored, Flower identity from the context, the cohort query's shape). See
+[#1444](https://github.com/londonaicentre/FLIP/issues/1444).
 
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or

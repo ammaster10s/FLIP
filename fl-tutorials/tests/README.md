@@ -51,9 +51,9 @@ Cross-cutting guards that assert a property across several source files
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
 `test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
 `test_sim_tutorial_exit_status.py`, `test_xray_no_vocab_query.py`, `test_resource_spec_shape.py`,
-`test_tutorial_specs.py` — the specs in `fl-tutorials/specs/`, every `tutorial.yaml` manifest and the static
-MUST rules over the catalogue — and `test_new_tutorial_skill_tree.py` — the `new-tutorial` router, its
-sub-skills and `specs/profile.yaml` stay in step) stay at the root of `tests/`, because
+`test_tutorial_catalogue.py` — a twin pair's `query.sql` pinned in `scripts/check_tutorial_sync.sh`, `fl_job/`
+git-ignored, Flower clients taking their identity from the context, the cohort query's shape — and
+`test_ehr_flower_partition.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 Tutorial-app tests that cover one app file mirror its path the same way:

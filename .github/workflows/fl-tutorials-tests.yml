@@ -34,12 +34,7 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
-      # The tutorial contract (fl-tutorials/specs/, tests/test_tutorial_specs.py and
-      # test_new_tutorial_skill_tree.py) reads these too: the demo-recorder profiles (IMG-09 /
-      # TAB-04), the e2e targets (COMMON-17, TAB-03), the sync PAIRS (COMMON-16) and the skills.
-      - ".claude/skills/new-tutorial*/**"
-      - "flip-api/Makefile"
-      - "flip-api/tests/demo_video.py"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
   pull_request:
@@ -51,12 +46,7 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
-      # The tutorial contract (fl-tutorials/specs/, tests/test_tutorial_specs.py and
-      # test_new_tutorial_skill_tree.py) reads these too: the demo-recorder profiles (IMG-09 /
-      # TAB-04), the e2e targets (COMMON-17, TAB-03), the sync PAIRS (COMMON-16) and the skills.
-      - ".claude/skills/new-tutorial*/**"
-      - "flip-api/Makefile"
-      - "flip-api/tests/demo_video.py"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
 
