@@ -253,12 +253,28 @@ class Gates(unittest.TestCase):
             "final_status": "RESULTS_UPLOADED",
         }
 
-    def run_fake(self, codes: dict[str, int], keep_going: bool = False) -> tuple[dict, Path]:
+    def test_smoke_metrics_keep_the_project_of_a_smoke_that_failed(self):
+        lines = [(0.0, "  ✅ project_id=1ab83312-5130"), (1.0, "❌ Smoke failed: Model entered ERROR state")]
+        assert gates.smoke_metrics(lines) == {"project_id": "1ab83312-5130"}
+
+    def test_flower_smoke_creates_its_own_project_without_a_flare_one(self):
+        flower = gates.build_gates("v0.0.1", "rel0001", lambda: "")["smoke-flower"].steps[0]
+        assert not any("--project-id" in arg for arg in flower())
+        reused = gates.build_gates("v0.0.1", "rel0001", lambda: "abc")["smoke-flower"].steps[0]
+        assert "EXTRA_ARGS=--project-id abc" in reused()
+
+    def test_container_logs_are_saved_before_teardown_only_after_a_failure(self):
+        for codes, saved in (({"unit": 1}, True), ({}, False)):
+            with mock.patch.object(gates, "collect_logs", return_value=[]) as collect:
+                self.run_fake(codes, instance="rel0001")
+            assert collect.called is saved, codes
+
+    def run_fake(self, codes: dict[str, int], keep_going: bool = False, instance: str = "") -> tuple[dict, Path]:
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
         fake = {n: gates.Gate(n, [[sys.executable, "-c", f"raise SystemExit({codes.get(n, 0)})"]]) for n in gates.ORDER}
         with contextlib.redirect_stdout(io.StringIO()):
-            results = gates.run(fake, list(gates.ORDER), tmp, {"sha": "abc"}, {}, keep_going)
+            results = gates.run(fake, list(gates.ORDER), tmp, {"sha": "abc"}, {}, keep_going, instance)
         return results, tmp
 
     def test_a_failure_stops_the_run_but_not_teardown(self):

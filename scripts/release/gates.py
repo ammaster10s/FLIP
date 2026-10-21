@@ -136,13 +136,28 @@ def tutorial_metrics(lines: list[tuple[float, str]]) -> dict:
 
 
 def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
-    """The smoke's closing summary: project, model and final status."""
+    """Project, model and final status: from the closing summary, or the project from its creation line."""
     out = {}
     for _t, line in lines:
-        m = re.match(r"\s*(project_id|model_id|final_status)\s*=\s*(\S+)", line)
+        m = re.match(r"\s*(?:✅\s*)?(project_id|model_id|final_status)\s*=\s*(\S+)", line)
         if m:
             out[m[1]] = m[2]
     return out
+
+
+def collect_logs(instance: str, out_dir: Path) -> list[str]:
+    """Save every instance container's log before teardown removes the containers, and the evidence with them."""
+    names = subprocess.run(
+        ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^{instance}-"],
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    logs = out_dir / "container-logs"
+    logs.mkdir(exist_ok=True)
+    for name in names:
+        with (logs / f"{name}.log").open("w") as f:
+            subprocess.run(["docker", "logs", "--timestamps", name], stdout=f, stderr=subprocess.STDOUT)
+    return names
 
 
 def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
@@ -227,7 +242,9 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[
         )
 
     def smoke_flower() -> list[str]:
-        return ["make", "e2e_smoke", "FL_BACKEND=flower", f"EXTRA_ARGS=--project-id {project_id()}", *args]
+        # Reusing the FLARE smoke's project skips a second image pull; without one, the smoke creates its own.
+        pid = project_id()
+        return ["make", "e2e_smoke", "FL_BACKEND=flower", *([f"EXTRA_ARGS=--project-id {pid}"] if pid else []), *args]
 
     gates = [
         Gate("tutorials-nvflare", [["make", "-C", "fl-tutorials", "run-all-tutorials"]], tutorial_metrics),
@@ -256,7 +273,13 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[
 
 
 def run(
-    gates: dict[str, Gate], selected: list[str], out_dir: Path, base: dict, env: dict[str, str], keep_going: bool
+    gates: dict[str, Gate],
+    selected: list[str],
+    out_dir: Path,
+    base: dict,
+    env: dict[str, str],
+    keep_going: bool,
+    instance: str = "",
 ) -> dict[str, dict]:
     """Run the selected gates in order; after a failure the rest are not run (bar teardown) unless ``keep_going``."""
     results: dict[str, dict] = {}
@@ -272,6 +295,9 @@ def run(
             failed = failed or results[name]["status"] == "failed"
     finally:
         if "teardown" in selected:
+            if failed and instance:
+                saved = collect_logs(instance, out_dir)
+                print(f"🗂  saved {len(saved)} container log(s) → {out_dir / 'container-logs'}", flush=True)
             results["teardown"] = run_gate(gates["teardown"], out_dir, base, env)
     return results
 
@@ -314,13 +340,10 @@ def main(argv: list[str] | None = None) -> int:
     base = {"tag": a.tag, "instance": instance, "sha": sha, "host": socket.gethostname(), "gpu": _gpu()}
 
     def project_id() -> str:
-        pid = load_results(a.tag).get("smoke-nvflare", {}).get("metrics", {}).get("project_id")
-        if not pid:
-            raise ReleaseError("the Flower smoke reuses the FLARE smoke's project; run smoke-nvflare first")
-        return pid
+        return load_results(a.tag).get("smoke-nvflare", {}).get("metrics", {}).get("project_id", "")
 
     gates = build_gates(a.tag, instance, project_id)
-    results = run(gates, selected, out_dir, base, instance_env(instance), a.continue_on_failure)
+    results = run(gates, selected, out_dir, base, instance_env(instance), a.continue_on_failure, instance)
     failed = [n for n, r in results.items() if r["status"] == "failed"]
     print(f"{'❌ failed: ' + ', '.join(failed) if failed else '✅ all selected gates passed'} — results in {out_dir}")
     return 1 if failed else 0
