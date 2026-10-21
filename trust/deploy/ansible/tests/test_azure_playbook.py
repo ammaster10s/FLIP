@@ -95,8 +95,11 @@ def test_swarm_is_initialised_idempotently():
     assert "when" in swarm[0], "swarm init must be guarded so a reprovision does not fail"
 
 
-def test_images_tree_matches_the_selftest_slot():
-    assert _play()["vars"]["flip_images_base_dirs"] == ["{{ flip_dir }}/data/trust-1"]
+def test_images_trees_are_the_selftest_slot_and_the_joined_trust():
+    """flip-node join points the kit's BASE_IMAGES_DOWNLOAD_DIR at data/images: made by the play, not root."""
+    assert _play()["vars"]["flip_images_base_dirs"] == ["{{ flip_dir }}/data/trust-1", "{{ flip_dir }}/data/images"]
+    flip_node = ANSIBLE_DIR.parents[2] / "deploy" / "providers" / "azure" / "vm" / "templates" / "flip-node.sh"
+    assert "BASE_IMAGES_DOWNLOAD_DIR=${FLIP_DIR}/data/images\n" in flip_node.read_text()
 
 
 def test_no_fl_kit_provisioning_tooling_on_the_node():
