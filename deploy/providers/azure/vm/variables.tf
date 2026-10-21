@@ -142,7 +142,8 @@ variable "operator_ip" {
   default     = ""
 
   validation {
-    condition     = !var.kit_drop_enabled || can(cidrhost("${var.operator_ip}/32", 0))
+    # cidrhost alone admits IPv6 ("2001:db8::1/32" is a valid IPv6 prefix), hence the dotted quad.
+    condition     = !var.kit_drop_enabled || (can(cidrhost("${var.operator_ip}/32", 0)) && length(split(".", var.operator_ip)) == 4)
     error_message = "operator_ip must be an IPv4 address when the kit drop is on, or uploads are refused by its firewall. The Makefile looks it up from api.ipify.org: if that failed, pass OPERATOR_IP=<your public IPv4>."
   }
 }

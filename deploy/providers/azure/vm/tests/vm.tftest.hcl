@@ -238,3 +238,13 @@ run "kit_drop_needs_the_operator_ip" {
 
   expect_failures = [var.operator_ip]
 }
+
+run "kit_drop_refuses_an_ipv6_operator_ip" {
+  command = plan
+
+  variables {
+    operator_ip = "2001:db8::1"
+  }
+
+  expect_failures = [var.operator_ip]
+}
