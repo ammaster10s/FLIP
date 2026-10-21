@@ -257,16 +257,17 @@ aks-apply: ## Show the saved AKS plan and the subscription, then apply it only a
 	$(TF) -chdir=aks apply aks.tfplan
 	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
 
+# The same placeholder stands in for the site's egress IPs: a teardown never applies the allowlist.
 aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
-	$(require_node_egress_ips)
 	$(require_subscription)
 	$(TF) -chdir=aks destroy \
 		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
-		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(DESTROY_OPERATOR_IP)"
+		-var "existing_subnet_id=$(SUBNET_ID)" -var 'node_egress_ips=["$(DESTROY_OPERATOR_IP)"]' \
+		-var "operator_ip=$(DESTROY_OPERATOR_IP)"
 
 aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
 	$(require_subscription)
-	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (brew install Azure/kubelogin/kubelogin)"; exit 1; }
+	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (the Azure CLI installs it with kubectl on any platform: aks install-cli)"; exit 1; }
 	az aks get-credentials --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
 	kubelogin convert-kubeconfig -l azurecli
 

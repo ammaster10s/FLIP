@@ -183,3 +183,15 @@ run "needs_the_operator_ip" {
 
   expect_failures = [var.operator_ip]
 }
+
+run "addresses_are_ipv4_only" {
+  command = plan
+
+  variables {
+    existing_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/trust-rg/providers/Microsoft.Network/virtualNetworks/trust-vnet/subnets/flip"
+    node_egress_ips    = ["2001:db8::9"]
+    operator_ip        = "2001:db8::7"
+  }
+
+  expect_failures = [var.node_egress_ips, var.operator_ip]
+}
