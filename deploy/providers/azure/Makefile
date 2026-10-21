@@ -50,8 +50,9 @@ AKS_NAME = $(NAME_PREFIX)-aks
 # (TEST-NET-1) satisfies the variable's check without looking the operator's IP up, so a blocked
 # api.ipify.org never stands between the operator and a teardown.
 DESTROY_OPERATOR_IP := 192.0.2.1
-# Likewise the SSH key: Azure needs one only to create the VM, so a teardown needs no key file.
-DESTROY_SSH_PUBLIC_KEY := ssh-ed25519 AAAA destroy-only
+# Likewise the SSH key: Azure needs one only to create the VM, so a teardown needs no key file. The
+# provider parses it even on destroy, so it is a real public key whose private half was discarded.
+DESTROY_SSH_PUBLIC_KEY := ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINNJS9sQraFNfnq0au6+vksilL+ct4B2O0yRqzcYY+oe destroy-only
 
 define require_subscription
 	@[ -n "$(AZ_SUBSCRIPTION)" ] || { echo "❌ AZ_SUBSCRIPTION=<trial subscription name or id> is required (never the CLI default)."; exit 1; }
