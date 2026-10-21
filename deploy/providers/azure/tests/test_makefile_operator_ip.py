@@ -17,6 +17,8 @@ git and curl stubbed on PATH.
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 from conftest import run_make
 
@@ -90,4 +92,9 @@ def test_destroy_needs_no_ip_lookup_and_no_key_file(tmp_path):
     assert not _curls(calls), "a failed lookup must not stand between the operator and a teardown"
     destroy = _terraform(calls, "destroy")
     assert destroy.endswith(" -var operator_ip=192.0.2.1")
-    assert "admin_ssh_public_key=ssh-ed25519 " in destroy, "a teardown reads no local key file"
+    key = destroy.split("admin_ssh_public_key=", 1)[1].split(" -var ", 1)[0].split()
+    assert key[0] == "ssh-ed25519", "a teardown reads no local key file"
+    # azurerm parses the key even on destroy: "ssh-ed25519 AAAA" was refused live, so it must decode.
+    blob = base64.b64decode(key[1], validate=True)
+    assert blob[:15] == (11).to_bytes(4, "big") + b"ssh-ed25519"
+    assert len(blob) == 51, "the type, then a 32-byte key with its length prefix"
