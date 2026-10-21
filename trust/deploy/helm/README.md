@@ -48,7 +48,7 @@ make sync-trust-kit KIT=<CODE> PROD=<env>
 
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
-  --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm   # then hand-fill orthanc-registered-users
+  --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
 make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
@@ -688,7 +688,8 @@ with `secrets.create=true` or pre-created externally).
 
 `scripts/generate_values.py` writes them from the kit into `values-secrets.yaml` (mode `0600`,
 `secrets.create: true`; gitignored — the tracked `values-secrets.yaml.example` is a field
-reference with every slot empty). It cannot fill `orthanc-registered-users`, which no kit carries.
+reference with every slot empty). It builds `orthanc-registered-users` from the kit's `ORTHANC_USERNAME` and
+`ORTHANC_PASSWORD`, as Compose does.
 An empty slot is omitted from the Secret by `templates/secrets.yaml`, so the pod that mounts it
 fails with `CreateContainerConfigError` — deliberate, and why copying the example into place does
 not deploy. `sync-kit` patches the per-trust keys on top without touching the others.
@@ -701,7 +702,7 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |

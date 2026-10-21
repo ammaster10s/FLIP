@@ -197,9 +197,8 @@ The kit holds the per-trust keys. The chart's other secrets (OMOP, XNAT, Orthanc
      --env-file trust/.env.<CODE>.<env> \
      --output-dir trust/deploy/helm
 
-This writes ``trust/deploy/helm/values-secrets.yaml`` (mode ``0600``). Then hand-fill the one slot no kit carries,
-``orthanc-registered-users``: a JSON user map such as ``{"admin": "<password>"}``. Orthanc will not start until it is
-set.
+This writes ``trust/deploy/helm/values-secrets.yaml`` (mode ``0600``). It builds ``orthanc-registered-users`` from
+the kit's ``ORTHANC_USERNAME`` and ``ORTHANC_PASSWORD``, as Compose does; Orthanc will not start without it.
 
 .. warning::
 
@@ -577,7 +576,8 @@ Troubleshooting
    * - PVCs ``Pending``
      - No default StorageClass, or none matching ``storageClassName``.
    * - Orthanc fails with ``CreateContainerConfigError``
-     - ``orthanc-registered-users`` is empty in ``values-secrets.yaml`` (Step 2).
+     - ``orthanc-registered-users`` is empty in ``values-secrets.yaml``: the kit lacks ``ORTHANC_USERNAME`` or
+       ``ORTHANC_PASSWORD`` (Step 2).
    * - Deploy refused with ``conflict with "kubectl-patch"``
      - Run ``make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>`` once, then deploy again. Do not use
        ``--force-conflicts``: it would overwrite the live keys.
