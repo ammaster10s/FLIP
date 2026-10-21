@@ -88,7 +88,8 @@ The machine you run the ``make`` targets from. It needs a FLIP checkout and:
 
 - ``kubectl`` 1.28 or newer, configured for the target cluster;
 - ``helm`` 4.x (the version CI tests; 3.16 or newer also works);
-- Python 3 with PyYAML (``pip install pyyaml``), 3.11 or newer if the kit names a governance document;
+- ``uv``, which runs the kit sync and upgrade scripts with the Python and PyYAML they declare;
+- Python 3, for ``make status``;
 - ``docker``, only for ``stage-kit`` on a kind cluster (see `Step 3 — Stage the FL participant kit`_).
 
 Cluster

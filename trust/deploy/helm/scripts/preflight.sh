@@ -139,8 +139,15 @@ else
     fi
 fi
 
+if ! command -v uv >/dev/null 2>&1; then
+    fail "uv not found — required by sync_k8s_kit.py (sync-kit, deploy-trust-k8s) and upgrade-trust-k8s"
+    hint "Install: https://docs.astral.sh/uv/getting-started/installation/"
+else
+    pass "uv $(uv --version 2>&1 | extract_semver)"
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 not found — required by sync_k8s_kit.py, check_status.py"
+    fail "python3 not found — required by check_status.py"
     hint "macOS:  brew install python3"
     hint "Linux:  sudo apt-get install python3"
 else
