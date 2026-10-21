@@ -382,6 +382,21 @@ def test_join_stages_the_nvflare_slot_for_its_client_and_brings_the_trust_up(tmp
     assert "up-onprem-trust KIT=AZ1 PROD=lza-stag" in calls
 
 
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_join_hands_the_images_dir_to_uid_1000_before_bring_up(tmp_path, backend):
+    """up-onprem-trust gives net-N this dir's owner: made by root, imaging-api could not download."""
+    env, log, result = _join(tmp_path, backend)
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text()
+    chown = f"chown 1000:1000 {env['FLIP_DIR']}/data/AZ1\n"
+    assert chown in calls
+    assert calls.index(chown) < calls.index("up-onprem-trust"), "owned before the stack creates net-N"
+    assert (
+        f"BASE_IMAGES_DOWNLOAD_DIR={env['FLIP_DIR']}/data/AZ1"
+        in (Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1").read_text()
+    ), "the dir it owns is the one the kit file points at"
+
+
 def test_join_stages_the_flower_key_for_the_supernode(tmp_path):
     env, log, result = _join(tmp_path, "flower")
     assert result.returncode == 0, result.stderr
