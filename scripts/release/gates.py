@@ -14,12 +14,12 @@
 
 ``make release-gates TAG=v0.13.0 [INSTANCE=rel0130] [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]``
 
-Gates, in this order: both tutorial suites and ``make unit_test`` on a quiet host (no stack up yet: beside a full
-stack, other tenants' load pushed flip-ui's first tests past their timeout); the instance (``release-instance``);
-the FLARE smoke (after ``release-verify``);
-the switch to Flower (``restart-fl``, then verify again); the Flower smoke, reusing the FLARE smoke's project
-so the images are pulled once; ``make integration_test`` (after the smokes, since it writes to the instance's
-hub database); and teardown, which runs even after a failure unless ``KEEP=1``.
+Gates, in this order, quickest feedback first: ``make unit_test`` and ``make integration_test`` (each suite starts
+its own throwaway containers, so neither needs the instance), then both tutorial suites, all on a quiet host (no stack
+up yet: beside a full stack, other tenants' load pushed flip-ui's first tests past their timeout); the instance
+(``release-instance``); the FLARE smoke (after ``release-verify``); the switch to Flower (``restart-fl``, then verify
+again); the Flower smoke, reusing the FLARE smoke's project so the images are pulled once; and teardown, which runs
+even after a failure unless ``KEEP=1``.
 
 Each gate writes ``release-gates/<TAG>/<gate>.json`` (commit, host, GPU, times, exit code, log path, metrics)
 beside its log. A failed gate stops the run — later gates are recorded as not run — unless ``CONTINUE=1``; a
@@ -61,14 +61,14 @@ from release_lib import (  # noqa: E402
 )
 
 ORDER = (
+    "unit",
+    "integration",
     "tutorials-nvflare",
     "tutorials-flower",
-    "unit",
     "instance",
     "smoke-nvflare",
     "switch-flower",
     "smoke-flower",
-    "integration",
     "teardown",
 )
 
@@ -152,7 +152,7 @@ def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
 
 
 # Gates that run against the stack: when one fails, its containers' logs are the evidence.
-STACK_GATES = ("instance", "smoke-nvflare", "switch-flower", "smoke-flower", "integration")
+STACK_GATES = ("instance", "smoke-nvflare", "switch-flower", "smoke-flower")
 
 
 def collect_logs(instance: str, logs: Path) -> list[str]:

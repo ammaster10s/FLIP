@@ -264,7 +264,7 @@ class Gates(unittest.TestCase):
         assert "EXTRA_ARGS=--project-id abc" in reused()
 
     def test_container_logs_are_saved_when_a_stack_gate_fails(self):
-        cases = (({"smoke-nvflare": 1}, ["smoke-nvflare"]), ({"unit": 1}, []), ({}, []))
+        cases = (({"smoke-nvflare": 1}, ["smoke-nvflare"]), ({"unit": 1}, []), ({"integration": 1}, []), ({}, []))
         for codes, gates_with_logs in cases:
             with mock.patch.object(gates, "collect_logs", return_value=[]) as collect:
                 _, tmp = self.run_fake(codes, keep_going=True, instance="rel0001")
@@ -273,9 +273,12 @@ class Gates(unittest.TestCase):
 
     def test_quiet_gates_run_before_the_instance_comes_up(self):
         order = list(gates.ORDER)
-        quiet = ("tutorials-nvflare", "tutorials-flower", "unit")
+        quiet = ("unit", "integration", "tutorials-nvflare", "tutorials-flower")
         assert all(order.index(g) < order.index("instance") for g in quiet)
         assert all(order.index(g) > order.index("instance") for g in gates.STACK_GATES if g != "instance")
+
+    def test_the_quickest_gates_run_first(self):
+        assert list(gates.ORDER)[:2] == ["unit", "integration"]
 
     def run_fake(self, codes: dict[str, int], keep_going: bool = False, instance: str = "") -> tuple[dict, Path]:
         tmp = Path(tempfile.mkdtemp())

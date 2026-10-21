@@ -51,9 +51,10 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
    off), push, and open the draft `Release v<X.Y.Z>` → `develop`. The gates run at its head; if the head moves,
    rerun the gates it affects.
 4. **On the GPU host, at the PR head:** `make release-gates TAG=… PR=<n>`. It refuses a dirty checkout or one that
-   is not the PR head. It runs the tutorials and unit suites on a quiet host, then brings up the isolated instance
-   (`release-instance`), verifies provenance before each smoke, records `release-gates/<TAG>/<gate>.json`, keeps
-   every container's log when a stack gate fails, and tears the instance down.
+   is not the PR head. It runs the quickest gates first (unit, integration, then both tutorial suites) on a quiet
+   host, then brings up the isolated instance (`release-instance`), verifies provenance before each smoke, records
+   `release-gates/<TAG>/<gate>.json`, keeps every container's log when a stack gate fails, and tears the instance
+   down.
 5. **`make release-record TAG=… PR=<n> APPLY=1`** writes *Release checks* from those results (it refuses results
    from another commit). Commit and push; wait for CI to go green; mark the PR ready; request review from a
    maintainer other than the person running the release (e.g. `garciadias`, or `atriaybagur` when garciadias runs
