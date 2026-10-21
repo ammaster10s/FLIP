@@ -260,6 +260,10 @@ BASE_IMAGES_DOWNLOAD_DIR=${FLIP_DIR}/data/${kit}
 XNAT_DATA_DIR=${FLIP_DIR}/xnat
 NODE
     stage_fl_kit "${backend}" "${src}/fl-kit"
+    # The images dir must belong to uid 1000 before bring-up: up-onprem-trust gives its net-N dirs
+    # this dir's owner, so a root-made one leaves imaging-api unable to download (num_samples=0).
+    mkdir -p "${FLIP_DIR}/data/${kit}"
+    chown 1000:1000 "${FLIP_DIR}/data/${kit}"
     make -C "${REPO_DIR}" up-onprem-trust "KIT=${kit}" "PROD=${prod}"
 }
 
