@@ -24,8 +24,8 @@ procedure, the scope limits and the GPU-host gates. Also read the CONTRIBUTING s
 
 On top of it, for Claude Code:
 
-- **GPU host.** If this session is not on the GPU host (a laptop or Mac), the `release-instance` and
-  `release-gates` targets run there over SSH; `release-prepare`, `release-record` and the `gh`/`git` work stay
+- **GPU host.** If this session is not on the GPU host (a laptop or Mac), `release-gates` runs there
+  over SSH; `release-prepare`, `release-record` and the `gh`/`git` work stay
   local. Take the host from the arguments, or else from memory. Ask only if neither has it, and name the example:
   the core team uses `bioeng625-pc`. Use the user's own SSH alias for it, and check it with
   `ssh <alias> 'nvidia-smi -L && docker info -f {{.Name}}'` first. The scripts put `~/.local/bin` on the PATH
@@ -37,7 +37,7 @@ On top of it, for Claude Code:
   GitHub environment variable cleanups, write them one per line to a file and pass it as
   `make release-main-check OWED=<file>`, so they land in the `main`-PR body as after-merge steps. Also follow any
   turn-taking rules it records for the shared host.
-- **Remote runs.** Start `release-instance` and `release-gates` with `run_in_background`
+- **Remote runs.** Start `release-gates` with `run_in_background`
   (`ssh <alias> 'cd <wt> && make release-gates TAG=… PR=<n> > release-gates.out 2>&1'`) and wait for the
   notification; don't poll in a loop. Copy `release-gates/<TAG>/` back to the local checkout for `release-record`
   (or run it on the host). If the host needs `sudo`, give the user the command with `!`. To stop a remote process,

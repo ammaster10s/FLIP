@@ -47,9 +47,10 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
    not, hub/site order or one Deployment-Mode window, refreshed kit or not), from the merged PRs. Commit (signed
    off), push, and open the draft `Release v<X.Y.Z>` → `develop`. The gates run at its head; if the head moves,
    rerun the gates it affects.
-4. **On the GPU host, at the PR head:** `make release-instance TAG=… PR=<n>`, then `make release-gates TAG=… PR=<n>`.
-   Both refuse a dirty checkout or one that is not the PR head. `release-gates` verifies provenance before each
-   smoke, records `release-gates/<TAG>/<gate>.json` and tears the instance down.
+4. **On the GPU host, at the PR head:** `make release-gates TAG=… PR=<n>`. It refuses a dirty checkout or one that
+   is not the PR head. It runs the tutorials and unit suites on a quiet host, then brings up the isolated instance
+   (`release-instance`), verifies provenance before each smoke, records `release-gates/<TAG>/<gate>.json`, keeps
+   every container's log when a stack gate fails, and tears the instance down.
 5. **`make release-record TAG=… PR=<n> APPLY=1`** writes *Release checks* from those results (it refuses results
    from another commit). Commit and push; wait for CI to go green; mark the PR ready; request review from a
    maintainer other than the person running the release (e.g. `garciadias`, or `atriaybagur` when garciadias runs
@@ -65,7 +66,7 @@ ask only if you find none. Keep a release worktree there at the PR head and run 
 - **Inputs.** The tutorials need the datasets, the prostate prep and the Ark+ checkpoint (CONTRIBUTING).
   `fl-tutorials/data/` is gitignored, so point a new worktree's at the main checkout's copy (symlink) rather than
   downloading again.
-- **Shared host.** `release-instance` gives the instance its own `FLIP_INSTANCE`, ports (`PORT_OFFSET`, default
+- **Shared host.** The instance (`release-instance`, run by `release-gates`) gets its own `FLIP_INSTANCE`, ports (`PORT_OFFSET`, default
   10000), secrets and image tag (`rel<XYZ>`); it builds every repo image from the checkout and never touches the
   shared `:dev`/`:stag` tags or the default `deploy` stack. Pick another `PORT_OFFSET` if those ports are taken.
   `FORCE=1` replaces the worktree's own env and kit files only. A Flower simulator run hijacked by an orphaned

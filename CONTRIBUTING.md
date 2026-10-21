@@ -841,9 +841,9 @@ The mechanical steps are make targets (FLIP#1608), each a script under [`scripts
 | Target | Does |
 |---|---|
 | `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
-| `make release-instance TAG=… PR=<n>` | On the GPU host: an isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. |
+| `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
 | `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
-| `make release-gates TAG=… PR=<n>` | Both tutorial suites, `unit_test`, both smokes, `integration_test`, teardown; one JSON result per gate under `release-gates/<TAG>/`. |
+| `make release-gates TAG=… PR=<n>` | On the GPU host: both tutorial suites and `unit_test` on a quiet host, then the instance, both smokes, `integration_test` and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. |
 | `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
 | `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
 

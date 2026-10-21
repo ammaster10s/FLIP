@@ -14,13 +14,16 @@
 
 ``make release-gates TAG=v0.13.0 [INSTANCE=rel0130] [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]``
 
-Gates, in this order: both tutorial suites; ``make unit_test``; the FLARE smoke (after ``release-verify``);
+Gates, in this order: both tutorial suites and ``make unit_test`` on a quiet host (no stack up yet: beside a full
+stack, other tenants' load pushed flip-ui's first tests past their timeout); the instance (``release-instance``);
+the FLARE smoke (after ``release-verify``);
 the switch to Flower (``restart-fl``, then verify again); the Flower smoke, reusing the FLARE smoke's project
 so the images are pulled once; ``make integration_test`` (after the smokes, since it writes to the instance's
 hub database); and teardown, which runs even after a failure unless ``KEEP=1``.
 
 Each gate writes ``release-gates/<TAG>/<gate>.json`` (commit, host, GPU, times, exit code, log path, metrics)
-beside its log. A failed gate stops the run — later gates are recorded as not run — unless ``CONTINUE=1``.
+beside its log. A failed gate stops the run — later gates are recorded as not run — unless ``CONTINUE=1``; a
+failed gate that ran against the stack also saves every instance container's log, before anything recreates them.
 ``make release-record`` turns the JSON into the release notes' *Release checks* section.
 """
 
@@ -42,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance as instance_mod  # noqa: E402
 import verify as verify_mod  # noqa: E402
 from release_lib import (  # noqa: E402
     REPO,
@@ -49,6 +53,7 @@ from release_lib import (  # noqa: E402
     assert_at_pr_head,
     assert_clean,
     default_instance,
+    env_file_name,
     gates_dir,
     instance_env,
     instance_make_args,
@@ -59,6 +64,7 @@ ORDER = (
     "tutorials-nvflare",
     "tutorials-flower",
     "unit",
+    "instance",
     "smoke-nvflare",
     "switch-flower",
     "smoke-flower",
@@ -145,15 +151,18 @@ def smoke_metrics(lines: list[tuple[float, str]]) -> dict:
     return out
 
 
-def collect_logs(instance: str, out_dir: Path) -> list[str]:
-    """Save every instance container's log before teardown removes the containers, and the evidence with them."""
+# Gates that run against the stack: when one fails, its containers' logs are the evidence.
+STACK_GATES = ("instance", "smoke-nvflare", "switch-flower", "smoke-flower", "integration")
+
+
+def collect_logs(instance: str, logs: Path) -> list[str]:
+    """Save every instance container's log, before a later gate or teardown recreates or removes them."""
     names = subprocess.run(
         ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=^{instance}-"],
         capture_output=True,
         text=True,
     ).stdout.split()
-    logs = out_dir / "container-logs"
-    logs.mkdir(exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True)
     for name in names:
         with (logs / f"{name}.log").open("w") as f:
             subprocess.run(["docker", "logs", "--timestamps", name], stdout=f, stderr=subprocess.STDOUT)
@@ -225,7 +234,7 @@ def skip_gate(name: str, out_dir: Path, base: dict) -> dict:
     return result
 
 
-def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[str, Gate]:
+def build_gates(tag: str, instance: str, project_id: Callable[[], str], port_offset: int = 10000) -> dict[str, Gate]:
     """The gates, each through the repo's own make targets and with the instance's settings."""
     args = instance_make_args(instance)
 
@@ -254,7 +263,15 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str]) -> dict[
             tutorial_metrics,
             cleanup=stop_own_simulators,
         ),
-        Gate("unit", [["make", "unit_test", *args]]),
+        # flip-ui's tests run in a container on the instance's hub network; create-networks is idempotent.
+        Gate("unit", [["make", "create-networks", *args], ["make", "unit_test", *args]]),
+        Gate(
+            "instance",
+            [
+                [sys.executable, str(REPO / "scripts" / "release" / "instance.py"), "--tag", tag]
+                + ["--instance", instance, "--port-offset", str(port_offset), "--force"]
+            ],
+        ),
         Gate("smoke-nvflare", [Check(verified), ["make", "e2e_smoke", "FL_BACKEND=nvflare", *args]], smoke_metrics),
         Gate("switch-flower", [["make", "restart-fl", "FL_BACKEND=flower", *args], Check(verified)]),
         Gate("smoke-flower", [smoke_flower], smoke_metrics),
@@ -277,7 +294,7 @@ def run(
     selected: list[str],
     out_dir: Path,
     base: dict,
-    env: dict[str, str],
+    env: dict[str, str] | Callable[[], dict[str, str]],
     keep_going: bool,
     instance: str = "",
 ) -> dict[str, dict]:
@@ -291,14 +308,15 @@ def run(
             if failed and not keep_going:
                 results[name] = skip_gate(name, out_dir, base)
                 continue
-            results[name] = run_gate(gates[name], out_dir, base, env)
-            failed = failed or results[name]["status"] == "failed"
+            results[name] = run_gate(gates[name], out_dir, base, env() if callable(env) else env)
+            if results[name]["status"] == "failed":
+                failed = True
+                if instance and name in STACK_GATES:
+                    saved = collect_logs(instance, out_dir / "container-logs" / name)
+                    print(f"🗂  saved {len(saved)} container log(s) → {out_dir / 'container-logs' / name}", flush=True)
     finally:
         if "teardown" in selected:
-            if failed and instance:
-                saved = collect_logs(instance, out_dir)
-                print(f"🗂  saved {len(saved)} container log(s) → {out_dir / 'container-logs'}", flush=True)
-            results["teardown"] = run_gate(gates["teardown"], out_dir, base, env)
+            results["teardown"] = run_gate(gates["teardown"], out_dir, base, env() if callable(env) else env)
     return results
 
 
@@ -318,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--instance", default="")
     parser.add_argument("--pr", default="")
+    parser.add_argument("--port-offset", type=int, default=10000)
     parser.add_argument("--gates", default="", help=f"comma-separated subset of: {', '.join(ORDER)}")
     parser.add_argument("--continue-on-failure", action="store_true")
     parser.add_argument("--keep", action="store_true", help="leave the instance up (skip teardown)")
@@ -342,8 +361,13 @@ def main(argv: list[str] | None = None) -> int:
     def project_id() -> str:
         return load_results(a.tag).get("smoke-nvflare", {}).get("metrics", {}).get("project_id", "")
 
-    gates = build_gates(a.tag, instance, project_id)
-    results = run(gates, selected, out_dir, base, instance_env(instance), a.continue_on_failure, instance)
+    # The stack-free gates already run make with the instance's env file, so write it (no stack, no secrets shown)
+    # if this is the first run; the instance gate rewrites it with fresh secrets before anything starts.
+    if not (REPO / env_file_name(instance)).exists():
+        instance_mod.write_files(instance, a.port_offset, force=False)
+
+    gates = build_gates(a.tag, instance, project_id, a.port_offset)
+    results = run(gates, selected, out_dir, base, lambda: instance_env(instance), a.continue_on_failure, instance)
     failed = [n for n, r in results.items() if r["status"] == "failed"]
     print(f"{'❌ failed: ' + ', '.join(failed) if failed else '✅ all selected gates passed'} — results in {out_dir}")
     return 1 if failed else 0

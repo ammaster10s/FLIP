@@ -298,9 +298,9 @@ make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<
 
 ```bash
 make release-prepare TAG=vX.Y.Z [DRY_RUN=1]          # version bumps + make lock + empty Release checks; refuses unlabelled merged PRs
-make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # GPU host: isolated rel<XYZ> instance, every image built here
+make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # isolated rel<XYZ> instance, every image built here (release-gates runs it)
 make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
-make release-gates TAG=vX.Y.Z [PR=<n>] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # tutorials, suites, both smokes, teardown -> release-gates/<TAG>/*.json
+make release-gates TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=…] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # GPU host: tutorials + unit, instance, smokes, integration, teardown -> release-gates/<TAG>/*.json
 make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
 make release-main-check TAG=vX.Y.Z [PR=<n>] [OWED=<file>]  # read-only: develop->main PR ready? + after-merge checklist (or the gh pr create command)
 ```

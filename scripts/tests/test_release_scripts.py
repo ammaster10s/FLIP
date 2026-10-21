@@ -263,11 +263,19 @@ class Gates(unittest.TestCase):
         reused = gates.build_gates("v0.0.1", "rel0001", lambda: "abc")["smoke-flower"].steps[0]
         assert "EXTRA_ARGS=--project-id abc" in reused()
 
-    def test_container_logs_are_saved_before_teardown_only_after_a_failure(self):
-        for codes, saved in (({"unit": 1}, True), ({}, False)):
+    def test_container_logs_are_saved_when_a_stack_gate_fails(self):
+        cases = (({"smoke-nvflare": 1}, ["smoke-nvflare"]), ({"unit": 1}, []), ({}, []))
+        for codes, gates_with_logs in cases:
             with mock.patch.object(gates, "collect_logs", return_value=[]) as collect:
-                self.run_fake(codes, instance="rel0001")
-            assert collect.called is saved, codes
+                _, tmp = self.run_fake(codes, keep_going=True, instance="rel0001")
+            assert [c.args[1].name for c in collect.call_args_list] == gates_with_logs, codes
+            assert all(c.args[1].parent == tmp / "container-logs" for c in collect.call_args_list)
+
+    def test_quiet_gates_run_before_the_instance_comes_up(self):
+        order = list(gates.ORDER)
+        quiet = ("tutorials-nvflare", "tutorials-flower", "unit")
+        assert all(order.index(g) < order.index("instance") for g in quiet)
+        assert all(order.index(g) > order.index("instance") for g in gates.STACK_GATES if g != "instance")
 
     def run_fake(self, codes: dict[str, int], keep_going: bool = False, instance: str = "") -> tuple[dict, Path]:
         tmp = Path(tempfile.mkdtemp())
