@@ -207,7 +207,7 @@ from `dicom.log` and the container log alike. See
 | `imagePullSecrets` | `[]` | Registry credentials for private images |
 | `namespace.create` | `false` | Whether the chart creates the namespace (with the `podSecurity.*` labels). `make deploy` creates it with kubectl instead, without those labels |
 | `namespace.name` | `""` | Namespace name (defaults to release namespace) |
-| `trustData.version` | `20261014` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
+| `trustData.version` | `20261019` | Mock trust-data version — a git tag on the Hugging Face dataset the trust-seed hook fetches at. One value for both stores |
 | `trustData.hfRepo` | `aicentreflip/trust-data` | The dataset the seed fetches from |
 | `trustData.seed.enabled` | `true` | Run the `trust-seed` post-install/post-upgrade hook (FLIP#1187): this trust's slice of `projects` into omop-db and, with `orthanc` on, Orthanc |
 | `trustData.seed.omop` / `.orthanc` | `true` / `false` | Which stores to seed. Orthanc is off by default: ~2 GB of DICOM per trust, posted over REST (minutes, once) |
@@ -576,6 +576,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    memoryPerGpuInGiB: 7
 ```
 
 Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
@@ -583,6 +584,21 @@ installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU n
 images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
+
+`flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
+scheduler. Set it to the memory available for jobs on the site's GPU.
+
+On NVFLARE, `flClient.gpu.count` is also the number of GPUs the client offers its scheduler: 0 or 1, since the pod
+sees GPU 0 only. When `flClient.gpu.enabled` is true, the count must be 1; the chart refuses other counts.
+Use `flClient.gpu.enabled: false` for CPU-only mode. A job that requires more resources than the available clients
+can offer is retried according to the FL server's scheduler configuration. If it remains unschedulable until the
+retry limit is reached, it ends as `FINISHED:CAN_NOT_SCHEDULE`; the elapsed time depends on that configuration.
+With a count of 1, the client stops at start unless
+`nvidia-smi` in the pod sees a GPU (see [Pods in CrashLoopBackOff](#pods-in-crashloopbackoff)).
+
+The NVFLARE client renders the kit's `log_config.template.json` using `logLevel` (default `INFO`).
+Older kits without that template use `log_config.json.default` unchanged. Missing or unwritable log
+configuration stops the client with an explicit error.
 
 ### Container Service jobs (dcm2niix)
 
@@ -1030,6 +1046,8 @@ The chart is validated in CI via:
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **NVFLARE GPU count** | fl-client log shows `num_of_gpus specified (1) exceeds available GPUs: 0` | The pod does not see the GPU `flClient.gpu.count` promises. Check `kubectl exec <fl-client> -n <ns> -- nvidia-smi -L`; fix the node's NVIDIA runtime, or set `flClient.gpu.enabled: false`. |
+| **NVFLARE kit not writable** | fl-client log shows `cannot write /app/local/resources.json` | The client renders `resources.json` into the kit's `local/` at start. `chown` the staged kit's `local/` to uid 1000 on the node. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
@@ -1040,7 +1058,7 @@ The chart is validated in CI via:
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999).
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 

@@ -33,6 +33,11 @@ from sphinx.util import logging as sphinx_logging
 
 logger = sphinx_logging.getLogger(__name__)
 
+# Treat each application source tree as an independent package for AutoAPI.
+sys.path.insert(0, os.path.abspath("../../flip-api/src"))
+sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
+sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
+sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 # Include flip-utils package.
 # Insert the package *parent* dir so `import flip` resolves to flip-utils/flip/__init__.py.
 sys.path.insert(0, os.path.abspath("../../flip-utils"))
@@ -140,13 +145,19 @@ redirects = {
 autoapi_type = "python"
 
 # autoapi
-# Only flip-utils is a public Python API (the package model developers import). The hub and trust
-# services are applications, not libraries; their REST endpoints are described on the component pages.
-autoapi_dirs = ["../../flip-utils/flip"]
+autoapi_dirs = [
+    "../../flip-api/src",
+    "../../trust/data-access-api",
+    "../../trust/imaging-api",
+    "../../trust/trust-api",
+    "../../flip-utils/flip",
+]
 autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
+    # Alembic revisions are migration scripts, not API modules.
+    "*/migrations/*",
 ]
 
 # Optional:
