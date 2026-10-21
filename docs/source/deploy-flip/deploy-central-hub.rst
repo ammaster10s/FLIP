@@ -26,7 +26,8 @@ it is given instead of building one, and ingress arrives through the estate's ow
 must coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
 
 The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, is no longer supported
-and has been removed (`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_).
+and has been removed (`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_). To move a hub off it,
+see :ref:`deploy-central-hub-migrating`.
 
 .. toctree::
    :maxdepth: 1
@@ -566,3 +567,37 @@ who has lost their **own** authenticator cannot use it.
 
 On a local development stack, sign-in uses Keycloak instead: clear the user's OTP credential in the Keycloak admin
 console (``http://localhost:8180/admin``).
+
+.. _deploy-central-hub-migrating:
+
+*************************************************
+Migrating from a single-account deployment
+*************************************************
+
+Before FLIP#1479 the hub could also run self-contained, in one AWS account that built its own VPC, internet gateway,
+NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the same, but
+the platform team owns the edge and the network, and the hub's workload account has no internet route.
+
+.. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
+   :align: center
+   :width: 100%
+   :alt: Left, a standalone AWS account holding its own CloudFront and WAF, a public FL NLB, and a VPC with an
+         internet gateway and NAT around the FLIP hub, FL server, RDS, S3 and VPC endpoints. Right, on the Landing
+         Zone Accelerator: a networking account owned by the platform team with CloudFront and WAF, an edge NLB,
+         a Network Firewall and a Transit Gateway, and a workload account with no internet gateway or NAT holding
+         the FLIP hub, FL server, ECR pull-through cache, isolated RDS, S3 with KMS and Session Manager access.
+
+   Before, one account owned its own edge and outbound route. After, the platform team owns and inspects the edge,
+   and the hub account has no internet route.
+
+There is no in-place migration. The Terraform no longer describes the single-account network, so a plan against an
+old state would destroy it. Move the hub instead:
+
+1. **Stand up the new hub** in an LZA workload account. Agree the network and the edge with the platform team first:
+   see :ref:`deploy-central-hub-aws-lza-account`.
+2. **Decide what to keep.** :ref:`admin-backup-and-restore` lists what the hub holds; FLIP has no tool that copies it
+   to another account.
+3. **Re-onboard each trust** against the new hub (:ref:`onboarding-a-trust`), and rename its kit file to the
+   ``HUB`` naming (``trust/.env.<CODE>.prod`` or ``.stag``).
+4. **Destroy the old account's stack** once no trust points at it.
+
