@@ -36,7 +36,9 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
     result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag", MOCK_PACS="1")
 
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
-    assert result.stdout.strip().endswith(f"values-small-node.yaml {overlay}"), result.stdout
+    recorded = result.stdout.split()[-1]
+    assert not recorded.startswith("/"), "the kit file must not pin this checkout's location"
+    assert (AZURE_DIR.parents[2] / "trust" / "deploy" / "helm" / recorded).resolve() == overlay.resolve()
     assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
 
 

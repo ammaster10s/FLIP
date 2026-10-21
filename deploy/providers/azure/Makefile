@@ -298,7 +298,9 @@ HELM_DIR := $(REPO_ROOT)/trust/deploy/helm
 K8S_NAMESPACE ?= flip-trust
 KUBECTL = kubectl --context $(AKS_NAME)
 CHART = $(MAKE) -C $(HELM_DIR) KUBE_CONTEXT=$(AKS_NAME) NAMESPACE=$(K8S_NAMESPACE)
-AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), $(CURDIR)/aks/values-mock-pacs.yaml)
+# Paths are relative to the chart directory, where helm runs: the kit file records them, so an
+# absolute one would break an upgrade from a checkout somewhere else.
+AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), ../../../deploy/providers/azure/aks/values-mock-pacs.yaml)
 AKS_KIT_DIR = build/kits/$(notdir $(TARBALL:.tar.gz=))
 # The kit file's name carries the env token (trust/.env.<KIT>.<env>), derived from PROD in one place.
 ifneq ($(filter aks-join,$(MAKECMDGOALS)),)
