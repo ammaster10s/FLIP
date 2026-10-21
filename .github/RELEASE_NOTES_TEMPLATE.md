@@ -53,22 +53,33 @@
 <!-- These checks are release evidence and must be run for v0.13.1. Do not carry forward results
      from an earlier release. Record the host, date and outcome before merging the release PR. -->
 
+Run at `99e6d3b35` (this PR's head before these notes; the notes are the only later change) on an RTX 5090
+workstation, 21 October 2026.
+
 Tutorial suite, on a GPU host:
 
-- [ ] FLARE — `make -C fl-tutorials run-all-tutorials`
-- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [ ] Host, date, and results recorded
+- [x] FLARE — `make -C fl-tutorials run-all-tutorials`: 8/8 passed in 748 s
+- [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`: 5/5 passed in 261 s
+- [x] Host, date, and results recorded: above
 
 Full-platform smoke test, against a running deployment:
 
-- [ ] FLARE — `make e2e_smoke`
-- [ ] Flower — `make e2e_smoke FL_BACKEND=flower`
-- [ ] Host, date, deployment, and results recorded
+- [x] FLARE — `make e2e_smoke`: passed in 320 s, `RESULTS_UPLOADED`. It ran on the project created by the first FLARE
+  attempt (cohort query, trust approval, 300/300 images pulled at both trusts). That attempt timed out at `INITIATED`
+  because the first `make up` started flip-api with a stale internal service key hash, so the hub rejected every
+  fl-server update (#1501, a dev bring-up bug that predates this release). `make restart-fl` recreated flip-api with
+  the corrected hash, and both smokes then passed
+- [x] Flower — `make e2e_smoke FL_BACKEND=flower`: passed in 495 s on the same project, `RESULTS_UPLOADED`
+- [x] Host, date, deployment, and results recorded: a fresh isolated instance (`FLIP_INSTANCE=rel0131`, its own ports
+  and env file, GSTT + KCH trusts) brought up from empty volumes, with every repo-built image built from this commit
+  at `:rel0131` (hub and trust APIs, flip-ui, orthanc, omop-db, XNAT, both FL backends); none pulled from `:stag`/`:dev`.
+  FL clients trained on CPU
 
 Local checks:
 
-- [ ] `make unit_test`
-- [ ] `make integration_test`
+- [x] `make unit_test`: all suites passed (flip-api 2220, flip-ui 1600, data-access-api 464, imaging-api 804,
+  omop-db 115, trust-api 174, xnat 511)
+- [x] `make integration_test`: flip-api 237, data-access-api 14, trust-api 8 passed
 
 ## :file_folder: PRs merged in this release
 
