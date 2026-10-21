@@ -1,0 +1,94 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+id: NVF
+title: NVFLARE tutorials (fl-tutorials/nvflare/<category>/<name>/)
+skill: new-tutorial-nvflare
+applies_when: {backend: nvflare}
+rules:
+  - id: NVF-01
+    level: MUST
+    statement: .env.app exists (the discovery marker, two levels below fl-tutorials/nvflare/)
+    enforced_by: fl-tutorials/nvflare/Makefile $(wildcard */*/.env.app)
+    check: {type: file_exists, path: .env.app}
+  - id: NVF-02
+    level: MUST
+    statement: .env.app declares JOB_TYPE as one of standard, evaluation, fed_opt, diffusion_model
+    check: {type: file_regex, path: .env.app, pattern: '^JOB_TYPE=(standard|evaluation|fed_opt|diffusion_model)\s*$'}
+  - id: NVF-03
+    level: SHOULD
+    statement: .env.app leaves FLIP_PROJECT_ID and FLIP_QUERY empty (the platform fills them)
+    check: {type: file_regex, path: .env.app, pattern: '^FLIP_PROJECT_ID=\s*$'}
+  - id: NVF-04
+    level: MUST
+    statement: job.py builds the FLIP recipe, stages app_files/ and runs SimEnv or exports
+    check: {type: file_exists, path: job.py}
+  - id: NVF-05
+    level: MUST
+    statement: app_files/ holds everything the user uploads, flat (no package, no relative imports)
+    check: {type: file_exists, path: app_files}
+  - id: NVF-06
+    level: MUST
+    statement: The Makefile has a run target (what the harness calls)
+    check: {type: file_regex, path: Makefile, pattern: '^run:'}
+  - id: NVF-07
+    level: MUST
+    statement: The Makefile has an export target (the GPU-free job build)
+    check: {type: file_regex, path: Makefile, pattern: '^export:'}
+  - id: NVF-08
+    level: SHOULD
+    statement: The Makefile wraps data paths in $(abspath ...) (simulator workers run from the workspace dir)
+    check: {type: file_regex, path: Makefile, pattern: '\$\(abspath'}
+  - id: NVF-09
+    level: MUST
+    statement: The export output fl_job/ is git-ignored (by the tutorial's .gitignore or a parent's)
+    check: {type: builtin, name: git_ignored, path: fl_job}
+  - id: NVF-10
+    level: MUST
+    statement: app_files/models.py exposes get_model() (the recipe's persistor references models.get_model)
+    check: {type: file_regex, path: app_files/models.py, pattern: '^def get_model\('}
+  - id: NVF-11
+    level: MUST
+    statement: app_files/config.json carries job_type
+    check: {type: json_key, path: app_files/config.json, key: job_type, in: [standard, evaluation, fed_opt, diffusion_model]}
+  - id: NVF-12
+    level: MUST
+    statement: job.py does not declare --export / --export-dir (Recipe.execute strips them)
+    check: {type: file_not_regex, path: job.py, pattern: 'add_argument\(\s*[\x22\x27]--export'}
+  - id: NVF-13
+    level: MUST
+    statement: No __init__.py in the category dir or fl-tutorials/nvflare/ (a package named nvflare shadows the real one)
+    check: {type: builtin, name: no_package_markers_above}
+  - id: NVF-14
+    level: MUST
+    statement: trainer.py is an NVFLARE Client-API loop (flare.init / is_running / receive / send)
+    when: {loop: [standard, fine_tune, fed_opt, two_stage, statistics_fedavg]}
+    check: {type: files_regex, glob: app_files/trainer.py, expect: all, pattern: 'flare\.init\('}
+  - id: NVF-15
+    level: SHOULD
+    statement: config.json carries GLOBAL_ROUNDS (the FL API reads it at submit time, overriding the recipe)
+    when: {loop: [standard, fine_tune, fed_opt, statistics_fedavg]}
+    check: {type: json_key, path: app_files/config.json, key: GLOBAL_ROUNDS}
+  - id: NVF-16
+    level: SHOULD
+    statement: .env.app points the simulator at local data (DEV_DATAFRAME or SITE1_DATAFRAME, relative to the tutorial)
+    check: {type: file_regex, path: .env.app, pattern: '^(DEV|SITE1)_DATAFRAME='}
+  - id: NVF-17
+    level: SHOULD
+    statement: README title names the backend ("<Use case> — FLIP tutorial (NVFLARE)")
+    check: {type: file_regex, path: README.md, pattern: '^# .*NVFLARE'}
+  - id: NVF-18
+    level: MUST
+    statement: The harness lists the tutorial (make -C fl-tutorials list-tutorials)
+    check: {type: shell, cwd: '{fl_tutorials}', cmd: 'make -s -C "{fl_tutorials}" list-tutorials FL_BACKEND=nvflare | grep -q -- "- {name} "'}
+  - id: NVF-19
+    level: MUST
+    statement: make export builds the full job config without a GPU or data
+    check: {type: shell, cwd: '{tutorial_dir}', cmd: 'make -s -C "{tutorial_dir}" export'}

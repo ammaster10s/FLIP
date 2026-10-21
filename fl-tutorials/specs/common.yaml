@@ -1,0 +1,155 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+id: COMMON
+title: Every tutorial, on either backend
+skill: new-tutorial
+rules:
+  - id: COMMON-01
+    level: MUST
+    statement: tutorial.yaml names a valid profile (name, backend, the five axes, dataset, platform, simulator; waivers carry a reason)
+    why: the manifest is what selects the specs below and what the router reads in audit and adapt mode
+    check: {type: builtin, name: manifest_valid}
+  - id: COMMON-02
+    level: MUST
+    statement: The manifest's job_type is the one the tree declares (.env.app JOB_TYPE / app/config.json job_type)
+    check: {type: builtin, name: job_type_matches_tree}
+  - id: COMMON-03
+    level: MUST
+    statement: The upload dir carries every file fl-apps/<backend>/<job_type>/required_files.json requires
+    why: flip-api refuses a model upload missing one; the simulator does not
+    enforced_by: flip-api upload validation
+    check: {type: builtin, name: required_files}
+  - id: COMMON-04
+    level: MUST
+    statement: README.md exists at the tutorial root
+    check: {type: file_exists, path: README.md}
+  - id: COMMON-05
+    level: MUST
+    statement: query.sql exists, unless the manifest's query_from names the tutorial whose cohort this one reuses
+    when: {query_from: null}
+    check: {type: file_exists, path: query.sql}
+  - id: COMMON-06
+    level: MUST
+    statement: query.sql reads the omop schema
+    when: {query_from: null}
+    enforced_by: data_access_api.services.cohort.validate_query (trust side, authoritative)
+    check: {type: file_regex, path: query.sql, pattern: '\bomop\.'}
+  - id: COMMON-07
+    level: MUST
+    statement: query.sql contains no DML or DDL anywhere in the tree (a writable CTE parses as a SELECT)
+    when: {query_from: null}
+    enforced_by: validate_query + the read-only data_analyst_reader role
+    check: {type: file_not_regex, path: query.sql, pattern: '\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE)\b', ignore_case: true}
+  - id: COMMON-08
+    level: MUST
+    statement: query.sql has a deterministic ORDER BY
+    why: per-site partitions and the frozen membership must be reproducible
+    when: {query_from: null}
+    check: {type: file_regex, path: query.sql, pattern: '\bORDER\s+BY\b', ignore_case: true}
+  - id: COMMON-09
+    level: MUST
+    statement: Any LIMIT or OFFSET clause in query.sql is a literal integer (the trust-side validator rejects anything else)
+    when: {query_from: null}
+    check: {type: file_not_regex, path: query.sql, pattern: '^\s*(LIMIT|OFFSET)\s*[^\d\s]', ignore_case: true}
+  - id: COMMON-10
+    level: SHOULD
+    statement: query.sql projects person_id (MUST for tabular cohorts, TAB-01)
+    why: the disclosure floor counts distinct subjects; without person_id it resolves subjects through image_occurrence
+    when: {query_from: null}
+    check: {type: file_regex, path: query.sql, pattern: '\bperson_id\b'}
+  - id: COMMON-11
+    level: MUST
+    statement: Every Python file in the upload dir carries the Apache 2.0 header
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: all, pattern: 'Licensed under the Apache License, Version 2\.0'}
+  - id: COMMON-12
+    level: MUST
+    statement: query.sql carries the Apache header as SQL comments
+    when: {query_from: null}
+    check: {type: file_regex, path: query.sql, pattern: '^-- Copyright'}
+  - id: COMMON-29
+    level: MUST
+    statement: A tutorial that reuses another's cohort (query_from) carries no query.sql of its own
+    when: {query_from: '*'}
+    check: {type: file_absent, path: query.sql}
+  - id: COMMON-30
+    level: MUST
+    statement: The tutorial query_from names exists and carries the query.sql (the e2e target points QUERY_FILE at it)
+    when: {query_from: '*'}
+    check: {type: builtin, name: query_source_exists}
+  - id: COMMON-13
+    level: MUST
+    statement: Any simulator-only logic in the app code (local CSV / images dir, MAX_SAMPLES, per-site slicing) sits behind FlipConstants.LOCAL_DEV; an app that leaves local data to the flip package needs no branch
+    why: a deployed job must never see a simulator-only knob
+    check: {type: manual}
+  - id: COMMON-14
+    level: MUST
+    statement: Data reaches the app only through the flip package (flip.FLIP, flip.flower.*)
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: any, pattern: '^\s*(from|import)\s+flip\b'}
+  - id: COMMON-15
+    level: MUST
+    statement: The twin the manifest names exists on the other backend under the same name
+    check: {type: builtin, name: twin_exists}
+  - id: COMMON-16
+    level: MUST
+    statement: A twin pair's query.sql is pinned byte-identical in scripts/check_tutorial_sync.sh PAIRS
+    why: the two backends must train on the same cohort
+    check: {type: builtin, name: twin_query_in_sync_pairs}
+  - id: COMMON-17
+    level: MUST
+    statement: The e2e target the manifest names resolves in flip-api/Makefile
+    check: {type: make_target, makefile_dir: '{repo_root}/flip-api', target_from: platform.e2e_target}
+  - id: COMMON-18
+    level: SHOULD
+    statement: A demo-video profile for this tutorial exists in flip-api/tests/demo_video.py APPS, or the manifest waives it with a reason
+    why: every tutorial gets a recorded walkthrough (#1444); evaluation and access-controlled tutorials waive it deliberately
+    check: {type: builtin, name: demo_profile_registered}
+  - id: COMMON-19
+    level: SHOULD
+    statement: README shows the task before explaining it (an input-to-output figure, or a Mermaid flow block)
+    check: {type: file_regex, path: README.md, pattern: '!\[|<img|```mermaid'}
+  - id: COMMON-20
+    level: SHOULD
+    statement: README has an "Expected performance" section (reference numbers, rounds to plateau, failure signatures)
+    check: {type: file_regex, path: README.md, pattern: '^## .*Expected performance', ignore_case: true}
+  - id: COMMON-21
+    level: SHOULD
+    statement: README ends with a "References" section (method, dataset + licence, checkpoint; what differs from the paper)
+    check: {type: file_regex, path: README.md, pattern: '^## .*References', ignore_case: true}
+  - id: COMMON-22
+    level: SHOULD
+    statement: README quotes the simulator command for this tutorial
+    enforced_by: tests/test_fl_tutorials_make_targets.py (every quoted target must resolve)
+    check: {type: file_regex, path: README.md, pattern: 'make -C fl-tutorials run-tutorial TUTORIAL={name}'}
+  - id: COMMON-23
+    level: SHOULD
+    statement: fl-tutorials/README.md lists the tutorial
+    check: {type: file_regex, path: '{fl_tutorials}/README.md', pattern: '{name}'}
+  - id: COMMON-24
+    level: SHOULD
+    statement: fl-tutorials/AGENTS.md lists the tutorial
+    check: {type: file_regex, path: '{fl_tutorials}/AGENTS.md', pattern: '{name}'}
+  - id: COMMON-25
+    level: SHOULD
+    statement: The root AGENTS.md repo-structure block names the tutorial
+    check: {type: file_regex, path: '{repo_root}/AGENTS.md', pattern: '{name}'}
+  - id: COMMON-26
+    level: MUST
+    statement: ruff is clean over the tutorial directory (repo rule set; Flower tutorials add their own [tool.ruff])
+    check: {type: shell, cwd: '{fl_tutorials}', cmd: 'uvx ruff@0.14.7 check "{tutorial_dir}"'}
+  - id: COMMON-27
+    level: MUST
+    statement: The cross-cutting guards pass (no run-time downloads, weights_only=True, every quoted make target resolves)
+    enforced_by: CI fl-tutorials-tests.yml
+    check: {type: pytest, files: [test_offline_apps.py, test_fl_tutorials_make_targets.py]}
+  - id: COMMON-28
+    level: MUST
+    statement: Files kept byte-identical across tutorials have not drifted
+    check: {type: shell, cwd: '{repo_root}', cmd: 'bash scripts/check_tutorial_sync.sh'}

@@ -1,0 +1,70 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The tutorial profile: the axes a tutorial's `tutorial.yaml` manifest is described on, the
+# values each axis allows, and which spec file (and which agent sub-skill) each value selects.
+# `check_tutorial.py` reads the `specs:` mapping to decide which rules apply; the `new-tutorial`
+# router skill's routing table is this mapping in prose, and
+# fl-tutorials/tests/test_new_tutorial_skill_tree.py keeps the two in step.
+version: 1
+router: new-tutorial
+
+# FLIP's FL plumbing is horizontal: every backend aggregates client arrays by a size-weighted mean
+# (the NVFLARE recipes, the Flower template strategy). Nothing in flip-utils, fl-apps or the
+# templates supports vertical or split learning, private set intersection or personalised FL;
+# a tutorial needing one of those needs a design note before any code.
+paradigm: horizontal_only
+
+axes:
+  backend: [nvflare, flower]
+  # imaging_2d: DICOM series read through MONAI (the DICOM_APPS orientation suite applies)
+  # imaging_3d: NIfTI volumes converted by XNAT, labels as enrichment
+  # tabular:    OMOP-only cohort, has_imaging off, CPU
+  data: [imaging_2d, imaging_3d, tabular]
+  # deep_learning: a torch/MONAI module trained by FedAvg
+  # statistical:   a parameter-free state whose sufficient statistics ride through FedAvg
+  model: [deep_learning, statistical]
+  # standard:          plain FedAvg training (the backend spec covers it)
+  # evaluation:        no training, an uploaded checkpoint is evaluated
+  # fine_tune:         a shipped checkpoint, part of the model frozen or aggregated only
+  # fed_opt:           the FedOpt recipe (template exists, no tutorial yet)
+  # two_stage:         two trained stages in one job (latent diffusion), NVFLARE only
+  # statistics_fedavg: statistics summed through FedAvg, the model-statistical spec carries it
+  loop: [standard, evaluation, fine_tune, fed_opt, two_stage, statistics_fedavg]
+  # public: a download target; access_controlled: a converter the licence holder runs (nothing
+  # derived from the data is committed); private: a trust's own cohort, synthetic stand-in locally
+  dataset_tier: [public, access_controlled, private]
+
+# axis value -> {spec, skill[, route_when]}; `null` means the value adds no spec of its own.
+specs:
+  backend:
+    nvflare: {spec: backend-nvflare.yaml, skill: new-tutorial-nvflare}
+    flower: {spec: backend-flower.yaml, skill: new-tutorial-flower}
+  data:
+    imaging_2d: {spec: data-imaging.yaml, skill: new-tutorial-imaging}
+    imaging_3d: {spec: data-imaging.yaml, skill: new-tutorial-imaging}
+    tabular: {spec: data-tabular.yaml, skill: new-tutorial-tabular}
+  model:
+    deep_learning: {spec: model-deep-learning.yaml, skill: new-tutorial-deep-learning}
+    statistical: {spec: model-statistical.yaml, skill: new-tutorial-statistical}
+  loop:
+    standard: null
+    evaluation: {spec: loop-evaluation.yaml, skill: new-tutorial-evaluation}
+    fine_tune: {spec: loop-training-variants.yaml, skill: new-tutorial-training-variants}
+    fed_opt: {spec: loop-training-variants.yaml, skill: new-tutorial-training-variants}
+    two_stage: {spec: loop-training-variants.yaml, skill: new-tutorial-training-variants}
+    statistics_fedavg: null
+  dataset_tier:
+    # The datasets spec applies to every tier; the router loads the datasets skill for a new
+    # dataset or a non-public tier (reusing a public dataset needs nothing from it).
+    public: {spec: datasets.yaml, skill: new-tutorial-datasets, route_when: new_dataset}
+    access_controlled: {spec: datasets.yaml, skill: new-tutorial-datasets}
+    private: {spec: datasets.yaml, skill: new-tutorial-datasets}

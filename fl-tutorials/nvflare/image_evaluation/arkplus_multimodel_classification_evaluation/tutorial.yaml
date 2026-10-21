@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Tutorial profile — selects the specs in fl-tutorials/specs/ (see specs/README.md).
+# Evaluates several Ark+ checkpoints in one job; data_utils.py and arkplus_flat_models.py are
+# byte-identical copies of the baseline evaluation's (scripts/check_tutorial_sync.sh).
+name: arkplus_multimodel_classification_evaluation
+backend: nvflare
+data: imaging_2d
+model: deep_learning
+loop: evaluation
+job_type: evaluation
+twin: null
+dataset: {name: arkplus, tier: public, target: download-arkplus-eval-data}
+platform: {has_imaging: true, e2e_target: null, demo_profile: null}
+simulator: {device: gpu}
+weights_target: prepare-checkpoint
+waivers:
+  COMMON-18: "the demo recorder's segments 4-5 assume a training job; an evaluation variant is tracked on #1444"

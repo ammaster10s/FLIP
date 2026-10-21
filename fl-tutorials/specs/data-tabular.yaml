@@ -1,0 +1,60 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+id: TAB
+title: Tabular / OMOP-only tutorials (has_imaging off, CPU)
+skill: new-tutorial-tabular
+applies_when: {data: tabular}
+rules:
+  - id: TAB-01
+    level: MUST
+    statement: query.sql projects person_id
+    why: the trust's disclosure floor (COHORT_QUERY_THRESHOLD) counts distinct subjects; a cohort exposing neither person_id nor accession_id is refused at approval
+    when: {query_from: null}
+    check: {type: file_regex, path: query.sql, pattern: '\bperson_id\b'}
+  - id: TAB-02
+    level: MUST
+    statement: The platform project has imaging off (manifest platform.has_imaging false; FLIP#1071)
+    why: with imaging on the hub dispatches CREATE_IMAGING and the run dies at the image-pull wait
+    check: {type: manifest, field: platform.has_imaging, equals: false}
+  - id: TAB-03
+    level: MUST
+    statement: The e2e target pins --no-imaging
+    when: {platform.e2e_target: '*'}
+    check: {type: file_regex, path: '{repo_root}/flip-api/Makefile', pattern: '^{e2e_target}: TARGET_ARGS := --no-imaging'}
+  - id: TAB-04
+    level: MUST
+    statement: The demo-video profile sets has_imaging False (skips the XNAT/OHIF segment)
+    check: {type: builtin, name: demo_profile_has_imaging, equals: false}
+  - id: TAB-05
+    level: MUST
+    statement: The app never fetches images (no get_by_accession_number)
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: none, pattern: 'get_by_accession_number'}
+  - id: TAB-06
+    level: SHOULD
+    statement: The manifest declares a CPU simulator
+    check: {type: manifest, field: simulator.device, equals: cpu}
+  - id: TAB-07
+    level: MUST
+    statement: .env.app sets no images dir (the app never reads one)
+    when: {backend: nvflare}
+    check: {type: file_not_regex, path: .env.app, pattern: 'IMAGES_DIR='}
+  - id: TAB-08
+    level: SHOULD
+    statement: Under the simulator every site sees one CSV, so the app slices its own partition (partition_cohort, person_id modulo, or SITE{N}_DATAFRAME)
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: any, pattern: 'partition_cohort\(|DEV_NUM_PARTITIONS|SITE\d_DATAFRAME|person_id[^\n]*%'}
+  - id: TAB-09
+    level: SHOULD
+    statement: README says the project is created with imaging off and names the --no-imaging e2e target
+    check: {type: file_regex, path: README.md, pattern: 'has_imaging|imaging[^.\n]*off|--no-imaging', ignore_case: true}
+  - id: TAB-10
+    level: SHOULD
+    statement: The README figure shows the feature set and the label's prevalence (there are no images to show)
+    check: {type: manual}

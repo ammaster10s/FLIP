@@ -1,0 +1,64 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+id: DL
+title: Deep-learning tutorials (a torch / MONAI module trained or evaluated by FedAvg)
+skill: new-tutorial-deep-learning
+applies_when: {model: deep_learning}
+rules:
+  - id: DL-01
+    level: MUST
+    statement: No run-time download in app code (pretrained=True, torch.hub, from_pretrained, load_state_dict_from_url, download=True)
+    why: FLIP#1206 — the FL server and the trust hosts have no internet route, and a fetched file bypasses the scanned upload
+    enforced_by: tests/test_offline_apps.py (the AST guard; this regex is the fast approximation)
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: none, pattern: 'pretrained\s*=\s*True|torch\.hub\.load\(|\.from_pretrained\(|load_state_dict_from_url|download\s*=\s*True'}
+  - id: DL-02
+    level: SHOULD
+    statement: Every torch.load passes weights_only=True (static approximation; the AST guard is authoritative)
+    why: FLIP#1245 — a checkpoint that unpickles arbitrary objects is code execution beside patient data
+    enforced_by: tests/test_offline_apps.py
+    check: {type: files_regex, glob: 'app*/**/*.py', expect: none, pattern: 'torch\.load\((?!(?:.|\n){{0,300}}?weights_only\s*=\s*True)'}
+  - id: DL-03
+    level: MUST
+    statement: models.py builds a torch / MONAI module
+    check: {type: files_regex, glob: 'app*/models.py', expect: all, pattern: 'torch|nn\.Module|monai'}
+  - id: DL-04
+    level: SHOULD
+    statement: config.json declares BEST_MODEL_METRIC / BEST_MODEL_METRIC_MINIMIZE (job.py passes them to the recipe)
+    when: {backend: nvflare, loop: [standard, fine_tune, fed_opt]}
+    check: {type: json_key, path: app_files/config.json, key: BEST_MODEL_METRIC}
+  - id: DL-05
+    level: MUST
+    statement: Client-side differential privacy is on (dp-enabled = true; flip.flower.privacy reads the five dp-* keys)
+    when: {backend: flower, loop: [standard, fine_tune, fed_opt]}
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.config.dp-enabled, equals: true}
+  - id: DL-06
+    level: MUST
+    statement: The ClientApp's train handler runs under flip_local_dp_mod
+    when: {backend: flower, loop: [standard, fine_tune, fed_opt]}
+    check: {type: file_regex, path: app/client_app.py, pattern: 'flip_local_dp_mod'}
+  - id: DL-07
+    level: MUST
+    statement: A checkpoint the tutorial needs is staged host-side by the Makefile target the manifest names (weights_target)
+    why: weights ship as uploaded files (.safetensors preferred), fetched by make, never at run time
+    when: {weights_target: '*'}
+    check: {type: file_regex, path: Makefile, pattern: '^{weights_target}:'}
+  - id: DL-08
+    level: SHOULD
+    statement: A committed PNG under docs/ (task figure and reference training curve, each from a committed script, under 1000 KB)
+    check: {type: file_exists, path: 'docs/*.png', glob: true}
+  - id: DL-09
+    level: SHOULD
+    statement: The README's Expected performance states the metric range, rounds to plateau, the hardware and wall-clock, and the failure signatures a reader might mistake for normal
+    check: {type: manual}
+  - id: DL-10
+    level: SHOULD
+    statement: Upstream checkpoints that need full unpickling are converted host-side under process_tools/, outside the upload dir
+    check: {type: manual}

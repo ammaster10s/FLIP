@@ -1,0 +1,125 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+id: FLWR
+title: Flower tutorials (fl-tutorials/flower/<name>/)
+skill: new-tutorial-flower
+applies_when: {backend: flower}
+rules:
+  - id: FLWR-01
+    level: MUST
+    statement: app/ exists (the discovery marker; it is exactly what the user uploads)
+    enforced_by: fl-tutorials/flower/Makefile $(wildcard */app/.)
+    check: {type: file_exists, path: app}
+  - id: FLWR-02
+    level: MUST
+    statement: pyproject.toml defines the flwr app for the local simulator (the platform bundle uses the template's)
+    check: {type: file_exists, path: pyproject.toml}
+  - id: FLWR-03
+    level: MUST
+    statement: app/__init__.py exists (header + one docstring, nothing else)
+    check: {type: file_exists, path: app/__init__.py}
+  - id: FLWR-04
+    level: MUST
+    statement: app/config.json names a job_type that has an fl-apps/flower/<job_type>/ template
+    check: {type: file_exists, path: '{repo_root}/fl-apps/flower/{job_type}/app'}
+  - id: FLWR-05
+    level: MUST
+    statement: app/server_app.py is byte-identical to the fl-apps/flower/<job_type> template (flip-api discards an uploaded copy)
+    enforced_by: tests/test_flower_platform_parity.py
+    check: {type: byte_identical, path: app/server_app.py, template: 'fl-apps/flower/{job_type}/app/server_app.py'}
+  - id: FLWR-06
+    level: MUST
+    statement: app/strategy.py is byte-identical to the template
+    enforced_by: tests/test_flower_platform_parity.py
+    check: {type: byte_identical, path: app/strategy.py, template: 'fl-apps/flower/{job_type}/app/strategy.py'}
+  - id: FLWR-07
+    level: MUST
+    statement: pyproject declares flip-min-clients as a TOML int >= 2 (sim-tutorial.sh seds it, fl-api overrides it)
+    enforced_by: tests/test_flower_min_clients_wiring.py
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.config.flip-min-clients, value_type: int, min: 2}
+  - id: FLWR-08
+    level: MUST
+    statement: pyproject has no [tool.flwr.federations] (flwr rewrites it into ~/.flwr/config.toml and dirties the file)
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.federations, absent: true}
+  - id: FLWR-09
+    level: MUST
+    statement: pyproject does not declare flip-utils as a dependency (FLIP#767, the simulator would install a PyPI release over the checkout)
+    check: {type: builtin, name: no_flip_utils_dependency}
+  - id: FLWR-10
+    level: MUST
+    statement: fl-tutorials/flower/sim-tutorial.sh has a case entry mapping the tutorial to its dev data
+    enforced_by: tests/test_sim_tutorial_exit_status.py
+    check: {type: case_entry, path: '{fl_tutorials}/flower/sim-tutorial.sh'}
+  - id: FLWR-11
+    level: MUST
+    statement: app/config.toml carries the run-config overrides fl-api feeds to flwr run on a platform submit
+    check: {type: file_exists, path: app/config.toml}
+  - id: FLWR-12
+    level: MUST
+    statement: client_app.py never reads SUPERNODE_NAME directly (the simulator sets none; every site would get the whole cohort)
+    why: client_identity(context) from flip.flower.identity handles both the simulator and the platform
+    check: {type: file_not_regex, path: app/client_app.py, pattern: 'getenv\(\s*[\x22\x27]SUPERNODE_NAME|environ(\.get)?[\(\[]\s*[\x22\x27]SUPERNODE_NAME'}
+  - id: FLWR-13
+    level: MUST
+    statement: client_app.py takes its site identity from client_identity(context)
+    when: {loop: [standard, fine_tune, fed_opt, two_stage, statistics_fedavg]}
+    check: {type: file_regex, path: app/client_app.py, pattern: 'client_identity\('}
+  - id: FLWR-14
+    level: MUST
+    statement: app/models.py exposes get_model() as a zero-argument callable (the template server seeds round 0 with it)
+    check: {type: file_regex, path: app/models.py, pattern: '^def get_model\('}
+  - id: FLWR-15
+    level: MUST
+    statement: client_app.py registers an @app.train handler
+    when: {loop: [standard, fine_tune, fed_opt, two_stage, statistics_fedavg]}
+    check: {type: file_regex, path: app/client_app.py, pattern: '@app\.train\('}
+  - id: FLWR-16
+    level: MUST
+    statement: client_app.py registers an @app.evaluate handler
+    check: {type: file_regex, path: app/client_app.py, pattern: '@app\.evaluate\('}
+  - id: FLWR-17
+    level: MUST
+    statement: pyproject points the serverapp component at app.server_app:app
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.components.serverapp, equals: 'app.server_app:app'}
+  - id: FLWR-18
+    level: MUST
+    statement: pyproject points the clientapp component at app.client_app:app
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.components.clientapp, equals: 'app.client_app:app'}
+  - id: FLWR-19
+    level: MUST
+    statement: pyproject's project.name is the template's (standard-app or evaluation-app)
+    check: {type: toml_key, path: pyproject.toml, key: project.name, in: [standard-app, evaluation-app]}
+  - id: FLWR-20
+    level: MUST
+    statement: .gitignore ignores the simulator's .flwr/ state
+    check: {type: file_regex, path: .gitignore, pattern: '\.flwr'}
+  - id: FLWR-21
+    level: MUST
+    statement: pyproject declares num-server-rounds
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.config.num-server-rounds, value_type: int, min: 1}
+  - id: FLWR-22
+    level: MUST
+    statement: pyproject declares best-model-metric, a key the ClientApp reports in its evaluate MetricRecord
+    when: {loop: [standard, fine_tune, fed_opt, two_stage]}
+    check: {type: toml_key, path: pyproject.toml, key: tool.flwr.app.config.best-model-metric}
+  - id: FLWR-23
+    level: SHOULD
+    statement: app/config.toml names only top-level keys the template pyproject already declares
+    check: {type: manual}
+  - id: FLWR-24
+    level: SHOULD
+    statement: README title names the backend ("<Use case> — FLIP tutorial (Flower)")
+    check: {type: file_regex, path: README.md, pattern: '^# .*\(Flower\)'}
+  - id: FLWR-25
+    level: MUST
+    statement: The Flower guards pass (template parity, min_clients wiring, flwr import paths, sim-tutorial data mapping)
+    enforced_by: CI fl-tutorials-tests.yml
+    check: {type: pytest, files: [test_flower_platform_parity.py, test_flower_min_clients_wiring.py, test_flwr_import_paths.py, test_sim_tutorial_exit_status.py]}
