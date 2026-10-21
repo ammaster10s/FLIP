@@ -38,7 +38,9 @@
       - "{{ flip_dir }}/trust"
       - "{{ flip_dir }}/logs"
       - "{{ flip_dir }}/selftest"
-    flip_images_base_dirs: ["{{ flip_dir }}/data/trust-1"]
+    # The self-test's images tree, and the joined trust's (flip-node join points the kit at it): made
+    # here so their net-N dirs get the backend's owner, never root's.
+    flip_images_base_dirs: ["{{ flip_dir }}/data/trust-1", "{{ flip_dir }}/data/images"]
     flip_observability_volume_dirs: true
     # The version the repo's own images pin (ghcr.io/astral-sh/uv:0.11.16).
     uv_version: "0.11.16"
