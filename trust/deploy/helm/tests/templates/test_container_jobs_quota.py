@@ -73,6 +73,8 @@ RENDERS = {
         "--set",
         "flClient.gpu.enabled=true",
         "--set",
+        "flClient.gpu.count=1",
+        "--set",
         "flClient.gpu.operator.enabled=true",
     ],
 }
