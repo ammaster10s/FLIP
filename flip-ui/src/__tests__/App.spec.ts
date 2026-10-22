@@ -13,7 +13,7 @@
 
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAuthStore } from "@/store/auth";
 
@@ -40,12 +40,32 @@ const mountApp = () => mount(App, {
     }
 });
 
+const user = {
+    username: "u",
+    userId: "id",
+    attributes: {
+        sub: "id",
+        email: "u@example.com"
+    },
+    permissions: []
+};
+
 describe("App hub polling (FLIP#702)", () => {
+    // swrv dedupes by key in a module-level cache, so each test ages it past
+    // dedupingInterval (5 s) or the next test's first fetch is skipped.
+    beforeAll(() => vi.useFakeTimers());
+    afterAll(() => vi.useRealTimers());
+
     beforeEach(() => {
         setActivePinia(createPinia());
         getHealth.mockReset().mockResolvedValue([]);
         getTrusts.mockReset().mockResolvedValue([]);
         getSiteDetails.mockReset().mockResolvedValue({ banner: null });
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.advanceTimersByTime(60_000);
     });
 
     it("calls no authenticated endpoint while signed out", async () => {
@@ -63,15 +83,34 @@ describe("App hub polling (FLIP#702)", () => {
         await flushPromises();
         expect(getTrusts).not.toHaveBeenCalled();
 
-        useAuthStore().user = {
-            username: "u",
-            userId: "id",
-            attributes: {
-                sub: "id",
-                email: "u@example.com"
-            },
-            permissions: []
-        };
+        useAuthStore().user = user;
+        await flushPromises();
+
+        expect(getHealth).toHaveBeenCalledTimes(1);
+        expect(getTrusts).toHaveBeenCalledTimes(1);
+        expect(getSiteDetails).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    it("stops polling once the user is gone", async () => {
+        const wrapper = mountApp();
+        useAuthStore().user = user;
+        await flushPromises();
+        expect(getHealth).toHaveBeenCalledTimes(1);
+
+        useAuthStore().user = null;
+        await flushPromises();
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(getHealth).toHaveBeenCalledTimes(1);
+        expect(getTrusts).toHaveBeenCalledTimes(1);
+        expect(getSiteDetails).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    it("fetches with no user on a VITE_LOCAL build", async () => {
+        vi.stubEnv("VITE_LOCAL", "true");
+        const wrapper = mountApp();
         await flushPromises();
 
         expect(getHealth).toHaveBeenCalledTimes(1);

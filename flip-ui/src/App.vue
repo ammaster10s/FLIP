@@ -21,7 +21,7 @@
 <script lang="ts" setup>
 import { useDark } from "@vueuse/core";
 import useSWRV from "swrv";
-import { onMounted, watch } from "vue";
+import { computed, onMounted, watch } from "vue";
 
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
@@ -59,10 +59,10 @@ onMounted(replayPostSignOutNotice);
 // All three endpoints need a session, so fetch nothing until there is a user: a null
 // key fetches nothing, and swrv fetches once the key appears. Otherwise the signed-out
 // login page logs a 401 per endpoint (FLIP#702). VITE_LOCAL has no sign-in at all.
-const signedIn = () => import.meta.env.VITE_LOCAL === "true" || !!authStore.user;
+const signedIn = computed(() => import.meta.env.VITE_LOCAL === "true" || !!authStore.user);
 
 const { data: health } = useSWRV(
-    () => (signedIn() ? "/trust/health" : null),
+    () => (signedIn.value ? "/trust/health" : null),
     getHealth,
     {
         refreshInterval: 5_000,
@@ -73,7 +73,7 @@ const { data: health } = useSWRV(
     });
 
 const { data: trusts } = useSWRV(
-    () => (signedIn() ? "/trust" : null),
+    () => (signedIn.value ? "/trust" : null),
     getTrusts,
     {
         refreshInterval: 5_000,
@@ -84,7 +84,7 @@ const { data: trusts } = useSWRV(
     });
 
 const { data: details } = useSWRV(
-    () => (signedIn() ? "/site/details" : null),
+    () => (signedIn.value ? "/site/details" : null),
     getSiteDetails,
     {
         refreshInterval: 30_000,
