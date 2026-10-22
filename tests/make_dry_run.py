@@ -83,8 +83,12 @@ DESTRUCTIVE = (
 
 
 def _without_make_vars(environ: os._Environ[str] | dict[str, str]) -> dict[str, str]:
-    """The caller's environment minus what a calling make adds: MAKEFLAGS and each command-line variable it names."""
-    names = {"MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL"}
+    """The caller's environment minus what a calling make adds: MAKEFLAGS and each command-line variable it names.
+
+    Also XNAT_TAG, which trust/xnat/Makefile exports at parse time (``make -C trust/xnat test``) and reads back
+    with ``?=``, so an inherited value would win over the scratch kit's DOCKER_TAG.
+    """
+    names = {"MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL", "XNAT_TAG"}
     names |= {tok.split("=", 1)[0] for tok in environ.get("MAKEFLAGS", "").split() if "=" in tok and tok[0] != "-"}
     return {k: v for k, v in environ.items() if k not in names}
 

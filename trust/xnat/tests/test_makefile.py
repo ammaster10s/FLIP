@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests"))
 
@@ -207,6 +208,12 @@ class UpXnatBuild(unittest.TestCase):
     def test_default_up_xnat_builds_nothing_and_deploys_the_kit_tag(self):
         out = dry_run("up-xnat", subdir="trust/xnat")
         assert "docker build" not in out, out
+        assert "XNAT_TAG=sha-badcff1" in out, out
+
+    def test_an_inherited_xnat_tag_does_not_beat_the_kit(self):
+        """`make -C trust/xnat test` exports XNAT_TAG=stag (no kit there) into every test's environment."""
+        with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
+            out = dry_run("up-xnat", subdir="trust/xnat")
         assert "XNAT_TAG=sha-badcff1" in out, out
 
 
