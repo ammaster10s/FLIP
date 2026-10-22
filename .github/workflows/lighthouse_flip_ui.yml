@@ -83,13 +83,19 @@ jobs:
           password="Lh-$(openssl rand -hex 12)-A1!"
           echo "::add-mask::$password"
           echo "LHCI_PASSWORD=$password" >> "$GITHUB_ENV"
-          echo "LHCI_USERNAME=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)" >> "$GITHUB_ENV"
+          username=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          test -n "$username" || { echo "::error::ADMIN_EMAIL_1 not found in flip-api constants.py"; exit 1; }
+          echo "LHCI_USERNAME=$username" >> "$GITHUB_ENV"
+          aes_key=$(openssl rand -base64 32)
+          postgres_password=$(openssl rand -hex 16)
+          echo "::add-mask::$aes_key"
+          echo "::add-mask::$postgres_password"
           cp .env.development.example .env.development
           sed -i "s/^UI_PORT=.*/UI_PORT=$UI_PORT/" .env.development
           {
             echo "ADMIN_USER_PASSWORD=$password"
-            echo "AES_KEY_BASE64=$(openssl rand -base64 32)"
-            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "AES_KEY_BASE64=$aes_key"
+            echo "POSTGRES_PASSWORD=$postgres_password"
             echo "ENV=development"
             echo "UID=$(id -u)"
             echo "GID=$(id -g)"

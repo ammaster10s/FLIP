@@ -31,7 +31,9 @@
 // item on #586) depend on CloudFront response headers, which `vite preview`
 // does not emit — those can only be validated against a real deployment, not
 // here.
-const BASE_URL = "http://localhost:4173";
+// The workflow's UI_PORT, which also sets the hub's redirect URI and CORS origin.
+const UI_PORT = process.env.UI_PORT || "4173";
+const BASE_URL = `http://localhost:${UI_PORT}`;
 const SIGNED_IN = Boolean(process.env.LHCI_USERNAME);
 const SIGNED_IN_PATHS = [
     "/projects",
@@ -60,7 +62,7 @@ module.exports = {
             // Serve the already-built dist/ (the workflow runs `build:deploy`
             // first). `vite preview` gives SPA history fallback so the deep
             // link to /auth/login resolves to the app rather than a 404.
-            startServerCommand: "npm run serve -- --port 4173 --strictPort",
+            startServerCommand: `npm run serve -- --port ${UI_PORT} --strictPort`,
             // Vite colors `Local` with ANSI escapes in CI, so match the text
             // across those codes as well as an optional space before the colon.
             startServerReadyPattern: "Local(?:\\x1b\\[[0-9;]*m)*\\s*:",
