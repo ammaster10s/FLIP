@@ -48,7 +48,7 @@ make sync-trust-kit KIT=<CODE> PROD=<env>
 
 # Cluster side (trust operator)
 python3 trust/deploy/helm/scripts/generate_values.py \
-  --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm   # then hand-fill orthanc-registered-users
+  --env-file trust/.env.<CODE>.<env> --output-dir trust/deploy/helm
 make -C trust/deploy/helm stage-kit KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
 make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
 make -C trust/deploy/helm status && make -C trust/deploy/helm smoke-cstore
@@ -428,7 +428,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. `sync-kit` skips the load, with a warning, when an older kit still carries the dev bucket (`flipdev-aicentre`) outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390). A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):
@@ -576,6 +576,7 @@ flClient:
   gpu:
     enabled: true
     count: 1
+    memoryPerGpuInGiB: 7
 ```
 
 Requires the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) to be
@@ -583,6 +584,61 @@ installed in the cluster, with an NVIDIA driver of **580 or newer** on the GPU n
 images ship PyTorch built for CUDA 13. The operator installs the driver itself, so pin its
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
+
+`flClient.gpu.memoryPerGpuInGiB` defaults to 7 GiB and controls the memory offered per GPU to the NVFLARE
+scheduler. Set it to the memory available for jobs on the site's GPU.
+
+On NVFLARE, `flClient.gpu.count` is also the number of GPUs the client offers its scheduler: 0 or 1, since the pod
+sees GPU 0 only. When `flClient.gpu.enabled` is true, the count must be 1; the chart refuses other counts.
+Use `flClient.gpu.enabled: false` for CPU-only mode. A job that requires more resources than the available clients
+can offer is retried according to the FL server's scheduler configuration. If it remains unschedulable until the
+retry limit is reached, it ends as `FINISHED:CAN_NOT_SCHEDULE`; the elapsed time depends on that configuration.
+With a count of 1, the client stops at start unless
+`nvidia-smi` in the pod sees a GPU (see [Pods in CrashLoopBackOff](#pods-in-crashloopbackoff)).
+
+The NVFLARE client renders the kit's `log_config.template.json` using `logLevel` (default `INFO`).
+Older kits without that template use `log_config.json.default` unchanged. Missing or unwritable log
+configuration stops the client with an explicit error.
+
+### Container Service jobs (dcm2niix)
+
+```yaml
+xnat:
+  containerService:
+    maxConcurrentJobs: 4   # null removes the cap
+```
+
+XNAT's Container Service converts DICOM to NIfTI by starting one Kubernetes Job per archived
+scan, so a cohort pull of a few hundred studies starts a few hundred Jobs within minutes. The
+plugin has no concurrency setting of its own on this backend, so the chart bounds them
+(FLIP#1448):
+
+- **Each dcm2niix pod is BestEffort.** The `xnat-init` Job registers dcm2niix without the
+  command file's `reserve-memory` and `limit-cpu`. On this backend the Container Service turns
+  `limit-cpu` into a CPU limit with no request (container-service 3.8.1 has no `reserve-cpu`), so
+  Kubernetes set the request to the limit: every pod reserved a whole CPU and 1000 MiB. On a
+  4-vCPU AKS node about 300 of them filled the node's requests, and nothing else could schedule
+  (FLIP#1448). A BestEffort pod reserves nothing, so it never stops another pod from scheduling,
+  and it runs at the lowest CPU weight on the node, so it yields to the trust's services. The
+  Compose deployment registers the same file unchanged, where those keys are Docker limits.
+- **At most `maxConcurrentJobs` of them run at once.** A ResourceQuota
+  (`<release>-flip-trust-xnat-container-jobs`) admits that many BestEffort pods in the
+  namespace. A Job over the cap gets no pod yet: its events say `FailedCreate ... exceeded quota`,
+  which is expected, and the Job controller retries it at most a minute apart until a slot frees.
+  A creation the quota refuses is not a pod failure, so it never counts against the Job's
+  `backoffLimit`: a conversion over the cap waits, it is not dropped.
+  The backlog drains with no Pending pods.
+
+Watch a pull convert with `kubectl describe resourcequota -n <ns>` (pods used against the cap)
+and `kubectl get jobs -n <ns>`. One conversion takes seconds plus a pod start, so the default of 4
+converts a 300-study cohort in tens of minutes on one node. Raise the cap on a larger node pool to
+convert faster.
+
+The quota counts *every* BestEffort pod in the namespace. No pod of this chart is one
+(`tests/templates/test_container_jobs_quota.py` renders them all), but a pod someone starts here
+with no resources at all (a bare `kubectl run`) takes a slot too. Jobs the Container Service
+created before this change keep their old 1-CPU request and are outside the quota: see
+[TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot).
 
 ### Autoscaling
 
@@ -610,7 +666,7 @@ model:
 
 - Deny all ingress from outside the namespace
 - Allow all intra-namespace communication
-- Allow egress to DNS (port 53), HTTPS (port 443), AWS IMDS (169.254.169.254)
+- Allow egress to DNS (port 53), HTTPS (port 443), and AWS IMDS (169.254.169.254) only when the omop-db vocab-load Job reads S3 through a node role
 - Allow custom egress CIDRs via `networkPolicies.allowedEgressCIDRs`
 
 ```yaml
@@ -632,7 +688,8 @@ with `secrets.create=true` or pre-created externally).
 
 `scripts/generate_values.py` writes them from the kit into `values-secrets.yaml` (mode `0600`,
 `secrets.create: true`; gitignored — the tracked `values-secrets.yaml.example` is a field
-reference with every slot empty). It cannot fill `orthanc-registered-users`, which no kit carries.
+reference with every slot empty). It builds `orthanc-registered-users` from the kit's `ORTHANC_USERNAME` and
+`ORTHANC_PASSWORD`, as Compose does.
 An empty slot is omitted from the Secret by `templates/secrets.yaml`, so the pod that mounts it
 fails with `CreateContainerConfigError` — deliberate, and why copying the example into place does
 not deploy. `sync-kit` patches the per-trust keys on top without touching the others.
@@ -645,7 +702,7 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
@@ -979,6 +1036,7 @@ The chart is validated in CI via:
 | ------- | ------- | ----- |
 | **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
 | **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
+| **dcm2niix backlog** | Hundreds of Pending pods that are not the release's own (`<release>-flip-trust-*`) | Container Service Jobs from before the conversion cap: [TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot). |
 | **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
 | **Image pull** | Pod event shows `ErrImagePull` or `ImagePullBackOff` | Verify GHCR credentials. Check `imagePullSecrets` config. For private repos ensure `image.tag` exists. |
 
@@ -989,6 +1047,8 @@ The chart is validated in CI via:
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **NVFLARE GPU count** | fl-client log shows `num_of_gpus specified (1) exceeds available GPUs: 0` | The pod does not see the GPU `flClient.gpu.count` promises. Check `kubectl exec <fl-client> -n <ns> -- nvidia-smi -L`; fix the node's NVIDIA runtime, or set `flClient.gpu.enabled: false`. |
+| **NVFLARE kit not writable** | fl-client log shows `cannot write /app/local/resources.json` | The client renders `resources.json` into the kit's `local/` at start. `chown` the staged kit's `local/` to uid 1000 on the node. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
@@ -999,7 +1059,7 @@ The chart is validated in CI via:
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999).
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999). On FLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 
@@ -1112,6 +1172,8 @@ Include:
    (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
    [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
    including the trailing slash that `combined-path-translation` must keep.
+   How many of those Jobs run at once is capped: see
+   [Container Service jobs](#container-service-jobs-dcm2niix).
 
 3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
