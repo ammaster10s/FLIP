@@ -34,12 +34,12 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `lza-stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
-| `lza-prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
+| `stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
+| `prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 
 The `aws-stag` / `aws-prod` GitHub environments the CI workflows read carry `TF_HUB=stag` /
 `TF_HUB=prod` (`README`, "Repointing CI at the LZA accounts"). The Makefile's guard expects
-`lza-<hub>` (override via `PROD_AWS_PROFILE` / `STAG_AWS_PROFILE`). The self-contained `stag` /
+the profile named after the hub, `stag` / `prod` (override via `PROD_AWS_PROFILE` / `STAG_AWS_PROFILE`). The self-contained `stag` /
 `prod` accounts were closed (2026-09-28, 2026-10-06) and their mode removed (FLIP#1479). Profile
 names are local aliases in `~/.aws/config` — one that encodes the old account ID has to be
 re-created, not edited.
