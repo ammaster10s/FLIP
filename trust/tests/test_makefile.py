@@ -205,7 +205,13 @@ class DevelopmentFlRegistry(unittest.TestCase):
         """DOCKER_FL_REGISTRY as trust/Makefile exports it to its recipes (what compose reads)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
+            for rel in (
+                "deploy/env_mode.mk",
+                "deploy/fl_backend.mk",
+                "deploy/instance.mk",
+                "deploy/portable.mk",
+                "trust/Makefile",
+            ):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
             (root / ".env.development").write_text(hub_env)

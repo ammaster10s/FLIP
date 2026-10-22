@@ -47,6 +47,7 @@ from release_lib import (  # noqa: E402
     instance_env,
     instance_make_args,
     placeholders,
+    read_env,
     set_env,
 )
 
@@ -136,15 +137,30 @@ def trust_kit(example: str, instance: str, offset: int) -> str:
     return set_env(shift_ports(example, TRUST_HOST_PORTS, offset), "OMOP_DB_TAG", instance)
 
 
+def kit_examples(repo: Path = REPO) -> dict[Path, Path]:
+    """Each dev kit's path, keyed to the example it is written from."""
+    return {
+        example.with_name(example.name.removesuffix(".example")): example
+        for example in sorted((repo / "trust").glob(".env.*.development.example"))
+    }
+
+
+def foreign_kits(instance: str, repo: Path = REPO) -> list[Path]:
+    """Dev kits on disk that this instance did not write (its kits pin ``OMOP_DB_TAG`` to it).
+
+    The kits carry no instance in their name, so they are the files a developer's own trusts use
+    (``trust/.env.<KIT>.development``); overwriting one loses the credentials ``register-trust`` minted.
+    """
+    return [p for p in kit_examples(repo) if p.exists() and read_env(p).get("OMOP_DB_TAG") != instance]
+
+
 def write_files(instance: str, offset: int, force: bool, repo: Path = REPO) -> list[Path]:
     """Write the hub env file and every dev kit; refuse to overwrite one unless ``force`` (it may be someone's)."""
     targets = {
         repo / env_file_name(instance): hub_env((repo / ".env.development.example").read_text(), instance, offset)
     }
-    for example in sorted((repo / "trust").glob(".env.*.development.example")):
-        targets[example.with_name(example.name.removesuffix(".example"))] = trust_kit(
-            example.read_text(), instance, offset
-        )
+    for kit, example in kit_examples(repo).items():
+        targets[kit] = trust_kit(example.read_text(), instance, offset)
     existing = [p for p in targets if p.exists()]
     if existing and not force:
         names = ", ".join(str(p.relative_to(repo)) for p in existing)
@@ -181,10 +197,11 @@ RETRY_ONCE = ("build-fl", "prepare-artifacts")
 def run_step(step: list[str], repo: Path, env: dict[str, str]) -> None:
     """Run one make step, failing on a non-zero exit; a retryable step gets a second attempt first."""
     print(f"▶ {' '.join(step)}", flush=True)
-    if subprocess.run(step, cwd=repo, env=env).returncode == 0:
+    first = subprocess.run(step, cwd=repo, env=env)
+    if first.returncode == 0:
         return
     if not any(target in step for target in RETRY_ONCE):
-        raise subprocess.CalledProcessError(1, step)
+        raise subprocess.CalledProcessError(first.returncode, step)
     print(f"↻ retrying once: {' '.join(step)}", flush=True)
     subprocess.run(step, cwd=repo, env=env, check=True)
 

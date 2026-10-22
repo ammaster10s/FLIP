@@ -66,7 +66,9 @@ the root `Makefile`). Your work is the judgement around them: scope, the notes' 
 
 The gates run on a Linux host with an NVIDIA GPU and Docker, never on a laptop. For example, the core team uses the
 shared dev desktop `bioeng625-pc` over SSH. If the user hasn't named the host, take it from your notes or memory, and
-ask only if you find none. Keep a release worktree there at the PR head and run the targets in the background.
+ask only if you find none. Keep a release worktree there at the PR head and run the targets in the background. It
+has to be a dedicated one: `release-gates` refuses a checkout whose `trust/.env.<KIT>.development` kits another
+stack wrote.
 
 - **Inputs.** The tutorials need the datasets, the prostate prep and the Ark+ checkpoint (CONTRIBUTING).
   `fl-tutorials/data/` is gitignored, so point a new worktree's at the main checkout's copy (symlink) rather than

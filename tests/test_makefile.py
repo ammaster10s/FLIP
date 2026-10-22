@@ -152,6 +152,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "deploy/portable.mk",
             "trust/Makefile",
             "trust/xnat/Makefile",
             "trust/xnat/.env",

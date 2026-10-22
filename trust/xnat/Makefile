@@ -216,12 +216,7 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
-# `stat` with a GNU format: `-c` on Linux, `-f` on a BSD/macOS dev host (whose octal mode is %Lp).
-ifeq ($(shell stat -c %u / 2>/dev/null),)
-stat_fmt = stat -f '$(subst %a,%Lp,$(1))'
-else
-stat_fmt = stat -c '$(1)'
-endif
+include ../../deploy/portable.mk
 
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \

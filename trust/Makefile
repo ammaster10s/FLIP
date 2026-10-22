@@ -105,12 +105,7 @@ ORTHANC_CMD=make -C ./orthanc
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
 
-# `stat` with a GNU format: `-c` on Linux, `-f` on a BSD/macOS dev host (whose octal mode is %Lp).
-ifeq ($(shell stat -c %u / 2>/dev/null),)
-stat_fmt = stat -f '$(subst %a,%Lp,$(1))'
-else
-stat_fmt = stat -c '$(1)'
-endif
+include ../deploy/portable.mk
 
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
 # compose services) owned like their base dir. A plain `mkdir -p` is not enough: the

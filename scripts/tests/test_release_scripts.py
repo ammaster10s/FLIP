@@ -135,6 +135,35 @@ class Instance(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 instance.write_files("rel0130", 10000, True, repo)
 
+    def test_only_kits_another_stack_wrote_are_foreign(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "trust").mkdir()
+            for example in KIT_EXAMPLES:
+                shutil.copy(example, repo / "trust")
+            kits = list(instance.kit_examples(repo))
+            assert instance.foreign_kits("rel0130", repo) == []  # nothing written yet
+            kits[0].write_text(instance.trust_kit(KIT_EXAMPLES[0].read_text(), "rel0130", 10000))
+            assert instance.foreign_kits("rel0130", repo) == []  # a re-run finds its own kit
+            assert instance.foreign_kits("rel0140", repo) == [kits[0]]  # another release's instance
+            kits[-1].write_text(KIT_EXAMPLES[-1].read_text())  # a developer's kit: OMOP_DB_TAG unset
+            assert kits[-1] in instance.foreign_kits("rel0130", repo)
+
+    def test_gates_refuse_a_checkout_with_a_developers_kits(self):
+        err = io.StringIO()
+        with (
+            mock.patch.object(gates, "assert_clean"),
+            mock.patch.object(gates, "assert_at_pr_head", return_value="a" * 40),
+            mock.patch.object(gates.instance_mod, "foreign_kits", return_value=[ROOT / "trust/.env.GSTT.development"]),
+            mock.patch.object(gates, "run") as run,
+            contextlib.redirect_stderr(err),
+        ):
+            assert gates.main(["--tag", "v0.13.0"]) == 1
+        run.assert_not_called()
+        assert "trust/.env.GSTT.development" in err.getvalue()
+        assert ".env.rel0130.development" in err.getvalue()
+        assert "dedicated release worktree" in err.getvalue()
+
 
 def read_env_text(text: str) -> dict[str, str]:
     with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
@@ -188,6 +217,15 @@ class RunStep(unittest.TestCase):
 
     def test_other_steps_are_not_retried(self):
         assert self.run_step(self.flaky(self.tmp, "up", failures=1)) == (1, True)
+
+    def test_a_failure_keeps_its_exit_code(self):
+        code = None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                instance.run_step([sys.executable, "-c", "raise SystemExit(7)", "up"], self.tmp, {})
+        except instance.subprocess.CalledProcessError as e:
+            code = e.returncode
+        assert code == 7
 
 
 class Verify(unittest.TestCase):
@@ -322,6 +360,22 @@ class Gates(unittest.TestCase):
         assert result["status"] == "failed"
         assert "🧹 stopped 42" in (tmp / "x.log").read_text()
 
+    def test_a_failed_teardown_names_what_remains(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        check = gates.build_gates("v0.0.1", "rel0001", lambda: "")["teardown"].steps[-1]
+        ps = mock.Mock(stdout="rel0001-flip-db-1\n")
+        with (
+            mock.patch.object(gates.subprocess, "run", return_value=ps),
+            mock.patch.object(gates.verify_mod, "services", return_value=[{"Name": "rel0001-xnat-1_xnat-web"}]),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            result = gates.run_gate(gates.Gate("teardown", [check]), tmp, {}, {})
+        assert result["status"] == "failed"
+        log = (tmp / "teardown.log").read_text()
+        assert "container rel0001-flip-db-1 remains" in log
+        assert "service rel0001-xnat-1_xnat-web remains" in log
+
     def test_a_failing_check_fails_its_gate(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
@@ -408,6 +462,12 @@ class Prepare(unittest.TestCase):
             prepare.FLIP_UTILS,
         }
         assert versions[prepare.FLIP_UTILS] == "99.1.0"  # strictly above the last flip-utils tag
+
+    def test_unlabelled_prs_start_after_the_previous_tag(self):
+        prs = [{"number": 1, "title": "a", "labels": []}, {"number": 2, "title": "b", "labels": [{"name": "x"}]}]
+        with mock.patch.object(prepare, "_gh_json", return_value=prs) as gh:
+            assert prepare.unlabelled_prs("2026-10-20T14:03:11+01:00") == prs[:1]
+        assert "merged:>2026-10-20T14:03:11+01:00" in gh.call_args.args
 
     def test_version_files_round_trip(self):
         for rel in ("pyproject.toml", "flip-ui/package.json", prepare.FLIP_UTILS):

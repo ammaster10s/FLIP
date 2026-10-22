@@ -25,6 +25,9 @@ Each gate writes ``release-gates/<TAG>/<gate>.json`` (commit, host, GPU, times, 
 beside its log. A failed gate stops the run — later gates are recorded as not run — unless ``CONTINUE=1``; a
 failed gate that ran against the stack also saves every instance container's log, before anything recreates them.
 ``make release-record`` turns the JSON into the release notes' *Release checks* section.
+
+Run it from a dedicated release worktree. The instance writes ``trust/.env.<KIT>.development``, the kit names a
+developer's own trusts use, so the run refuses to start if a kit there was written by anything but this instance.
 """
 
 from __future__ import annotations
@@ -242,13 +245,18 @@ def build_gates(tag: str, instance: str, project_id: Callable[[], str], port_off
         return verify_mod.verify(tag, instance)
 
     def nothing_left() -> list[str]:
+        # Named in the log: the survivors are what the operator has to clean up by hand.
         left = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"name=^{instance}-"], capture_output=True, text=True, check=True
+            ["docker", "ps", "-a", "--filter", f"name=^{instance}-", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.split()
-        svcs = verify_mod.services(instance)
-        return (
-            [f"{len(left)} container(s) and {len(svcs)} service(s) named {instance}-* remain"] if left or svcs else []
-        )
+        problems = [f"container {n} remains" for n in left]
+        problems += [f"service {s['Name']} remains" for s in verify_mod.services(instance)]
+        for line in problems:
+            print(f"  ✗ {line}")
+        return problems
 
     def smoke_flower() -> list[str]:
         # Reusing the FLARE smoke's project skips a second image pull; without one, the smoke creates its own.
@@ -350,6 +358,14 @@ def main(argv: list[str] | None = None) -> int:
         if unknown:
             raise ReleaseError(f"unknown gate(s) {', '.join(unknown)}; choose from {', '.join(ORDER)}")
         selected = [g for g in ORDER if g in wanted and not (a.keep and g == "teardown")]
+        # The instance gate rewrites every dev kit; one it did not write belongs to a developer's own trusts.
+        foreign = instance_mod.foreign_kits(instance)
+        if foreign:
+            names = ", ".join(str(p.relative_to(REPO)) for p in foreign)
+            raise ReleaseError(
+                f"{names} belong to another stack, and {instance} would overwrite them along with"
+                f" {env_file_name(instance)}; run the gates from a dedicated release worktree"
+            )
     except (ReleaseError, subprocess.CalledProcessError) as e:
         print(f"❌ {e}", file=sys.stderr)
         return 1
@@ -362,9 +378,10 @@ def main(argv: list[str] | None = None) -> int:
         return load_results(a.tag).get("smoke-nvflare", {}).get("metrics", {}).get("project_id", "")
 
     # The stack-free gates already run make with the instance's env file, so write it (no stack, no secrets shown)
-    # if this is the first run; the instance gate rewrites it with fresh secrets before anything starts.
+    # if this is the first run; the instance gate rewrites it with fresh secrets before anything starts. Any kit
+    # already there is this instance's (checked above), so forcing replaces nothing of anyone else's.
     if not (REPO / env_file_name(instance)).exists():
-        instance_mod.write_files(instance, a.port_offset, force=False)
+        instance_mod.write_files(instance, a.port_offset, force=True)
 
     gates = build_gates(a.tag, instance, project_id, a.port_offset)
     results = run(gates, selected, out_dir, base, lambda: instance_env(instance), a.continue_on_failure, instance)

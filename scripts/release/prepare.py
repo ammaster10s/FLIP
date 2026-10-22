@@ -144,10 +144,10 @@ def _gh_json(*args: str):
 
 
 def unlabelled_prs(since: str) -> list[dict]:
-    """PRs merged into develop since ``since`` (a date) that carry no label at all."""
+    """PRs merged into develop after ``since`` (the previous tag's ISO commit time) that carry no label at all."""
     prs = _gh_json(
         "pr", "list", "--base", "develop", "--state", "merged", "--limit", "500",
-        "--search", f"merged:>={since}", "--json", "number,title,labels",
+        "--search", f"merged:>{since}", "--json", "number,title,labels",
     )  # fmt: skip
     return [p for p in prs if not p["labels"]]
 
@@ -178,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ReleaseError("no previous v*.*.* tag")
         prev = previous[0]
         utils = (git("tag", "--list", "flip-utils-v*", "--sort=-v:refname").splitlines() or [None])[0]
-        since = git("log", "-1", "--format=%cs", prev)
+        # A timestamp, not a date: PRs merged earlier on the tag's day already shipped in it.
+        since = git("log", "-1", "--format=%cI", prev)
         missing = unlabelled_prs(since)
         if missing:
             listing = "\n".join(f"  #{p['number']} {p['title']}" for p in missing)
