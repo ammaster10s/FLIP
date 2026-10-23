@@ -46,13 +46,13 @@ Two rules apply throughout:
      - ``sudo -E make upgrade-onprem-trust KIT=<slot>``
    * - Kubernetes (Helm)
      - Site operator
-     - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env>``
+     - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
    * - Cloud (EC2) trust
      - FLIP admin
-     - ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>``
+     - ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
-     - ``make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
+     - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
 
 .. contents::
    :local:
@@ -84,7 +84,7 @@ Step 2 — Replace the Hub-shared block (refreshed kit only)
 
 *Who: site operator*
 
-If you were sent a refreshed kit, open the new ``.env.<CODE>.production`` and copy **only** the block between
+If you were sent a refreshed kit, open the new ``.env.<slot>.prod`` and copy **only** the block between
 ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` into your own kit file. Keep your Host-local
 profile (ports, data directories, ``FL_KIT_DIR``) and your Trust-local credentials. Do not copy the whole file over
 yours.
@@ -115,6 +115,16 @@ upgrade refuses a release from a checkout at any other tag (exit code 6).
 
 .. note::
 
+   **Kits named before FLIP#1479.** A kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a bare
+   ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run ``unset PROD`` first if your shell
+   still exports it: ``sudo -E`` passes it through, and any ``PROD`` now stops make. An old-named kit keeps working
+   for one release (the verbs find it and print the exact rename), but rename it to ``trust/.env.<slot>.prod`` before
+   the next one, and only once you will not roll back past this release: earlier releases know only the old names.
+   Move it (``mv``), never copy it: two names for one kit stop make. The running stack needs nothing, since the verbs
+   recognise it as this trust under either name, so never move the trust to another slot because of the rename.
+
+.. note::
+
    **Upgrading from v0.7.0 or earlier.** The ``upgrade-onprem-trust`` command does not exist in those checkouts; it
    arrives with the checkout in this step. A hub on v0.7.0 or earlier does not report its release either, so until
    the hub has moved past it, pass ``TAG=vX.Y.Z`` explicitly.
@@ -141,9 +151,9 @@ From the checkout:
      - Required. The trust's kit slot.
    * - ``TAG=vX.Y.Z``
      - The release to move to. Default: the release the hub reports.
-   * - ``PROD=<env>``
-     - Which kit file to use. Default ``true``: ``trust/.env.<KIT>.production``, else ``trust/.env.<KIT>``. Other
-       values: ``stag``, ``lza``, ``lza-stag``.
+   * - ``HUB=<env>``
+     - Which hub the site joins, and so which kit file to use. Default ``prod``: ``trust/.env.<KIT>.prod``. ``stag``
+       joins the staging hub.
    * - ``FORCE=1``
      - Allow a move to an older release (including a release's own release candidates).
    * - ``YES=1``
@@ -261,7 +271,7 @@ command refuses a release from any other checkout.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 Every FLIP-built image follows one chart value, ``global.image.tag`` (the observability images and ``xnat-dcm2niix``
 keep their upstream versions). The command pins the target in your kit as on Compose, regenerates the Helm override
@@ -309,7 +319,7 @@ Cloud (EC2) trust
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> [TAG=vX.Y.Z]
+   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
 It takes the same options as the on-premises upgrade and never re-seeds data. ``deploy-trust`` remains the
 first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
@@ -372,21 +382,20 @@ until it is re-keyed. On the admin workstation:
 
       cd deploy/providers/AWS
       uv run --no-project --with boto3 python scripts/reconcile_ci_env.py \
-          --env prod --profile prod --compare ../../../.env.production
+          --env prod --compare ../../../.env.prod
 
 #. **Refresh every local kit's Hub-shared block** from the reconciled env file.
 
    .. code-block:: shell
 
-      make sync-trust-kits PROD=true
+      make sync-trust-kits HUB=prod
 
-#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging reads the
-   slot-named file, so copy the refreshed kit there first:
+#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging is keyed on
+   the kit's ``FL_KIT_SLOT``, so the kit is passed by path:
 
    .. code-block:: shell
 
-      cp trust/.env.<CODE>.production trust/.env.<slot>
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=true
+      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.
@@ -400,7 +409,7 @@ Upgrading the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z
+   make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z
 
 .. seealso::
 
