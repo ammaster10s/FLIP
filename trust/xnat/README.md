@@ -17,7 +17,8 @@ XNAT is the medical imaging archive used by each FLIP trust site. It stores DICO
 
 ## Version notes (XNAT 1.10.2.1)
 
-FLIP runs XNAT `1.10.2.1` (see `XNAT_VERSION` in `.env`), the security hotfix on the 1.10 line.
+FLIP runs XNAT `1.10.2.1` (see `XNAT_VERSION` in `.env`), the security hotfix on the 1.10 line. Older
+XNAT has an unauthenticated account-creation flaw, so sites on an older release should upgrade.
 
 ### 1.10.2.1, and the 1.10.1 and 1.10.2 releases it includes
 
