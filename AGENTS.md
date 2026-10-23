@@ -484,7 +484,7 @@ tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorial
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`trust/deploy/helm/**`), `test_local_trust_playbook.yml`
 (`trust/deploy/ansible/**` Ansible). **UI/release/branch hygiene** —
-`lighthouse_flip_ui.yml` (Lighthouse perf audit on `flip-ui/**`, push/PR/manual),
+`lighthouse_flip_ui.yml` (Lighthouse audit of the login page and, signed in through the AWS-free hub, the main pages; on `flip-ui/**`, push/PR/manual),
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
