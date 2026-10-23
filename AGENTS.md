@@ -112,12 +112,17 @@ make undeploy-trust-k8s    # Remove trust services from Kubernetes
 #### Dev image sourcing: pull-by-default
 
 In development (`PROD` unset), `make up` **pulls** the repo-built services
-(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`, `omop-db`) from GHCR
 rather than building them — they carry `image:` + `pull_policy: always` in the dev
 compose, with local `src/` bind-mounted on top so live reload still runs your
 working copy. Pass `BUILD=true` (e.g. `make up BUILD=true`) to rebuild from source
 instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfile
-change, since those live in the image layer, not the mounted `src/`.
+change, since those live in the image layer, not the mounted `src/`. It also builds the
+XNAT images (`xnat-web`, `xnat-db`, `xnat-nginx`, via `make -C trust/xnat build`, which fetches
+the WAR and plugins) and deploys them at the unpublished `:dev` tag — the swarm agent re-pulls a
+tag on every deploy and would replace a local `:stag` build with the registry's. Tags are
+daemon-wide, so a second stack on the host (a release check) passes its own: `XNAT_TAG=<tag>` on
+the command line (e.g. `make up BUILD=true XNAT_TAG=rel0130`).
 
 - **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
   `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).
@@ -318,6 +323,20 @@ make -C trust check-governance KIT=<CODE>   # Validate the trust's governance do
 make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ FLARE clients), checks the logged digest
 make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch; report only without LAUNCH (trust/deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
+
+### Release pipeline (FLIP#1608)
+
+```bash
+make release-prepare TAG=vX.Y.Z [DRY_RUN=1]          # version bumps + make lock + empty Release checks; refuses unlabelled merged PRs
+make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # isolated rel<XYZ> instance, every image built here (release-gates runs it)
+make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
+make release-gates TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=…] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # GPU host: unit, integration, tutorials, instance, smokes, teardown -> release-gates/<TAG>/*.json
+make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
+make release-main-check TAG=vX.Y.Z [PR=<n>] [OWED=<file>]  # read-only: develop->main PR ready? + after-merge checklist (or the gh pr create command)
+```
+
+Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` runs them), tests in
+`scripts/tests/test_release_scripts.py`. The agent procedure on top: `.agents/skills/release/SKILL.md` (`/release`).
 
 ### Site release upgrades (FLIP#1204)
 

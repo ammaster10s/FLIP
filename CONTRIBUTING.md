@@ -73,6 +73,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
+- [Node.js 24 LTS](https://nodejs.org/) (npm **>= 11.10**) for flip-ui work outside Docker (`npm ci`, lint, unit
+  tests): earlier npm ignores `flip-ui/.npmrc`'s `min-release-age` without a word, so installs skip the cooldown
+  (see [Dependency cooldown](#dependency-cooldown-supply-chain-protection)). The stack itself builds flip-ui in Docker.
 - No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
   [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
   downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
@@ -180,9 +183,8 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
-  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
-  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  `flip-ui/package.json`'s `engines` field asks for Node >= 24 and npm >= 11.10, so npm warns (`EBADENGINE`) on an
+  older toolchain instead of dropping the cooldown unnoticed — develop against Node 24 locally to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
   enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
@@ -550,7 +552,10 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). `BUILD=true` also builds `omop-db` and the XNAT images (the latter
+deployed at the local-only `:dev` tag, so the swarm cannot swap them for the registry's;
+a second stack on the same host passes its own with `XNAT_TAG=<tag>`).
+Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process
@@ -862,6 +867,19 @@ The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the 
 ### Pre-release checklist
 
 Before opening the release PR from `develop` to `main`:
+
+The mechanical steps are make targets (FLIP#1608), each a script under [`scripts/release/`](scripts/release/):
+
+| Target | Does |
+|---|---|
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
+| `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
+| `make release-gates TAG=… PR=<n>` | On the GPU host, quickest first: `unit_test`, `integration_test` and both tutorial suites on a quiet host, then the instance, both smokes and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. Run it from a dedicated release worktree: the instance writes `trust/.env.<KIT>.development`, the files a developer's own trusts use, so it refuses a checkout whose kits another stack wrote. |
+| `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+| `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
+
+The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
 
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.

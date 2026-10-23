@@ -77,6 +77,18 @@ ifneq ("$(wildcard $(KIT_FILE))","")
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_FILE))
 endif
 
+# BUILD=true (propagated from `make up BUILD=true`): up-xnat builds the XNAT images from this
+# checkout and deploys them, at an unpublished tag rather than DOCKER_TAG: the swarm agent re-pulls
+# a tag on every deploy and keeps a local image only when that pull fails, so a local `stag` build
+# would be replaced by the registry's `stag` — built from another commit. The tag is `dev`, or
+# XNAT_TAG when given on the command line (a command-line value beats this assignment): tags are
+# daemon-wide, so a second stack on the host (FLIP_INSTANCE, a release check) passes its own, e.g.
+# `make up BUILD=true XNAT_TAG=rel0130`. An XNAT_TAG from the kit or the environment is a pull
+# pin, not a build tag, and is ignored here — this is set after the kit include for that reason.
+ifeq ($(BUILD),true)
+XNAT_TAG := dev
+endif
+
 # INSTANCE_PREFIX for the per-instance trust network. FLIP_INSTANCE arrives already exported
 # by ../../deploy/instance.mk when trust/Makefile drives this sub-make; on the standalone
 # `make -C trust/xnat ...` path it must come from the environment, which
@@ -211,6 +223,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
+include ../../deploy/portable.mk
+
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
 	if [ "$$owned" != "$(or $(3),$(words $(XNAT_DATA_DIRS)))" ]; then \
@@ -309,17 +323,17 @@ build:
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-web:${XNAT_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."
 	docker build \
 		--build-arg PG_VERSION=${PG_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG} \
 		postgres/
 	@echo "🐳 Building xnat-nginx image..."
 	docker build \
 		--build-arg NGINX_VERSION=${NGINX_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-nginx:${XNAT_TAG} \
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
@@ -349,12 +363,16 @@ up:
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+ifeq ($(BUILD),true)
+	$(MAKE) build
+endif
 ifdef XNAT_PLUGINS_FROM_HOST
 	$(MAKE) xnat-plugins-check
 endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
+	XNAT_TAG=$(XNAT_TAG) \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
 	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
@@ -398,7 +416,8 @@ endif
 # `xnat-configure`, neither of which consumes the value, and on each sub-make the
 # trust/xnat/tests suite spawns.
 XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
-XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
+# BUILD=true deploys a local-only tag, so there is no registry digest to resolve.
+XNAT_RESOLVE_IMAGE ?= $(if $(filter true,$(BUILD)),never,$(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always))
 
 down:
 	@for f in ../.env.*.$(ENV); do \
@@ -463,7 +482,7 @@ upgrade-xnat: create-xnat-network
 	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
 	case "$$xnat_endpoint" in \
 		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
-		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+		*) $(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -497,7 +516,7 @@ xnat-backup:
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
 	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
 	         mkdir -p /x/backups && cat > /x/$$dump \
-	         && zcat /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
+	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
@@ -611,7 +630,7 @@ xnat-reset:
 				sudo rm -rf $(XNAT_DATA_DIR); \
 				sudo mkdir -p $(XNAT_DATA_DIRS); \
 				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-				$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \
 	else \
@@ -627,7 +646,7 @@ xnat-reset:
 		$$priv rm -rf $(XNAT_DATA_DIR); \
 		$$priv mkdir -p $(XNAT_DATA_DIRS); \
 		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+		$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.

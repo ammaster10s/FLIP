@@ -105,6 +105,8 @@ ORTHANC_CMD=make -C ./orthanc
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
 
+include ../deploy/portable.mk
+
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
 # compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
 # documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
@@ -138,14 +140,14 @@ define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
 	if [ "$(FL_BACKEND)" = "flower" ]; then \
-	  owner="$$(stat -c '%u' "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
+	  owner="$$($(call stat_fmt,%u) "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
 	else \
-	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
+	  owner="$$($(call stat_fmt,%u:%g) "$$base")"; mode=755; \
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
-	    got="$$(stat -c '%u:%g %a' "$$d")"; \
+	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
 	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
 	    echo "❌  $$d is $$got but must be $$owner $$mode — imaging-api and the $(FL_BACKEND)"; \
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
@@ -178,9 +180,9 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
-# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
-# carry `pull_policy: always` in compose_trust.development.yml, so they always
-# pull from GHCR on their own. This flag only adds the global `--pull always`
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc,
+# omop-db) carry `pull_policy: always` in compose_trust.development.yml, so they
+# always pull from GHCR on their own. This flag only adds the global `--pull always`
 # that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
 # `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
 # unpublished manifest and `--pull always` would error.
@@ -189,6 +191,7 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't re-pulled away.
 # Propagated automatically from `make up BUILD=true` at the repo root.
+# up-trust's XNAT step builds and deploys the XNAT images too (trust/xnat/Makefile).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
@@ -337,10 +340,10 @@ TRUST_BUILD_VARS = \
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
-	if [ "$$(stat -c %u "$$pacs")" != "999" ]; then \
+	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
 	  chown 999:999 "$$pacs" 2>/dev/null || \
 	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine chown 999:999 /d || { \
-	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$(stat -c '%u:%g' "$$pacs")"; \
+	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
 	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
 	fi
 endef
@@ -356,15 +359,15 @@ define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
 	case "$$dir" in \
 	  /*) name="$$(basename "$$dir")"; \
-	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$(stat -c '%u:%g' "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
+	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
 	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
 	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
 	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
-	     if [ "$$(stat -c '%u:%g' "$$dir")" != "$$owner" ]; then \
+	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
 	       chown "$$owner" "$$dir" 2>/dev/null || \
 	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
-	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$(stat -c '%u:%g' "$$dir")"; \
+	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
 	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
 	     fi ;; \
 	esac

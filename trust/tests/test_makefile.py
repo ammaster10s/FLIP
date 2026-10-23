@@ -222,11 +222,18 @@ class DevelopmentFlRegistry(unittest.TestCase):
         """DOCKER_FL_REGISTRY as trust/Makefile exports it to its recipes (what compose reads)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
+            for rel in (
+                "deploy/env_mode.mk",
+                "deploy/fl_backend.mk",
+                "deploy/instance.mk",
+                "deploy/portable.mk",
+                "trust/Makefile",
+            ):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
             (root / ".env.development").write_text(hub_env)
             (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
+            (root / "probe.mk").write_text("fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]\n")
             # The caller's DOCKER_*/PROD/MAKEFLAGS would pre-empt the scratch env files.
             dropped = {"PROD", "MAKEFLAGS"}
             env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
@@ -236,8 +243,11 @@ class DevelopmentFlRegistry(unittest.TestCase):
                     "-s",
                     "-C",
                     str(root / "trust"),
-                    "--eval",
-                    "fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]",
+                    # Read after the Makefile, like --eval, which make 3.81 lacks.
+                    "-f",
+                    "Makefile",
+                    "-f",
+                    str(root / "probe.mk"),
                     "fl-registry",
                     "KIT=SCR",
                     *extra,

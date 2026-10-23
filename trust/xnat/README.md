@@ -102,7 +102,14 @@ make build
 ```
 
 This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
-`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
+(`XNAT_TAG` defaults to `DOCKER_TAG`).
+
+`make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
+must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
+when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
+second stack on the same host (a release check) passes its own on the command line, e.g. `XNAT_TAG=rel0130`; an
+`XNAT_TAG` in the kit is a pull pin and is ignored under `BUILD=true`.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
