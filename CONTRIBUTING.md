@@ -818,7 +818,7 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
-`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the twelve image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
+`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the fourteen image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
 
 - **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
 - **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
@@ -887,7 +887,7 @@ Before opening the release PR from `develop` to `main`:
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `.github/tests/workflows/test_release.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (twelve workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (fourteen workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Rolling the release out
 
@@ -1013,6 +1013,15 @@ make -C flip-api backfill_cohort_snapshots
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 
+To record the MONAI Label demo video against a running trust with MONAI Label on (a spleen CT segmented in the XNAT
+OHIF viewer, exported and converted to NIfTI; it doubles as an end-to-end check), run on the trust host:
+
+```bash
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=<CT session ID>
+```
+
+See [`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md) for the prerequisites.
+
 ## Building the documentation
 
 The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
@@ -1058,11 +1067,11 @@ run was 95% of a clone). Instead:
 - **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
-- **GIFs CI cannot record** (one that needs a live trust, say) are recorded by hand and published to the
-  dataset branch of the PR that documents them, which that PR's ReadTheDocs preview then shows:
-  `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"` (needs
-  `hf auth login` with write access to the dataset), then rebuild the preview. Only CI writes the dataset's
-  `main`; delete `pr-<N>` once the PR closes.
+- **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
+  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
+  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
+  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
+  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
 
 ### Adding a new GIF
 
@@ -1083,21 +1092,24 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
 cd flip-ui
 npm run docs:record   # records videos under test/cypress/videos/
 npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
-FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the published ones
 ```
 
-Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+Without the skip flag the build restores the published bytes over any file that differs.
 
 ### Publishing by hand
 
-Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
-write to the dataset:
+Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
+laptop with an account that can write to the dataset, with the full set under
+`docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
+yours):
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"
 ```
 
-`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
-build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.
+Then rebuild the PR's ReadTheDocs preview. `--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` /
+`FLIP_DOCS_GIFS_REVISION` (e.g. `pr-945`, `v0.12.0`) let a build read another dataset or another ref, mirroring
+`HF_TRUST_DATA_REVISION`.
