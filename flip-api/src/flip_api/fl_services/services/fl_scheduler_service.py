@@ -696,7 +696,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
             logger.error(error_msg)
             raise Exception(error_msg)
 
-        # Resolve FL kit slot names at the FL boundary. The FL protocol (NVFlare/Flower)
+        # Resolve FL kit slot names at the FL boundary. The FL protocol (FLARE/Flower)
         # identifies participants by the CN baked into the kit's cert at provisioning
         # time — that's the slot name, NOT the trust's friendly hub-side name. Using
         # Trust.name here would make validate_client_availability fail with
@@ -731,13 +731,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         return False
 
     except Exception as e:
-        if isinstance(e, httpx.HTTPStatusError):
-            logger.exception("FL API request failed: %s; response body: %s", e, e.response.text)
-            error_message = fl_api_error_message(e)
-        else:
-            logger.error(f"Failed to start training: {e}")
-            error_message = str(e)
-            logger.info(f"Error message: {error_message}")
+        logger.error(f"Failed to start training: {e}")
+        error_message = fl_api_error_message(e) if isinstance(e, httpx.HTTPStatusError) else str(e)
+        logger.info(f"Error message: {error_message}")
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)

@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6.0.3"]
+#
+# [tool.uv]
+# exclude-newer = "3 days"
+# ///
 #
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -169,8 +176,8 @@ def _validate_governance(kit: dict[str, str], document: Path | None) -> str | No
         document: The governance document, or ``None`` when the kit names none.
 
     Returns:
-        str | None: sha256 of the fl-client's extracted section on NVFLARE (what rolls the
-        fl-client), or ``None`` when there is no document or the backend is not NVFLARE.
+        str | None: sha256 of the fl-client's extracted section on FLARE (what rolls the
+        fl-client), or ``None`` when there is no document or the backend is not FLARE.
 
     Raises:
         GovernanceDocumentError: On an invalid document, an invalid FL_SITE_PRIVACY_* value, a
@@ -358,8 +365,9 @@ def _slot_pattern(secret_key: str) -> re.Pattern[str]:
 def _yaml() -> ModuleType:
     """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
 
-    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
-    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    The Makefile runs this script with ``uv run``, which installs PyYAML from the inline metadata
+    at the top; a bare ``python3`` without it reaches the refusal below. This one step needs a
+    real parser: the only trustworthy statement about a hand-edited file is what
     ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
     tell whether the file we are about to write says what we meant, so we refuse rather than
     write an unverified credentials file.
@@ -683,7 +691,28 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None) -> str:
+# The bucket trust/.env.example scaffolded every kit with until it shipped the key commented out
+# (#881): the dev account's, which no other environment can read. A kit outside development still
+# carrying it was never filled in.
+SCAFFOLD_VOCAB_BUCKET = "flipdev-aicentre"
+
+
+def is_scaffold_bucket(kit: dict[str, str], env: str) -> bool:
+    """Whether the kit still names the dev scaffolding bucket outside development (#881).
+
+    Args:
+        kit: The parsed kit file.
+        env: The kit's environment token (development, stag, lza-stag, ...).
+
+    Returns:
+        True when the vocab load would read a bucket this environment cannot.
+    """
+    return kit.get("AICENTRE_BUCKET_NAME", "").strip() == SCAFFOLD_VOCAB_BUCKET and env != "development"
+
+
+def render_override(
+    kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None, vocab_load: bool = True
+) -> str:
     """Render the Helm values override (no secrets) from kit settings.
 
     Args:
@@ -706,7 +735,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
+    # A still-scaffolded `<...>` bucket counts as unset: emitted, it would name a bucket that
+    # does not exist, and the vocab-load hook failing fails the whole release (FLIP#881).
     kit_bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
+    if _is_placeholder(kit_bucket):
+        kit_bucket = ""
     # Where the operator placed this trust's kit ON THE NODE. FL_KIT_DIR is the same
     # value the Compose path uses, so one kit field serves both deployment shapes.
     # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
@@ -759,6 +792,10 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # built `dev` or the floating `stag` leaves it on the release pin (generate_values.py
     # fl_client_pin applies the same rule).
     fl_tag = kit.get("DOCKER_FL_TAG", "").strip()
+    # The port the fl-client dials. It differs from FL_SERVER_PORT only behind an edge that remaps
+    # it (LZA staging dials :8003, FLIP#1365); a kit synced before that carries no FL_EDGE_PORT.
+    fl_port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
+    fl_host = kit.get("NLB_SUBDOMAIN", "").strip()
     fl_client_pin = fl_tag if IMMUTABLE_IMAGE_TAG.match(fl_tag) else ""
     lines += [
         "trustApi:",
@@ -773,7 +810,14 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # has NO vocabulary (cohort queries joining omop.concept return nothing).
     # Each environment reads its OWN bucket (no cross-account read), which is
     # exactly what AICENTRE_BUCKET_NAME carries.
-    if kit_bucket:
+    # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
+    # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
+    # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    source_trust = kit.get("SOURCE_TRUST", "").strip()
+    if source_trust:
+        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+
+    if kit_bucket and vocab_load:
         lines += [
             "omopDb:",
             "  vocabLoad:",
@@ -805,6 +849,9 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     if any(value for _, value in site_privacy):
         fl_section += ["  nvflare:", "    sitePrivacy:"]
         fl_section += [f'      {value_key}: "{value}"' for value_key, value in site_privacy if value]
+    # A Flower SuperNode dials the same edge address the Compose client does.
+    if fl_backend == "flower" and fl_host and fl_port:
+        fl_section += ["  flower:", f'    superlink: "{fl_host}:{fl_port}"']
     lines += fl_section
 
     # The trust's own disclosure floor. The chart passed none before, so every chart-deployed
@@ -814,11 +861,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
         lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
-    # drops the fl-client's outbound gRPC to the FL server unless FL_SERVER_PORT
+    # drops the fl-client's outbound gRPC to the FL server unless its dial port
     # is allow-listed. The FL server sits behind an internet-facing NLB with
     # AWS-managed IPs that rotate on recreation (and DNS returns a reordered
     # subset), so pinning resolved /32s would relocate the very drift it tries to
-    # fix. Instead emit a PORT-ONLY egress rule: add FL_SERVER_PORT to
+    # fix. Instead emit a PORT-ONLY egress rule: add the dial port to
     # allowedEgressPorts (the template supports a no-CIDR port entry). This is
     # immune to NLB IP churn — K8s NetworkPolicy can't match DNS names anyway —
     # and re-running sync-kit regenerates it deterministically rather than
@@ -828,7 +875,6 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # allowedEgressPorts must restate the chart defaults (DNS/HTTP/HTTPS, kept in
     # sync with values.yaml) alongside the FL-server port — otherwise the
     # override would wipe the default egress allowlist.
-    fl_port = kit.get("FL_SERVER_PORT", "").strip()
     if fl_port:
         lines += [
             "",
@@ -844,14 +890,14 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
             "      protocol: TCP",
             "    - port: 443",
             "      protocol: TCP",
-            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_SERVER_PORT)",
+            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL dial port)",
             "      protocol: TCP",
         ]
 
     # The trust's governance document (FLIP#1259). The kit names a *path* — the same
     # ACCESS_POLICY_FILE the Compose stack mounts — but a path on the deploy host means
     # nothing inside a pod, so what travels is the document itself, which the chart renders
-    # into a read-only ConfigMap that data-access-api mounts and the NVFLARE fl-client's
+    # into a read-only ConfigMap that data-access-api mounts and the FLARE fl-client's
     # governance-extract init container reads (the client itself sees its section only). A
     # relative path resolves against the trust tree, as Compose's --project-directory trust
     # resolves its own mount. Unreadable is a hard error rather than an omission: the release
@@ -893,6 +939,7 @@ def main(
     apply_secret: bool,
     write_override: bool = True,
     release_name: str | None = None,
+    vocab_load: bool = True,
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = REPO_ROOT
@@ -973,7 +1020,14 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
         try:
-            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
+            scaffold = vocab_load and is_scaffold_bucket(kit, env)
+            if scaffold:
+                print("⚠️  Skipping the S3 vocabulary load: AICENTRE_BUCKET_NAME is still the dev scaffolding")
+                print(f"   default ({SCAFFOLD_VOCAB_BUCKET}), which {env} cannot read (#881). Set this environment's")
+                print("   bucket in the kit, or load the vocabulary another way (load-omop-vocab).")
+            override = render_override(
+                kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load and not scaffold
+            )
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
@@ -1041,6 +1095,12 @@ if __name__ == "__main__":
         action="store_false",
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
+    parser.add_argument(
+        "--no-vocab-load",
+        dest="vocab_load",
+        action="store_false",
+        help="Never turn on the omop-db S3 vocab-load hook (a cluster with no route to AWS, e.g. AKS)",
+    )
     args = parser.parse_args()
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
@@ -1073,4 +1133,5 @@ if __name__ == "__main__":
         apply_secret=args.apply_secret,
         write_override=args.write_override,
         release_name=args.release_name,
+        vocab_load=args.vocab_load,
     )

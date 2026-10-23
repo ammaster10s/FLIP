@@ -18,7 +18,7 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `src/flip_api/domain/schemas/` | Pydantic request/response schemas |
 | `src/flip_api/domain/interfaces/` | Repository interfaces (Dependency Inversion) |
 | `src/flip_api/auth/` | Provider-agnostic auth (FLIP#919): `token_verifier.py` (one generic OIDC verifier; per-backend `TokenRules` for Cognito and Keycloak), `dependencies.py` (`verify_token` + the MFA gate), `identity/` (the `IdentityProvider` seam — `base.py` interface, `cognito.py`, `keycloak.py`, `http.py` the one error→status translation, `factory.py` selects by `AUTH_BACKEND`), access manager, trust/internal-service auth |
-| `src/flip_api/scripts/` | Trust registration + deletion CLIs (`register_trust.py`, `delete_trust.py`), internal-service-key + trust-key + XNAT-credential generation, demo user seeding (`create_demo_users.py`), env utils |
+| `src/flip_api/scripts/` | Trust registration + deletion CLIs (`register_trust.py`, `delete_trust.py`), internal-service-key + trust-key + XNAT-credential generation, demo user seeding (`create_demo_users.py`), cohort-snapshot backfill (`backfill_cohort_snapshots.py`), env utils |
 
 ## Service Modules
 
@@ -59,6 +59,7 @@ make migration_current         # alembic current
 make demo_video    # record the end-to-end demo video against the running stack (tests/demo_video.py; DEMO_ARGS=...)
 make create_demo_users         # provision the demo Cognito users (DEMO_*_PASSWORD from env; restart flip-api after)
 make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARGS="--cleanup" removes it)
+make backfill_cohort_snapshots # queue PERSIST_COHORT for approved projects with no snapshot record (EXTRA_ARGS="--dry-run")
 ```
 
 ## Conventions
@@ -77,7 +78,7 @@ make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARG
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
 - No smoked trust has a Trust Admin (FLIP#1258): the smoke approves as the hub admin, and a trust with a Trust Admin refuses the hub, so the whole approve call answers 403.
-- The tutorial files are in-tree at `fl-tutorials/<backend>/` (NVFLARE and Flower both migrated from the legacy fl-base repos).
+- The tutorial files are in-tree at `fl-tutorials/<backend>/` (FLARE and Flower both migrated from the legacy fl-base repos).
 
 Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
 
@@ -89,6 +90,8 @@ make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
                                                               # a registered-but-offline trust does not block the run
+make e2e_smoke EXTRA_ARGS="--gpus 0"                          # the run's GPUs per trust (FLIP#70); omitted, the
+                                                              # job's meta.json resource_spec or the FL API default
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
@@ -163,9 +166,9 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
 `$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
 there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
+tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
-the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+the FLARE paths for the FLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI
@@ -191,15 +194,28 @@ which defaults to `http://localhost:8080/api` — the *local dev hub* — unless
 hands your remote token to the dev hub, which answers `500 Internal server error during authentication`, and nothing on
 the remote hub logs a request. Remote hubs enforce MFA, so the Cognito password flow is out: pass a pre-obtained bearer
 as `FLIP_E2E_TOKEN` (the Cognito **AccessToken** of a TOTP-enrolled admin) plus `FLIP_E2E_REFRESH_TOKEN` so the smoke
-can renew it across a long training run. The module also imports flip-api `Settings`, whose dev class requires
+can renew it across a long training run (through Cognito: a supplied token is never sent to the local Keycloak, even
+when `.env.development` makes it the configured backend). The module also imports flip-api `Settings`, whose dev class requires
 `POSTGRES_PASSWORD` even though the smoke never opens the database — export any dummy value on an LZA env, which has
 none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
 `FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
 
+**A trust without the OMOP vocabulary (FLIP#1390).** A Helm trust deployed with `NO_VOCAB_LOAD=1` (the AKS path)
+holds the x-ray data but only a sliver of `omop.concept`, so the x-ray tutorial's `query.sql` — which names the
+Yes/No answers, the modality and the anatomy through concept joins — returns no rows and staging fails with
+"returned no cohort records". `make e2e_smoke` with `PROD` unset runs the sibling `query_novocab.sql` instead: the same
+studies and findings, with the two answer concepts named inline (`fl-tutorials/tests/test_xray_no_vocab_query.py`
+runs both against one synthetic OMOP database and fails if they disagree). A test-trust switch only; an explicit
+`QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries. With `PROD` set (a deployed hub)
+such a trust needs it passed by hand:
+`QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql` (Flower:
+`fl-tutorials/flower/xray_classification/query_novocab.sql`).
+
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
-returns `200 []`. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
+returns `200 []`. Each approved trust still gets its PERSIST_COHORT task (FLIP#857, `queue_cohort_snapshot`):
+training reads the cohort through `/cohort/dataframe`, which serves only the membership frozen at approval. The EHR risk-prediction tutorials are the first such cohort: `make e2e_smoke_ehr [FL_BACKEND=flower]`
 (root or `-C flip-api`) picks that tutorial for the backend and pins `--no-imaging`, which creates the project
 with the flag off and skips the image-pull wait (the smoke reads `has_imaging` back off the project, so
 `--project-id` reuse honours it too; `make e2e_smoke EXTRA_ARGS="--no-imaging"` is the generic form). The flag
@@ -230,29 +246,83 @@ runs old images otherwise): `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/
 (the compose SERVICE name — dev containers set no `container_name`, so they are named by the project). See
 [`fl-services/AGENTS.md`](../fl-services/AGENTS.md) for `make build-fl` / `:dev` image details.
 
+## Approved-cohort snapshots (FLIP#857)
+
+At approval the hub queues a PERSIST_COHORT task per approved trust (before CREATE_IMAGING, and for tabular
+projects too); the trust freezes the approved cohort's membership, and its row-level routes then serve only those
+members (the membership can shrink, never grow; their records are read live, so a member's row count can rise).
+The hub keeps one `cohort_snapshot_status` row per (project, trust) with the approval-time facts, written by the
+task's post-processing (retried by the stale-task recovery job).
+
+- `GET /projects/{id}/cohort-snapshots` — one entry per approved trust with `status` `frozen` / `pending` /
+  `failed`, derived from the latest PERSIST_COHORT task (`project_services/services/cohort_snapshot_service.py`).
+  `failed` carries a category-only `error`, never the trust's raw error text; it also covers a trust that was never
+  asked (a project approved before the feature). Training at a trust never frozen is refused there. A `frozen` trust
+  whose last re-check (`include_frozen`) failed stays `frozen` with an `error` saying so — the hub cannot tell whether
+  it still holds its membership. A result the hub cannot parse fails the task (category "could not be read") rather
+  than leaving the trust `pending`; a trust's first record after its XNAT project exists resets that project's
+  reimport budget, so a late freeze still gets its studies pulled.
+- `POST /projects/{id}/cohort-snapshots` — re-queues PERSIST_COHORT on an APPROVED project at each approved trust
+  the caller may decide (the approval authority: that trust's Trust Admin, else the hub admin) whose snapshot is
+  missing or failed. Pending trusts are reported, never re-queued; frozen ones too unless `?include_frozen=true` —
+  the recovery for a trust that lost its snapshot store, which the hub cannot see. That is safe because a trust never
+  replaces a membership it holds (it answers with the frozen facts); only one that lost its record re-freezes.
+- `make backfill_cohort_snapshots` — the fleet-wide form for projects approved before the feature: queues
+  PERSIST_COHORT at every approved trust of every APPROVED project with no `cohort_snapshot_status` row (pending
+  trusts skipped, so it is idempotent). Runs `flip_api.scripts.backfill_cohort_snapshots` via `docker compose exec`
+  in the running flip-api container; `EXTRA_ARGS="--dry-run"` previews, `EXTRA_ARGS="--include-frozen"` also
+  re-queues trusts with a record (the fleet-wide store-loss recovery).
+
 ## Demo Video Recorder
 
 `make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
 Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
-download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
-(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
-with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
-(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
-`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
-`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
-and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
-`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
-the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
-risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
-spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
-label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
-ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
-dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
-caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
-on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
-drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
-4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
-named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
+download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. One Python process,
+`tests/demo_video.py`, plays the six segments (`tests/demo_segments.py`) in a Playwright Chromium on the host and does
+the slow platform waits (cohort responses, ~6 min imaging import, FL training) **off-camera** between them, reusing
+`tests/e2e_smoke.py`'s wait functions. Prerequisites: stack up, Playwright's browser (`uv run playwright install
+chromium`), ffmpeg on PATH, and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads
+`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` / `DEMO_TRUST_ADMIN_PASSWORD` from env, never committed) then
+restart flip-api so seeding grants their roles; without them the recorder falls back to the well-known admin for both
+parts, and says so on camera. Segment 2 is the demo Trust Admin approving on **My Trust** for the first trust; the
+recorder grants it Trust Admin there only for that segment (while it holds it, the hub admin cannot approve at that
+trust) and approves the other trusts off camera. Without `DEMO_TRUST_ADMIN_*` the admin approves at every trust.
+
+How a segment is recorded (`tests/demo_recorder.py`): each is a fresh browser context, signed in and loaded off camera,
+then recorded through Chromium's screencast from `rec.start()`; every frame is written with its timestamp and encoded to
+h264 by ffmpeg (Playwright's built-in recorder is VP8 at a low bitrate, soft on movement at 4K). A still page emits no
+frames, so each frame is held until the next and a still page keeps its real length. The browser runs with
+`--force-device-scale-factor` — a context's `device_scale_factor` alone yields CSS-pixel frames, upscaled. Captions are
+screencast overlays (they survive navigations), the pointer a page-injected arrow driven by the real mouse events.
+`flip-ui/scripts/assemble-demo-video.sh` then concatenates the segments, with a blur between 04 and 05.
+
+Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR risk-prediction tutorial: the project is created with imaging
+off and the XNAT segment is skipped), `--app spleen` (record the 3D spleen segmentation tutorial instead of chest
+X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera label upload, same contract as `e2e_smoke`),
+`--publish-segmentations` (republish those NIfTI labels as DICOM-SEG ROI collections via
+`flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF — dcmqi in Docker for the
+conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust
+are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate on later segments without re-running
+the pull; `--model-id` for 5–6), `--keep-workspace` (a fresh run otherwise first deletes every project the demo
+researcher owns outside the demo catalogue, then seeds that catalogue (`make seed-demo-projects`) as the researcher, so
+each take opens on the same workspace of its own projects; never for the fallback admin. A catalogue seeded earlier
+under another owner is only reported: `make seed-demo-projects EXTRA_ARGS=--cleanup` once to re-seed it), `--keep-project <uuid>` (repeatable: reset as usual but spare that project, e.g. the spleen project MONAI Label points at), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
+the default 3 records the 1280x800 viewport at 3840x2400). Segment mp4s, `state.json` and the final cut land under
+`flip-api/demo-video/` (gitignored); the final mp4 is named for the recorded app (`flip-demo-xray.mp4` /
+`flip-demo-spleen.mp4`), and a failed segment leaves a `*.failure.png` of the page beside its mp4. The spleen take:
+
+```bash
+make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
+  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id \"\$\$FLIP_PROJECT_ID\" --labels-dir ../../data/spleen/images'"
+```
+
+XNAT is reached from Python by IPv4 literal (`--xnat-url`, default `http://127.0.0.1:8105`): Docker Swarm ingress
+accepts `::1` connections and never answers them. Before segment 3 the recorder waits for the XNAT project's container
+jobs (the dcm2niix burst right after the import, during which a page takes ~40 s to open) to drain, giving up with a
+warning after 90 s without progress (a finalize stall) or 15 min, then deletes the XNAT user's sessions last, which
+otherwise surface on camera as a sessions-per-IP banner or a greyed "Session Expired" page. Segment 6 switches the
+metrics to the grid so the finished curves are on camera before the download.
 
 ## Hub Environment Variables
 

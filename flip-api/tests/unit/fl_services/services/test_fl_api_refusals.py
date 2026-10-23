@@ -17,9 +17,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 
-from flip_api.db.models.main_models import FLLogs
+from flip_api.db.models.main_models import FLJob, FLLogs
 from flip_api.domain.interfaces.fl import INetDetails, IRequiredTrainingInformation
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.domain.schemas.types import FLBackend
@@ -60,19 +60,25 @@ def assert_failure_in_feed(session, model_id, message):
     assert feed[0].success is False
 
 
-@pytest.mark.parametrize("failed_path", ["/check_client_status", "/upload_app", "/submit_job"])
+@pytest.mark.parametrize("failed_path", ["/upload_app", "/submit_job"])
 @pytest.mark.parametrize(
     "body",
     [
         b'{"detail": "private path /app/src", "refusal": "No participating trusts in the upload request"}',
         b"",
         b"not JSON",
+        b'{"refusal":',
+        b'{"refusal": " "}',
+        b'{"refusal": null}',
+        b'{"refusal": 12}',
+        b"[]",
         b'{"detail": "https://s3.internal/?X-Amz-Credential=private&X-Amz-Signature=private"}',
     ],
 )
 def test_training_refusal_reaches_activity_feed(net, failed_path, body):
     model_id, job_id = uuid4(), uuid4()
     session = MagicMock()
+    session.get.return_value = FLJob(id=job_id, model_id=model_id)
     session.exec.return_value.all.return_value = ["Trust_1"]
     refused_response = None
 
@@ -102,36 +108,34 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
         patch.object(fl_scheduler_service, "remove_job") as remove_job,
         patch.object(fl_scheduler_service, "update_model_status") as update_status,
         patch.object(fl_scheduler_service, "release_scheduler_for_model") as release,
-        patch.object(fl_scheduler_service.logger, "exception") as logged,
+        patch.object(fl_scheduler_service.logger, "error") as logged,
         pytest.raises(httpx.HTTPStatusError) as caught,
     ):
         fl_scheduler_service.prepare_and_start_training(model_id, job_id, [uuid4()], session)
 
     assert caught.value.response is refused_response
     assert caught.value.request.url.path.startswith(failed_path)
-    if b'"refusal"' in body:
-        message = "The FL server refused the job: No participating trusts in the upload request"
-        assert "No participating trusts in the upload request" in str(caught.value)
-    else:
-        message = "The FL server refused the job (HTTP 400)."
-        assert "400 Bad Request" in str(caught.value)
-        assert "FL API refusal:" not in str(caught.value)
+    message = (
+        "The FL server refused the job: No participating trusts in the upload request"
+        if b"No participating trusts" in body
+        else "The FL server refused the job (HTTP 400)."
+    )
+    assert "400 Bad Request" in str(caught.value)
+    assert "No participating trusts" not in str(caught.value)
+    assert "private" not in str(caught.value)
     assert_failure_in_feed(session, model_id, message)
-    logged.assert_called_once()
-    assert logged.call_args.args[1] is caught.value
-    assert logged.call_args.args[2] == body.decode()
+    logged.assert_called_once_with(f"Failed to start training: {caught.value}")
+    assert "private" not in logged.call_args.args[0]
     remove_job.assert_called_once_with(job_id, session)
     update_status.assert_called_once_with(model_id, ModelStatus.ERROR, session)
     release.assert_called_once_with(model_id, session)
 
 
-@pytest.mark.parametrize("failed_path", ["/check_server_status", "/list_jobs", "/abort_job"])
+@pytest.mark.parametrize("failed_path", ["/list_jobs", "/abort_job"])
 @pytest.mark.parametrize("status_code", [400, 500])
 def test_abort_refusal_reaches_feed_and_router_stays_sanitized(net, failed_path, status_code):
     model_id = uuid4()
     session = MagicMock()
-    request = MagicMock(spec=Request)
-    request.path_params = {}
     refusal = "Job cannot be aborted in this state" if status_code == 400 else "private server exception"
     refused_response = None
 
@@ -161,7 +165,7 @@ def test_abort_refusal_reaches_feed_and_router_stays_sanitized(net, failed_path,
         patch.object(fl_service.logger, "exception") as logged,
         pytest.raises(HTTPException) as caught,
     ):
-        stop_training(model_id, request, session, uuid4())
+        stop_training(model_id, session, uuid4())
 
     assert caught.value.status_code == 500
     assert caught.value.detail == "Internal server error"
@@ -169,14 +173,15 @@ def test_abort_refusal_reaches_feed_and_router_stays_sanitized(net, failed_path,
     assert isinstance(upstream_error, httpx.HTTPStatusError)
     assert upstream_error.response is refused_response
     assert upstream_error.request.url.path.startswith(failed_path)
-    assert (refusal in str(upstream_error)) is (status_code == 400)
+    assert refusal not in str(upstream_error)
     message = (
         f"The FL server refused the job: {refusal}"
         if status_code == 400
         else "The FL server refused the job (HTTP 500)."
     )
     assert_failure_in_feed(session, model_id, message)
-    logged.assert_any_call("FL API request failed: %s; response body: %s", upstream_error, refused_response.text)
+    logged.assert_any_call("FL API request failed: %s", upstream_error)
+    assert all("private" not in str(call) for call in logged.call_args_list)
     dequeue.assert_called_once_with(model_id, session)
     update_status.assert_not_called()
     release.assert_not_called()

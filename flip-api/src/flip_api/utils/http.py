@@ -49,27 +49,6 @@ def fl_api_error_message(error: httpx.HTTPStatusError) -> str:
     return f"The FL server refused the job (HTTP {error.response.status_code})."
 
 
-def _raise_for_status(response: httpx.Response) -> None:
-    """Keep explicitly marked FL API refusals on HTTP errors.
-
-    Args:
-        response (httpx.Response): The FL API response to check.
-
-    Raises:
-        httpx.HTTPStatusError: If the response failed, preserving the request and response.
-            Only a non-empty string ``refusal`` from a 4xx response is included.
-    """
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as error:
-        refusal = _researcher_refusal(response)
-        if refusal:
-            raise httpx.HTTPStatusError(
-                f"{error}\nFL API refusal: {refusal}", request=error.request, response=error.response
-            ) from error
-        raise
-
-
 def http_get(url: str, request_id: str | None = None, timeout: float | None = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
 
@@ -86,8 +65,7 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
 
     Raises:
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
-        httpx.HTTPStatusError: If the response status is 4xx/5xx, with a non-empty string
-            ``refusal`` from a structured 4xx refusal included in the message.
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
@@ -96,7 +74,7 @@ def http_get(url: str, request_id: str | None = None, timeout: float | None = No
                 response = client.get(url, headers=headers)
             else:
                 response = client.get(url, headers=headers, timeout=timeout)
-            _raise_for_status(response)
+            response.raise_for_status()
             try:
                 return response.json()
             except ValueError:
@@ -122,8 +100,7 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
 
     Raises:
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
-        httpx.HTTPStatusError: If the response status is 4xx/5xx, with a non-empty string
-            ``refusal`` from a structured 4xx refusal included in the message.
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
     headers = (
         {"Content-Type": "application/json", "x-request-id": request_id}
@@ -137,7 +114,7 @@ def http_post(url: str, request_id: str | None = None, data: dict | None = None,
             else:
                 response = client.post(url, headers=headers, json=data, timeout=timeout)
 
-            _raise_for_status(response)
+            response.raise_for_status()
             try:
                 return response.json()
             except ValueError:
@@ -160,14 +137,13 @@ def http_delete(url: str, request_id: str | None = None) -> Any:
 
     Raises:
         httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
-        httpx.HTTPStatusError: If the response status is 4xx/5xx, with a non-empty string
-            ``refusal`` from a structured 4xx refusal included in the message.
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
     """
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:
             response = client.delete(url, headers=headers)
-            _raise_for_status(response)
+            response.raise_for_status()
             try:
                 return response.json()
             except ValueError:

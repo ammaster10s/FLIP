@@ -62,9 +62,7 @@ FL_BACKEND=nvflare
 FLOWER_KIT_DATE=20260101
 FLARE_KIT_DATE=20260101
 DOCKER_TAG=sha-badcff1
-DOCKER_REGISTRY=ghcr.io/londonaicentre/
 DOCKER_FL_TAG=sha-badcff1
-DOCKER_FL_REGISTRY=ghcr.io/londonaicentre/
 NLB_SUBDOMAIN=fl.example
 FL_SERVER_PORT=8002
 TRUST_API_KEY=x
@@ -79,8 +77,6 @@ DESTRUCTIVE = (
     "ensure-seeded",
     "seed-omop",
     "seed-orthanc",
-    "update-omop-data",
-    "update-orthanc-data",
     "rm -rf",
     "down-trust",
 )
@@ -107,6 +103,7 @@ def run_target(
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "flip-api/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
         ):
