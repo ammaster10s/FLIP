@@ -62,12 +62,20 @@
 A hotfix runs the checks that exercise its fix (*CONTRIBUTING.md → Hotfixes*). The fix changes XNAT only; no tutorial
 or FL code changed since v0.13.1, so the tutorial suite is not re-run.
 
-- [ ] Full-platform smoke test, FLARE — `make e2e_smoke` (imports DICOM through XNAT 1.10.2.1)
-- [ ] Full-platform smoke test, Flower — `make e2e_smoke FL_BACKEND=flower`
-- [ ] Kubernetes trust on XNAT 1.10.2.1 with Container Service 3.8.2 — `make -C trust/deploy/helm status`,
-  `smoke-cstore` and one dcm2niix conversion
-- [ ] `make unit_test`
-- [ ] Host, date, deployment, and results recorded
+- [x] Full-platform smoke test, FLARE — `make e2e_smoke` (imports DICOM through XNAT 1.10.2.1): passed against the
+  staging hub with two trusts on `v0.13.2-rc.1`, one on Docker Compose and one on Kubernetes. Each pulled the x-ray
+  cohort into its XNAT (300/300 and 289/300); training reached `RESULTS_UPLOADED`. The query was the tutorial's
+  vocabulary-free variant, because the Kubernetes trust has no core vocabulary loaded.
+- [ ] Full-platform smoke test, Flower — not re-run. The staging hub's only FL net runs NVFLARE, and the fix touches
+  XNAT alone: importing studies into XNAT is the same for both backends, and no FL code changed since v0.13.1.
+- [x] Kubernetes trust on XNAT 1.10.2.1 with Container Service 3.8.2 — `make -C trust/deploy/helm status` (plugin
+  roster matches the values and XNAT loaded all four), `smoke-cstore` (a C-STORE from the PACS logged in
+  `received.log`, no importer failure) and one dcm2niix conversion (container `Complete`, NIfTI resource written):
+  all passed.
+- [x] `make unit_test`: passed (flip-api 2220, flip-ui 1600, data-access-api 464, imaging-api 804, omop-db 115,
+  trust-api 174, trust/xnat 511).
+- [x] Host, date, deployment, and results recorded: 23 Oct 2026, both trusts upgraded in place from v0.12.0 with
+  the release's upgrade verbs (`upgrade-onprem-trust`, `upgrade-trust-k8s`); unit tests on an RTX 5090 workstation.
 
 ## :file_folder: PRs merged in this release
 
