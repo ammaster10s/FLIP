@@ -152,7 +152,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
             x_label=metrics_data.get("x_label"),
         )
     except Exception:
-        # Never let one bad metric escape into NVFLARE's event dispatch (matches the
+        # Never let one bad metric escape into FLARE's event dispatch (matches the
         # Flower forward loop) — the metric is lost, but the run and the round's
         # remaining metrics carry on.
         flip.logger.exception(f"Failed to forward metric {metrics_data.get('label')} to the hub")

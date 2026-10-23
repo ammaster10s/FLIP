@@ -21,7 +21,7 @@
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
-| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (NVFLARE kit or Flower creds, by `fl_backend`) |
+| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificates (ALB + CloudFront) |
@@ -41,7 +41,6 @@
 | `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
 | `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
-| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
 `aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
@@ -61,7 +60,7 @@ make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
-make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
+make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make deploy-trust                             # Deploy trust stack to EC2
 make register-trusts KIT=<CODE> PROD=<stag|true>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<env> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
@@ -74,7 +73,7 @@ make provision-local-trust                     # Provision an on-prem trust host
 make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
 make package-onprem-trust-kit KIT=<CODE>      # Tarball a filled-in trust/.env.<CODE>.<env> + FL kit slice for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (NVFLARE; no restart — see README)
+make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
@@ -266,7 +265,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 ## Infrastructure
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — FLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
@@ -283,7 +282,8 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - `aws ecs describe-tasks` returns `containers` as an array, and the **GuardDuty Runtime Monitoring sidecar** (`aws-guardduty-agent-*`) usually sorts first. Querying `containers[0].imageDigest` reads the *agent's* digest, not the FL container's.
 - The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
-- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md).
+- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md).
+- The same applies to exit codes. The two one-shot tasks `terraform apply` runs (`provision_efs_certs`, `flower_register_supernode_keys`) read `containers[?name=='<container>'].exitCode`, where the name comes from the task definition. They treat a missing code as a failure (FLIP#1447). `tests/test_ecs_task_exit_code.py` fails on any `containers[0]` in a `.tf` file.
 
 ## State Management
 

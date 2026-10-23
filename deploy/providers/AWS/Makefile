@@ -196,17 +196,14 @@ $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must b
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 endif
 
-# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
-# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
-# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+# The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
+# Default 0 in variables.tf, and keep it there: jobs declare their own in their
+# meta.json (FLIP#70), and a non-zero default keeps every job off a CPU-only trust.
 # Export only when set: an unconditional export turns a missing env key into
 # TF_VAR_…="" and Terraform rejects the empty string for a number variable
 # instead of falling back to the variables.tf default.
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
-endif
-ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
-export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
@@ -516,7 +513,7 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; PROD=stag|true)
 	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
 	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
 	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
@@ -697,7 +694,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## tag (builds are path-filtered — a merge that didn't touch a service publishes no new
 	## tag for it) aborts with nothing deployed. Non-ghcr.io registries skip the manifest
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
-	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.9
+	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
@@ -880,8 +877,23 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
 	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
 	## commit if the UI must move too.
+	## On FLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
+	## (scripts/reset-fl-server-local.sh, the efs-provision-certs task, a minute or two):
+	## since FLIP#1390 the fl-server writes local/flip__p_resources.json, and an older
+	## fl-server image cannot load it and fails to start. If that step fails nothing is
+	## rolled back. SKIP_FL_LOCAL_RESET=1 skips it, for when the file is already gone or
+	## the revision rolled back to is FLIP#1390 or later (it rewrites the file at start).
 	@set -e; \
 	unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	fl_server="$(firstword $(filter fl-server-net-%,$(CENTRALHUB_ECS_SERVICES)))"; \
+	if [ "$(FL_BACKEND)" = "nvflare" ] && [ -n "$$fl_server" ] && [ "$(SKIP_FL_LOCAL_RESET)" != "1" ]; then \
+	  ./scripts/reset-fl-server-local.sh $(ECS_CLUSTER) "$$fl_server" || { \
+	    echo "   Nothing has been rolled back. An fl-server image older than FLIP#1390 fails to start"; \
+	    echo "   while local/flip__p_resources.json is on EFS. Fix the step above and re-run, or remove"; \
+	    echo "   the file yourself (fl-services/nvflare/fl-server/README.md) and re-run with"; \
+	    echo "   SKIP_FL_LOCAL_RESET=1."; \
+	    exit 1; }; \
+	fi; \
 	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
@@ -1185,7 +1197,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
-	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
+	  echo "  # Deploy the $(FL_KIT_SLOT) FLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
 	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
@@ -1193,7 +1205,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
 	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
-	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
+	  echo "✅ $(FL_KIT_SLOT) FLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
@@ -1297,15 +1309,13 @@ ifneq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
-	@echo "   • Security groups"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
+	@echo "   • Security groups and the ALB"
+	@echo "   • SES email templates"
 ifeq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 	@echo "   • VPC"
 endif
-	@echo "   • ALB/NLB load balancers"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
@@ -1336,9 +1346,10 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
-	##   2. `make sync-trust-kit KIT=<slot> PROD=true` (from repo root) — fills Hub-shared.
+	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
+	##   1. register-trusts, sync-trust-kit and generate-xnat-credentials with KIT=<CODE>
+	##      PROD=true fill trust/.env.<CODE>.production;
+	##   2. `cp trust/.env.<CODE>.production trust/.env.<slot>` (<slot> = its FL_KIT_SLOT).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
