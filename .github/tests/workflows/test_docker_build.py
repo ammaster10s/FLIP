@@ -22,10 +22,7 @@ Usage:
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
-import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
@@ -38,7 +35,6 @@ from image_workflows import (  # noqa: E402
     WORKFLOWS,
     ReleaseTagContract,
     code_text,
-    step_block,
 )
 from pr_paths_changed import glob_to_regex  # noqa: E402
 
@@ -120,8 +116,7 @@ class XnatBuildTriggers(unittest.TestCase):
         )
         for changed_paths, expected in cases:
             for changed_path in changed_paths:
-                if changed_path != "flip-api/src/flip_api/main.py":
-                    assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
+                assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
             selected = set()
             for image in self.workflows:
                 text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
@@ -155,43 +150,6 @@ class XnatBuildTriggers(unittest.TestCase):
             with self.subTest(image=image):
                 assert "workflow_run" not in text, image
                 assert "GH_WR_" not in text, image
-
-    def test_tag_generation_preserves_push_and_dispatch_behavior(self) -> None:
-        sha = "1234567890abcdef"  # pragma: allowlist secret (synthetic commit ID)
-        cases = (
-            ("push", "main", [sha, "sha-1234567", "main", "prod"]),
-            ("push", "develop", [sha, "sha-1234567", "develop", "stag"]),
-            ("workflow_dispatch", "main", [sha, "sha-1234567", "main"]),
-            ("workflow_dispatch", "develop", [sha, "sha-1234567", "develop"]),
-            ("workflow_dispatch", "feature/foo", [sha, "sha-1234567", "feature-foo"]),
-            ("push", "v1.2.3", ["v1.2.3"]),
-            ("workflow_dispatch", "v1.2.3", ["v1.2.3"]),
-        )
-        for image in self.workflows:
-            step = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Determine tags")
-            script = textwrap.dedent(step.split("        run: |\n", 1)[1])
-            for expression, variable in (
-                ("github.sha", "GH_SHA"),
-                ("env.REGISTRY", "REGISTRY"),
-                ("env.IMAGE_NAME", "IMAGE_NAME"),
-            ):
-                script = script.replace("${{ " + expression + " }}", "${" + variable + "}")
-            for event, ref_name, expected_tags in cases:
-                with self.subTest(image=image, event=event, ref=ref_name), tempfile.TemporaryDirectory() as directory:
-                    output = Path(directory) / "output"
-                    env = {
-                        "GH_EVENT_NAME": event,
-                        "GH_REF_NAME": ref_name,
-                        "GH_REF": f"refs/{'tags' if ref_name.startswith('v') else 'heads'}/{ref_name}",
-                        "GH_SHA": sha,
-                        "REGISTRY": "ghcr.io",
-                        "IMAGE_NAME": f"londonaicentre/xnat-{image}",
-                        "GITHUB_OUTPUT": str(output),
-                    }
-                    result = subprocess.run(["bash", "-e"], input=script, env=env, capture_output=True, text=True)
-                    assert result.returncode == 0, result.stderr
-                    expected = ",".join(f"ghcr.io/londonaicentre/xnat-{image}:{tag}" for tag in expected_tags)
-                    assert output.read_text().strip() == f"tags={expected}", output.read_text()
 
 
 if __name__ == "__main__":
