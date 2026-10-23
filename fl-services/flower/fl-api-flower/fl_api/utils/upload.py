@@ -10,7 +10,7 @@ from tomlkit import dumps, parse
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
 from fl_api.utils.refusals import ResearcherRefusal
-from fl_api.utils.validation import safe_join, validate_bundle_url
+from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -122,7 +122,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
     for url in bundle_urls:
-        logger.info(f"Downloading file from {url}")
+        logger.info(f"Downloading file from {redact_url(url)}")
 
         # The FL API fetches each URL server-side, so reject off-origin URLs. With no allow-list set the check
         # also resolves the name; requests resolves it again on connect, and that pair is the DNS-rebinding
@@ -140,7 +140,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
                 # A redirect would dodge validate_bundle_url (which only saw the original URL),
                 # reopening the SSRF hole; treat any 3xx as a failure.
                 if resp.is_redirect or resp.is_permanent_redirect:
-                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
@@ -149,8 +149,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         except HTTPException:
             raise  # propagate the 400 redirect rejection unchanged (not a generic download failure)
         except Exception as e:
-            logger.error(f"Failed to download file from {url} with error: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")
+            message = f"Failed to download file from {redact_url(url)} ({type(e).__name__})."
+            logger.error(message)
+            raise HTTPException(status_code=500, detail=message) from None
 
         logger.info(f"Downloaded file {dest_path}")
 
